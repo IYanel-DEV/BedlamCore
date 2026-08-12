@@ -366,8 +366,14 @@ public final class GuiController {
         else if (name.equals("Apply")) {
             List<String> missing = settings.validate();
             if (!missing.isEmpty()) { reportMissing(player, missing); return; }
-            plugin.games().remove(settings.id());
+            // Save while world is still loaded; remove/unload first discarded map edits and nullified Location worlds.
+            ArenaManager existing = plugin.games().byId(settings.id());
+            if (existing != null) existing.prepareWorldSave();
             World world = Bukkit.getWorld(settings.worldName());
+            if (world == null) {
+                player.sendMessage(ChatColor.RED + "Game world " + settings.worldName() + " is not loaded.");
+                return;
+            }
             plugin.worlds().saveOnce(world);
             plugin.games().register(settings.copy());
             plugin.saveSettings();

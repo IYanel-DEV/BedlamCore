@@ -59,12 +59,21 @@ public final class ArenaManager {
     public ArenaManager(BedlamCore plugin, ArenaSettings settings) {
         this.plugin = plugin;
         this.arena = new Arena(settings);
-        this.waitingStructure = new WaitingStructure(plugin.waitingTemplates(), settings.waitingSpawn());
         World world = plugin.worlds().load(settings);
-        if (world != null) plugin.worlds().disableAutoSave(world);
+        if (world != null) {
+            settings.reattach(world); // unload+reload leaves stale World refs on Location fields
+            plugin.worlds().disableAutoSave(world);
+        }
+        this.waitingStructure = new WaitingStructure(plugin.waitingTemplates(), settings.waitingSpawn());
         waitingStructure.build();
         bounds = computeBounds(settings);
         spawnDisplays();
+    }
+
+    /** Strip waiting paste / displays so Apply's saveOnce does not bake them into the pristine map. */
+    public void prepareWorldSave() {
+        waitingStructure.remove();
+        clearDisplays();
     }
 
     public Arena arena() { return arena; }

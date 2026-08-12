@@ -1,6 +1,7 @@
 package dev.iyanel.bedlamcore.arena;
 
 import org.bukkit.Location;
+import org.bukkit.World;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -72,6 +73,27 @@ public final class ArenaSettings {
         return copy;
     }
 
+    /** After unload+reload, Location still holds the old World instance; rebind to the live one. */
+    public void reattach(World world) {
+        if (world == null) return;
+        waitingSpawn = rebind(waitingSpawn, world);
+        spectator = rebind(spectator, world);
+        for (TeamColor color : TeamColor.values()) team(color).reattach(world);
+        rebindAll(diamondGenerators, world);
+        rebindAll(emeraldGenerators, world);
+    }
+
+    private static void rebindAll(List<Location> locations, World world) {
+        for (int i = 0; i < locations.size(); i++) locations.set(i, rebind(locations.get(i), world));
+    }
+
+    private static Location rebind(Location location, World world) {
+        if (location == null) return null;
+        Location copy = location.clone();
+        copy.setWorld(world);
+        return copy;
+    }
+
     private static void addTeamMissing(List<String> missing, TeamColor color, TeamSettings team) {
         List<String> fields = new ArrayList<String>();
         if (team.spawn == null) fields.add("spawn");
@@ -127,6 +149,16 @@ public final class ArenaSettings {
         private void copyFrom(TeamSettings source) {
             spawn(source.spawn); bed(source.bed); forge(source.forge); itemShop(source.itemShop); upgradeShop(source.upgradeShop);
             teamChest(source.teamChest); enderChest(source.enderChest);
+        }
+
+        private void reattach(World world) {
+            spawn = rebind(spawn, world);
+            bed = rebind(bed, world);
+            forge = rebind(forge, world);
+            itemShop = rebind(itemShop, world);
+            upgradeShop = rebind(upgradeShop, world);
+            teamChest = rebind(teamChest, world);
+            enderChest = rebind(enderChest, world);
         }
     }
 }
