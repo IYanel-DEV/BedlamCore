@@ -28,6 +28,6 @@ Run `servers/setup.ps1` once. It downloads official Paper jars, copies BedlamCor
 - `servers/legacy-1.8.8` on port 25565
 - `servers/current-26.2` on port 25566
 
-Each folder receives a `start.ps1`. Paper 1.8.8 needs Java 8; Paper 26.2 needs Java 25. The setup script can use `JAVA8_HOME` and `JAVA25_HOME` when those runtimes are not your default.
+Each folder receives a `start.bat`. Paper 1.8.8 needs Java 8; Paper 26.2 needs Java 25. The setup script can use `JAVA8_HOME` and `JAVA25_HOME` when those runtimes are not your default.
 
 This project is not affiliated with Hypixel, Mojang, or Microsoft and includes no copied server code, maps, branding, or assets.

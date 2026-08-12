@@ -47,24 +47,24 @@ function Install-PaperServer {
         "allow-flight=true"
     ) | Set-Content -Path (Join-Path $server "server.properties") -Encoding ASCII
 
+    $localPattern = if ($JavaVariable -eq "JAVA8_HOME") { "jdk8*" } else { "jdk25\jdk-25*" }
+    $programPattern = if ($JavaVariable -eq "JAVA8_HOME") { "jre1.8*" } else { "jdk-25*" }
     $start = @'
-$ErrorActionPreference = "Stop"
-$javaHome = [Environment]::GetEnvironmentVariable("__JAVA_VARIABLE__")
-$candidates = @()
-if ($javaHome) { $candidates += Join-Path $javaHome "bin\java.exe" }
-$tools = Join-Path $PSScriptRoot "..\..\.tools"
-$candidates += Get-ChildItem $tools -Recurse -File -Filter java.exe -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match "__JAVA_PATTERN__" } | Select-Object -ExpandProperty FullName
-$candidates += Get-ChildItem "C:\Program Files\Java" -Recurse -File -Filter java.exe -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match "__JAVA_PATTERN__" } | Select-Object -ExpandProperty FullName
-$java = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $java) { $java = (Get-Command java -ErrorAction Stop).Source }
-& $java -Xms1G -Xmx2G -jar paper.jar nogui
-'@.Replace("__JAVA_VARIABLE__", $JavaVariable).Replace("__JAVA_PATTERN__", $(if ($JavaVariable -eq "JAVA8_HOME") { "(?i)(jdk|jre)[-_]?1?\.?8" } else { "(?i)jdk[-_]?25" }))
-    Set-Content -Path (Join-Path $server "start.ps1") -Value $start -Encoding UTF8
+@echo off
+setlocal
+set "JAVA_EXE="
+if defined __JAVA_VARIABLE__ if exist "%__JAVA_VARIABLE__%\bin\java.exe" set "JAVA_EXE=%__JAVA_VARIABLE__%\bin\java.exe"
+for /d %%D in ("%~dp0..\..\.tools\__LOCAL_PATTERN__") do if not defined JAVA_EXE if exist "%%~fD\bin\java.exe" set "JAVA_EXE=%%~fD\bin\java.exe"
+for /d %%D in ("C:\Program Files\Java\__PROGRAM_PATTERN__") do if not defined JAVA_EXE if exist "%%~fD\bin\java.exe" set "JAVA_EXE=%%~fD\bin\java.exe"
+if not defined JAVA_EXE set "JAVA_EXE=java"
+"%JAVA_EXE%" -Xms1G -Xmx2G -jar paper.jar nogui
+pause
+'@.Replace("__JAVA_VARIABLE__", $JavaVariable).Replace("__LOCAL_PATTERN__", $localPattern).Replace("__PROGRAM_PATTERN__", $programPattern)
+    Remove-Item (Join-Path $server "start.ps1") -ErrorAction SilentlyContinue
+    Set-Content -Path (Join-Path $server "start.bat") -Value $start -Encoding ASCII
 }
 
 Install-PaperServer -Name "legacy-1.8.8" -Version "1.8.8" -Port 25565 -JavaVariable "JAVA8_HOME"
 Install-PaperServer -Name "current-26.2" -Version "26.2" -Port 25566 -JavaVariable "JAVA25_HOME"
 
-Write-Host "BedlamCore servers are ready. Run each server's start.ps1 in a separate terminal."
+Write-Host "BedlamCore servers are ready. Run each server's start.bat in a separate terminal."
