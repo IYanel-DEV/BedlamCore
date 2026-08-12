@@ -50,9 +50,17 @@ function Install-PaperServer {
     $start = @'
 $ErrorActionPreference = "Stop"
 $javaHome = [Environment]::GetEnvironmentVariable("__JAVA_VARIABLE__")
-$java = if ($javaHome) { Join-Path $javaHome "bin\java.exe" } else { "java" }
+$candidates = @()
+if ($javaHome) { $candidates += Join-Path $javaHome "bin\java.exe" }
+$tools = Join-Path $PSScriptRoot "..\..\.tools"
+$candidates += Get-ChildItem $tools -Recurse -File -Filter java.exe -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match "__JAVA_PATTERN__" } | Select-Object -ExpandProperty FullName
+$candidates += Get-ChildItem "C:\Program Files\Java" -Recurse -File -Filter java.exe -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match "__JAVA_PATTERN__" } | Select-Object -ExpandProperty FullName
+$java = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $java) { $java = (Get-Command java -ErrorAction Stop).Source }
 & $java -Xms1G -Xmx2G -jar paper.jar nogui
-'@.Replace("__JAVA_VARIABLE__", $JavaVariable)
+'@.Replace("__JAVA_VARIABLE__", $JavaVariable).Replace("__JAVA_PATTERN__", $(if ($JavaVariable -eq "JAVA8_HOME") { "(?i)(jdk|jre)[-_]?1?\.?8" } else { "(?i)jdk[-_]?25" }))
     Set-Content -Path (Join-Path $server "start.ps1") -Value $start -Encoding UTF8
 }
 
