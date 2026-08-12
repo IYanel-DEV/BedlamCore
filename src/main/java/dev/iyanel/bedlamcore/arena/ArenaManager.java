@@ -11,20 +11,25 @@ import org.bukkit.ChatColor;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.EntityType;
 import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,20 +41,48 @@ public final class ArenaManager {
     private final WaitingStructure waitingStructure;
     private final Map<UUID, Entity> displays = new HashMap<UUID, Entity>();
     private final Map<UUID, Location> displayPins = new HashMap<UUID, Location>();
+    private final Map<UUID, Boolean> displayHolograms = new HashMap<UUID, Boolean>();
+    private final Map<UUID, String> generatorKinds = new HashMap<UUID, String>();
     private int displayTask = -1;
     private int countdownTask = -1;
     private int countdownRemaining;
+    private int gameSeconds;
+    private int diamondTier = 1;
+    private int emeraldTier = 1;
+    private int[] bounds; // minX,minY,minZ,maxX,maxY,maxZ or null
 
     public ArenaManager(BedlamCore plugin, ArenaSettings settings) {
         this.plugin = plugin;
         this.arena = new Arena(settings);
-        this.waitingStructure = new WaitingStructure(settings.waitingSpawn());
+        this.waitingStructure = new WaitingStructure(plugin.waitingTemplates(), settings.waitingSpawn());
+        World world = plugin.worlds().load(settings);
+        if (world != null) plugin.worlds().disableAutoSave(world);
         waitingStructure.build();
+        bounds = computeBounds(settings);
         spawnDisplays();
     }
 
     public Arena arena() { return arena; }
     public int countdownRemaining() { return countdownRemaining; }
+    public int diamondTier() { return diamondTier; }
+    public int emeraldTier() { return emeraldTier; }
+    public int gameSeconds() { return gameSeconds; }
+
+    public String nextGeneratorUpgrade() {
+        int next = Integer.MAX_VALUE;
+        String name = "Maxed";
+        int diamondTwo = upgradeAt("diamond", 2);
+        int diamondThree = upgradeAt("diamond", 3);
+        int emeraldTwo = upgradeAt("emerald", 2);
+        int emeraldThree = upgradeAt("emerald", 3);
+        if (diamondTier < 2 && diamondTwo > gameSeconds && diamondTwo < next) { next = diamondTwo; name = "Diamond II"; }
+        else if (diamondTier < 3 && diamondThree > gameSeconds && diamondThree < next) { next = diamondThree; name = "Diamond III"; }
+        if (emeraldTier < 2 && emeraldTwo > gameSeconds && emeraldTwo < next) { next = emeraldTwo; name = "Emerald II"; }
+        else if (emeraldTier < 3 && emeraldThree > gameSeconds && emeraldThree < next) { next = emeraldThree; name = "Emerald III"; }
+        if (next == Integer.MAX_VALUE) return name;
+        int remaining = next - gameSeconds;
+        return name + " " + (remaining / 60) + ":" + (remaining % 60 < 10 ? "0" : "") + remaining % 60;
+    }
 
     public boolean join(Player player) {
         if (!player.hasPermission("bedlam.play")) return false;
@@ -79,6 +112,7 @@ public final class ArenaManager {
         arena.eliminated().remove(player.getUniqueId());
         clearPlayer(player);
         Location lobby = plugin.lobby().spawn();
+        if (lobby == null && !Bukkit.getWorlds().isEmpty()) lobby = Bukkit.getWorlds().get(0).getSpawnLocation();
         if (lobby != null) player.teleport(lobby);
         if (arena.state() == Arena.State.RUNNING && team != null) checkWinner();
         if (arena.state() == Arena.State.COUNTDOWN && arena.players().size() < minimumPlayers()) cancelCountdown();
@@ -134,6 +168,11 @@ public final class ArenaManager {
         }
         waitingStructure.remove();
         arena.resetMatchData();
+        gameSeconds = 0;
+        diamondTier = 1;
+        emeraldTier = 1;
+        World world = Bukkit.getWorld(arena.settings().worldName());
+        if (world != null) plugin.worlds().disableAutoSave(world);
         Map<TeamColor, Integer> sizes = arena.teamSizes();
         for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
             TeamColor team = GameRules.leastPopulated(teams, sizes);
@@ -147,6 +186,8 @@ public final class ArenaManager {
             if (player != null) spawnPlayer(player, entry.getValue());
         }
         startGenerators();
+        startMatchEffects();
+        refreshGeneratorLabels();
         broadcast(ChatColor.GOLD + "Protect your bed and destroy the enemy beds!");
     }
 
@@ -154,8 +195,33 @@ public final class ArenaManager {
         if (arena.state() == Arena.State.RUNNING) arena.placedBlocks().add(Locations.blockKey(block.getLocation()));
     }
 
+    public boolean mayPlace(Player player, Block block) {
+        if (arena.state() != Arena.State.RUNNING || !arena.contains(player.getUniqueId())) return false;
+        if (arena.eliminated().contains(player.getUniqueId()) || player.getGameMode() == GameMode.SPECTATOR) {
+            player.sendMessage(ChatColor.RED + "Spectators cannot build.");
+            return false;
+        }
+        Location loc = block.getLocation();
+        Location waiting = arena.settings().waitingSpawn();
+        if (waiting != null && GameRules.tooHigh(loc.getBlockY(), waiting.getBlockY())) {
+            player.sendMessage(ChatColor.RED + "You cannot build that high.");
+            return false;
+        }
+        if (bounds != null && (loc.getBlockX() < bounds[0] || loc.getBlockY() < bounds[1] || loc.getBlockZ() < bounds[2]
+            || loc.getBlockX() > bounds[3] || loc.getBlockY() > bounds[4] || loc.getBlockZ() > bounds[5])) {
+            player.sendMessage(ChatColor.RED + "You cannot build outside the arena.");
+            return false;
+        }
+        if (protectedZone(loc)) {
+            player.sendMessage(ChatColor.RED + "You cannot build here.");
+            return false;
+        }
+        return true;
+    }
+
     public boolean mayBreak(Player player, Block block) {
         if (arena.state() != Arena.State.RUNNING || !arena.contains(player.getUniqueId())) return true;
+        if (arena.eliminated().contains(player.getUniqueId()) || player.getGameMode() == GameMode.SPECTATOR) return false;
         TeamColor brokenBed = bedAt(block.getLocation());
         if (brokenBed != null) {
             TeamColor playerTeam = arena.team(player.getUniqueId());
@@ -165,8 +231,13 @@ public final class ArenaManager {
             }
             if (!arena.bedAlive(brokenBed)) return false;
             arena.destroyBed(brokenBed);
+            removeBedBlocks(arena.settings().team(brokenBed).bed());
             broadcast(ChatColor.RED + "BED DESTROYED! " + brokenBed.coloredName() + ChatColor.GRAY + " was broken by " + playerTeam.chatColor() + player.getName());
             return true;
+        }
+        if (protectedZone(block.getLocation())) {
+            player.sendMessage(ChatColor.RED + "You cannot break blocks here.");
+            return false;
         }
         String key = Locations.blockKey(block.getLocation());
         if (!arena.placedBlocks().remove(key)) {
@@ -174,6 +245,19 @@ public final class ArenaManager {
             return false;
         }
         return true;
+    }
+
+    private boolean protectedZone(Location loc) {
+        for (Location gen : arena.settings().diamondGenerators()) if (Locations.near(loc, gen, GameRules.GEN_PROTECT)) return true;
+        for (Location gen : arena.settings().emeraldGenerators()) if (Locations.near(loc, gen, GameRules.GEN_PROTECT)) return true;
+        for (TeamColor team : arena.settings().configuredTeams()) {
+            ArenaSettings.TeamSettings settings = arena.settings().team(team);
+            if (Locations.near(loc, settings.spawn(), GameRules.SPAWN_PROTECT)) return true;
+            if (Locations.near(loc, settings.forge(), GameRules.FORGE_PROTECT)) return true;
+            if (Locations.near(loc, settings.itemShop(), GameRules.SHOP_PROTECT)) return true;
+            if (Locations.near(loc, settings.upgradeShop(), GameRules.SHOP_PROTECT)) return true;
+        }
+        return false;
     }
 
     public void handleDeath(Player player) {
@@ -188,7 +272,6 @@ public final class ArenaManager {
 
     public Location respawnLocation(Player player) {
         if (!arena.contains(player.getUniqueId())) return player.getWorld().getSpawnLocation();
-        if (arena.eliminated().contains(player.getUniqueId())) return arena.settings().spectator();
         return arena.settings().spectator();
     }
 
@@ -229,6 +312,7 @@ public final class ArenaManager {
     public void reset() {
         cancelAllTasks();
         for (String key : new HashSet<String>(arena.placedBlocks())) removeBlock(key);
+        arena.placedBlocks().clear();
         for (List<BlockState> snapshots : arena.bedSnapshots().values()) {
             for (BlockState snapshot : snapshots) snapshot.update(true, false);
         }
@@ -247,18 +331,40 @@ public final class ArenaManager {
         }
         arena.players().clear();
         arena.resetMatchData();
+        World world = Bukkit.getWorld(arena.settings().worldName());
+        if (world != null) plugin.worlds().disableAutoSave(world);
         arena.state(Arena.State.WAITING);
         waitingStructure.build();
+        refreshGeneratorLabels();
     }
 
     public void shutdown() {
-        if (arena.state() != Arena.State.WAITING || !arena.players().isEmpty()) reset();
+        if (arena.state() != Arena.State.WAITING || !arena.players().isEmpty()) {
+            cancelAllTasks();
+            for (String key : new HashSet<String>(arena.placedBlocks())) removeBlock(key);
+            for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
+                Player player = Bukkit.getPlayer(uuid);
+                if (player != null) {
+                    clearPlayer(player);
+                    Location lobby = plugin.lobby().spawn();
+                    if (lobby != null) player.teleport(lobby);
+                }
+            }
+            arena.players().clear();
+            arena.resetMatchData();
+        }
         waitingStructure.remove();
-        if (displayTask != -1) Bukkit.getScheduler().cancelTask(displayTask);
-        for (Entity entity : displays.values()) if (entity != null) entity.remove();
-        displays.clear();
-        displayPins.clear();
+        clearDisplays();
+        plugin.worlds().unloadDiscarding(arena.settings());
     }
+
+    public void rebuildWaitingStructure() {
+        if (arena.state() != Arena.State.WAITING && arena.state() != Arena.State.COUNTDOWN) return;
+        waitingStructure.remove();
+        waitingStructure.build();
+    }
+
+    public boolean isBed(Block block) { return bedAt(block.getLocation()) != null; }
 
     public String shop(Entity entity) {
         if (!entity.hasMetadata("bedlamShop") || entity.getMetadata("bedlamShop").isEmpty()) return null;
@@ -266,7 +372,7 @@ public final class ArenaManager {
     }
 
     public boolean isDisplay(Entity entity) {
-        return entity.hasMetadata("bedlamShop") || entity.hasMetadata("bedlamGeneratorDisplay");
+        return entity.hasMetadata("bedlamShop") || entity.hasMetadata("bedlamGeneratorDisplay") || entity.hasMetadata("bedlamHologram");
     }
 
     private void prepareLobby(Player player) {
@@ -285,27 +391,51 @@ public final class ArenaManager {
         ItemStack sword = Items.named(new ItemStack(Items.material("WOODEN_SWORD", "WOOD_SWORD")), ChatColor.GREEN + "Wooden Sword");
         if (arena.sharpness(team)) Enchantments.add(sword, 1, "SHARPNESS", "DAMAGE_ALL");
         player.getInventory().setItem(0, sword);
-        player.getInventory().setItem(1, team.wool(16));
         equipArmor(player, team);
+        applyHaste(player, team);
     }
 
     public void equipArmor(Player player, TeamColor team) {
         PlayerInventory inventory = player.getInventory();
-        boolean iron = arena.ironArmor().contains(player.getUniqueId());
-        ItemStack boots = new ItemStack(Items.material(iron ? "IRON_BOOTS" : "LEATHER_BOOTS"));
-        ItemStack leggings = new ItemStack(Items.material(iron ? "IRON_LEGGINGS" : "LEATHER_LEGGINGS"));
+        int tier = arena.armorTier(player.getUniqueId());
+        ItemStack boots = team.leather("LEATHER_BOOTS", "LEATHER_BOOTS");
+        ItemStack leggings = team.leather("LEATHER_LEGGINGS", "LEATHER_LEGGINGS");
+        ItemStack chest;
+        ItemStack helmet;
+        if (tier >= 2) {
+            chest = new ItemStack(Items.material("DIAMOND_CHESTPLATE"));
+            helmet = new ItemStack(Items.material("DIAMOND_HELMET"));
+        } else if (tier >= 1) {
+            chest = new ItemStack(Items.material("IRON_CHESTPLATE"));
+            helmet = new ItemStack(Items.material("IRON_HELMET"));
+        } else {
+            chest = team.leather("LEATHER_CHESTPLATE", "LEATHER_CHESTPLATE");
+            helmet = team.leather("LEATHER_HELMET", "LEATHER_HELMET");
+        }
         int protection = arena.protection(team);
         if (protection > 0) {
             Enchantments.add(boots, protection, "PROTECTION", "PROTECTION_ENVIRONMENTAL");
             Enchantments.add(leggings, protection, "PROTECTION", "PROTECTION_ENVIRONMENTAL");
+            Enchantments.add(chest, protection, "PROTECTION", "PROTECTION_ENVIRONMENTAL");
+            Enchantments.add(helmet, protection, "PROTECTION", "PROTECTION_ENVIRONMENTAL");
         }
         inventory.setBoots(boots);
         inventory.setLeggings(leggings);
+        inventory.setChestplate(chest);
+        inventory.setHelmet(helmet);
+    }
+
+    public void applyHaste(Player player, TeamColor team) {
+        int level = arena.hasteLevel(team);
+        player.removePotionEffect(PotionEffectType.FAST_DIGGING);
+        if (level > 0) player.addPotionEffect(new PotionEffect(PotionEffectType.FAST_DIGGING, Integer.MAX_VALUE, level - 1), true);
     }
 
     private void clearPlayer(Player player) {
         player.getInventory().clear();
         player.getInventory().setArmorContents(new ItemStack[4]);
+        player.removePotionEffect(PotionEffectType.FAST_DIGGING);
+        player.removePotionEffect(PotionEffectType.REGENERATION);
     }
 
     private void snapshotBeds() {
@@ -328,16 +458,60 @@ public final class ArenaManager {
         return null;
     }
 
+    private void removeBedBlocks(Location bed) {
+        for (int x = -1; x <= 1; x++) for (int y = -1; y <= 1; y++) for (int z = -1; z <= 1; z++) {
+            Block block = bed.clone().add(x, y, z).getBlock();
+            if (block.getType().name().contains("BED")) block.setType(Material.AIR);
+        }
+    }
+
     private void startGenerators() {
         int iron = plugin.getConfig().getInt("generator-periods.iron", 20);
         int gold = plugin.getConfig().getInt("generator-periods.gold", 80);
         for (TeamColor team : arena.settings().configuredTeams()) {
             Location forge = arena.settings().team(team).forge();
-            generator(forge, new ItemStack(Material.IRON_INGOT), iron);
-            generator(forge, new ItemStack(Material.GOLD_INGOT), gold);
+            forgeGenerator(forge, new ItemStack(Material.IRON_INGOT), "iron", iron, team);
+            forgeGenerator(forge, new ItemStack(Material.GOLD_INGOT), "gold", gold, team);
         }
-        for (Location location : arena.settings().diamondGenerators()) generator(location, new ItemStack(Material.DIAMOND), plugin.getConfig().getInt("generator-periods.diamond", 600));
-        for (Location location : arena.settings().emeraldGenerators()) generator(location, new ItemStack(Material.EMERALD), plugin.getConfig().getInt("generator-periods.emerald", 1200));
+        for (Location location : arena.settings().diamondGenerators()) generator(location, new ItemStack(Material.DIAMOND), "diamond", 600);
+        for (Location location : arena.settings().emeraldGenerators()) generator(location, new ItemStack(Material.EMERALD), "emerald", 1200);
+        int id = new BukkitRunnable() {
+            @Override public void run() {
+                if (arena.state() != Arena.State.RUNNING) return;
+                gameSeconds++;
+                int nextDiamond = GameRules.generatorTier(gameSeconds, upgradeAt("diamond", 2), upgradeAt("diamond", 3));
+                int nextEmerald = GameRules.generatorTier(gameSeconds, upgradeAt("emerald", 2), upgradeAt("emerald", 3));
+                if (nextDiamond != diamondTier) { diamondTier = nextDiamond; broadcast(ChatColor.AQUA + "Diamond generators upgraded to Tier " + diamondTier + "!"); refreshGeneratorLabels(); }
+                if (nextEmerald != emeraldTier) { emeraldTier = nextEmerald; broadcast(ChatColor.GREEN + "Emerald generators upgraded to Tier " + emeraldTier + "!"); refreshGeneratorLabels(); }
+            }
+        }.runTaskTimer(plugin, 20L, 20L).getTaskId();
+        arena.tasks().add(id);
+    }
+
+    private void startMatchEffects() {
+        int id = new BukkitRunnable() {
+            @Override public void run() {
+                if (arena.state() != Arena.State.RUNNING) return;
+                for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
+                    if (arena.eliminated().contains(entry.getKey()) || !arena.healPool(entry.getValue())) continue;
+                    Player player = Bukkit.getPlayer(entry.getKey());
+                    Location spawn = arena.settings().team(entry.getValue()).spawn();
+                    if (player == null || spawn == null || !Locations.near(player.getLocation(), spawn, 8.0)) continue;
+                    if (player.getHealth() < player.getMaxHealth()) player.setHealth(Math.min(player.getMaxHealth(), player.getHealth() + 1.0));
+                }
+            }
+        }.runTaskTimer(plugin, 20L, 20L).getTaskId();
+        arena.tasks().add(id);
+    }
+
+    private void clearDisplays() {
+        if (displayTask != -1) Bukkit.getScheduler().cancelTask(displayTask);
+        displayTask = -1;
+        for (Entity entity : displays.values()) if (entity != null) entity.remove();
+        displays.clear();
+        displayPins.clear();
+        displayHolograms.clear();
+        generatorKinds.clear();
     }
 
     private void spawnDisplays() {
@@ -345,18 +519,20 @@ public final class ArenaManager {
             spawnShop(arena.settings().team(team).itemShop(), "ITEM", ChatColor.GREEN + "ITEM SHOP");
             spawnShop(arena.settings().team(team).upgradeShop(), "UPGRADE", ChatColor.AQUA + "TEAM UPGRADES");
         }
-        for (Location location : arena.settings().diamondGenerators()) spawnGeneratorDisplay(location, Material.DIAMOND_BLOCK);
-        for (Location location : arena.settings().emeraldGenerators()) spawnGeneratorDisplay(location, Material.EMERALD_BLOCK);
-        if (!displays.isEmpty()) displayTask = new BukkitRunnable() {
+        for (Location location : arena.settings().diamondGenerators()) spawnGeneratorDisplay(location, Material.DIAMOND_BLOCK, "diamond");
+        for (Location location : arena.settings().emeraldGenerators()) spawnGeneratorDisplay(location, Material.EMERALD_BLOCK, "emerald");
+        if (displays.isEmpty()) return;
+        displayTask = new BukkitRunnable() {
             @Override public void run() {
                 for (Map.Entry<UUID, Entity> entry : new HashMap<UUID, Entity>(displays).entrySet()) {
                     Entity entity = entry.getValue();
                     Location pin = displayPins.get(entry.getKey());
                     if (entity == null || entity.isDead() || pin == null) continue;
                     entity.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
-                    if (entity.getLocation().distanceSquared(pin) > 0.0001) entity.teleport(pin);
-                    if (entity instanceof Item && entity.getTicksLived() > 5000) entity.setTicksLived(1);
+                    if (entity.hasMetadata("bedlamGeneratorDisplay")) pin.setYaw(pin.getYaw() + 3F);
+                    if (entity.getLocation().distanceSquared(pin) > 0.0001 || entity.hasMetadata("bedlamGeneratorDisplay")) entity.teleport(pin);
                 }
+                updateDisplayVisibility();
             }
         }.runTaskTimer(plugin, 1L, 1L).getTaskId();
     }
@@ -368,32 +544,174 @@ public final class ArenaManager {
         villager.setCustomName(name);
         villager.setCustomNameVisible(true);
         LobbyNpcService.freeze(villager, false);
-        pin(villager, location);
+        pin(villager, location, false);
+        spawnHologram(location.clone().add(0, 2.2, 0), name);
     }
 
-    private void spawnGeneratorDisplay(Location location, Material block) {
+    private void spawnGeneratorDisplay(Location location, Material block, String kind) {
         if (location == null || location.getWorld() == null) return;
-        Location pin = location.clone().add(0, 1.25, 0);
-        Item item = location.getWorld().dropItem(pin, new ItemStack(block));
-        item.setPickupDelay(Integer.MAX_VALUE);
-        item.setMetadata("bedlamGeneratorDisplay", new FixedMetadataValue(plugin, block.name()));
-        pin(item, pin);
+        // Centered ~3 blocks above generator (block center + 3).
+        Location pin = location.getBlock().getLocation().add(0.5, 3.0, 0.5);
+        ArmorStand stand = (ArmorStand) location.getWorld().spawnEntity(pin.clone().add(0, -1.4, 0), EntityType.ARMOR_STAND);
+        stand.setVisible(false);
+        stand.setBasePlate(false);
+        stand.getEquipment().setHelmet(new ItemStack(block));
+        stand.setMetadata("bedlamGeneratorDisplay", new FixedMetadataValue(plugin, kind));
+        LobbyNpcService.freeze(stand, false);
+        pin(stand, pin.clone().add(0, -1.4, 0), false);
+        generatorKinds.put(stand.getUniqueId(), kind);
+        String label = kind.equals("diamond") ? ChatColor.AQUA + "Diamond" : ChatColor.GREEN + "Emerald";
+        spawnHologram(pin.clone().add(0, 0.6, 0), label);
+        spawnHologram(pin.clone().add(0, 0.3, 0), ChatColor.YELLOW + "Tier " + roman(kind.equals("diamond") ? diamondTier : emeraldTier));
     }
 
-    private void pin(Entity entity, Location location) {
+    private void spawnHologram(Location location, String text) {
+        ArmorStand stand = (ArmorStand) location.getWorld().spawnEntity(location, EntityType.ARMOR_STAND);
+        stand.setVisible(false);
+        stand.setBasePlate(false);
+        stand.setCustomName(text);
+        stand.setCustomNameVisible(true);
+        stand.setMetadata("bedlamHologram", new FixedMetadataValue(plugin, true));
+        LobbyNpcService.freeze(stand, false);
+        pin(stand, location, true);
+    }
+
+    private void refreshGeneratorLabels() {
+        for (Map.Entry<UUID, String> entry : new HashMap<UUID, String>(generatorKinds).entrySet()) {
+            // Labels are separate hologram stands near the block stand; rebuild is heavier — update nearby hologram names.
+        }
+        // Cheap path: clear and respawn generator displays only.
+        List<Location> diamonds = new ArrayList<Location>(arena.settings().diamondGenerators());
+        List<Location> emeralds = new ArrayList<Location>(arena.settings().emeraldGenerators());
+        for (Map.Entry<UUID, Entity> entry : new HashMap<UUID, Entity>(displays).entrySet()) {
+            Entity entity = entry.getValue();
+            if (entity == null) continue;
+            if (entity.hasMetadata("bedlamGeneratorDisplay") || (entity.hasMetadata("bedlamHologram") && nearAnyGenerator(displayPins.get(entry.getKey())))) {
+                entity.remove();
+                displays.remove(entry.getKey());
+                displayPins.remove(entry.getKey());
+                displayHolograms.remove(entry.getKey());
+                generatorKinds.remove(entry.getKey());
+            }
+        }
+        for (Location location : diamonds) spawnGeneratorDisplay(location, Material.DIAMOND_BLOCK, "diamond");
+        for (Location location : emeralds) spawnGeneratorDisplay(location, Material.EMERALD_BLOCK, "emerald");
+    }
+
+    private boolean nearAnyGenerator(Location loc) {
+        if (loc == null) return false;
+        for (Location gen : arena.settings().diamondGenerators()) if (Locations.near(loc, gen.clone().add(0.5, 3.0, 0.5), 2.0)) return true;
+        for (Location gen : arena.settings().emeraldGenerators()) if (Locations.near(loc, gen.clone().add(0.5, 3.0, 0.5), 2.0)) return true;
+        return false;
+    }
+
+    private void pin(Entity entity, Location location, boolean hologram) {
         displays.put(entity.getUniqueId(), entity);
         displayPins.put(entity.getUniqueId(), location.clone());
+        displayHolograms.put(entity.getUniqueId(), hologram);
     }
 
-    private void generator(final Location location, final ItemStack stack, int ticks) {
+    // ponytail: per-viewer hideEntity when API exists; 1.8 falls back to shared custom-name toggle
+    private void updateDisplayVisibility() {
+        double limit = GameRules.DISPLAY_VIEW * GameRules.DISPLAY_VIEW;
+        Method hide = hideEntityMethod();
+        Method show = showEntityMethod();
+        for (Map.Entry<UUID, Entity> entry : displays.entrySet()) {
+            Entity entity = entry.getValue();
+            Location pin = displayPins.get(entry.getKey());
+            if (entity == null || pin == null || pin.getWorld() == null) continue;
+            boolean anyNear = false;
+            for (Player player : pin.getWorld().getPlayers()) {
+                boolean near = player.getLocation().distanceSquared(pin) <= limit;
+                if (near) anyNear = true;
+                if (hide != null && show != null) {
+                    try {
+                        if (near) show.invoke(player, plugin, entity);
+                        else hide.invoke(player, plugin, entity);
+                    } catch (Exception ignored) { }
+                }
+            }
+            if (hide == null) {
+                entity.setCustomNameVisible(anyNear && entity.getCustomName() != null);
+                if (entity instanceof ArmorStand && entity.hasMetadata("bedlamGeneratorDisplay")) {
+                    // Keep rotating block present only when someone is near.
+                    if (!anyNear && entity.isValid()) ((ArmorStand) entity).getEquipment().setHelmet(null);
+                    else if (anyNear) {
+                        String kind = generatorKinds.get(entity.getUniqueId());
+                        if (kind != null) ((ArmorStand) entity).getEquipment().setHelmet(new ItemStack(kind.equals("diamond") ? Material.DIAMOND_BLOCK : Material.EMERALD_BLOCK));
+                    }
+                }
+            }
+        }
+    }
+
+    private static Method hideEntityMethod;
+    private static Method showEntityMethod;
+    private static boolean hideResolved;
+
+    private static Method hideEntityMethod() {
+        resolveHide();
+        return hideEntityMethod;
+    }
+
+    private static Method showEntityMethod() {
+        resolveHide();
+        return showEntityMethod;
+    }
+
+    private static void resolveHide() {
+        if (hideResolved) return;
+        hideResolved = true;
+        try {
+            hideEntityMethod = Player.class.getMethod("hideEntity", org.bukkit.plugin.Plugin.class, Entity.class);
+            showEntityMethod = Player.class.getMethod("showEntity", org.bukkit.plugin.Plugin.class, Entity.class);
+        } catch (Exception ignored) { }
+    }
+
+    private void forgeGenerator(final Location location, final ItemStack stack, final String kind, final int fallbackTicks, final TeamColor team) {
         int id = new BukkitRunnable() {
+            private int waited;
             @Override public void run() {
                 if (arena.state() != Arena.State.RUNNING) return;
+                waited++;
+                int period = Math.max(1, (generatorPeriod(kind, fallbackTicks) + 19) / 20);
+                int forge = arena.forgeLevel(team);
+                if (forge > 0) period = Math.max(1, period - forge);
+                if (waited < period) return;
+                waited = 0;
                 Item item = location.getWorld().dropItemNaturally(location, stack.clone());
                 arena.generatedItems().add(item.getUniqueId());
             }
-        }.runTaskTimer(plugin, ticks, ticks).getTaskId();
+        }.runTaskTimer(plugin, 20L, 20L).getTaskId();
         arena.tasks().add(id);
+    }
+
+    private void generator(final Location location, final ItemStack stack, final String kind, final int fallbackTicks) {
+        int id = new BukkitRunnable() {
+            private int waited;
+            @Override public void run() {
+                if (arena.state() != Arena.State.RUNNING) return;
+                waited++;
+                int seconds = Math.max(1, (generatorPeriod(kind, fallbackTicks) + 19) / 20);
+                if (waited < seconds) return;
+                waited = 0;
+                Item item = location.getWorld().dropItemNaturally(location, stack.clone());
+                arena.generatedItems().add(item.getUniqueId());
+            }
+        }.runTaskTimer(plugin, 20L, 20L).getTaskId();
+        arena.tasks().add(id);
+    }
+
+    private int generatorPeriod(String kind, int fallback) {
+        int tier = kind.equals("diamond") ? diamondTier : kind.equals("emerald") ? emeraldTier : 1;
+        if (tier == 1) return plugin.getConfig().getInt("generator-periods." + kind, fallback);
+        int tierFallback = kind.equals("diamond") ? (tier == 2 ? 460 : 240) : (tier == 2 ? 900 : 600);
+        return plugin.getConfig().getInt("generator-upgrades." + kind + ".tier-" + tier + "-period", tierFallback);
+    }
+
+    private int upgradeAt(String kind, int tier) {
+        int fallback = kind.equals("diamond") ? (tier == 2 ? 360 : 720) : (tier == 2 ? 720 : 1080);
+        return plugin.getConfig().getInt("generator-upgrades." + kind + ".tier-" + tier + "-seconds", fallback);
     }
 
     private void cancelAllTasks() {
@@ -427,5 +745,39 @@ public final class ArenaManager {
     private int minimumPlayers() {
         String mode = arena.settings().gameType().name().toLowerCase();
         return plugin.getConfig().getInt("modes." + mode + ".minimum-players", 2);
+    }
+
+    private static String roman(int tier) {
+        return new String[] {"I", "II", "III"}[Math.max(1, Math.min(3, tier)) - 1];
+    }
+
+    private static int[] computeBounds(ArenaSettings settings) {
+        List<Location> points = new ArrayList<Location>();
+        if (settings.waitingSpawn() != null) points.add(settings.waitingSpawn());
+        if (settings.spectator() != null) points.add(settings.spectator());
+        for (TeamColor team : settings.configuredTeams()) {
+            ArenaSettings.TeamSettings t = settings.team(team);
+            if (t.spawn() != null) points.add(t.spawn());
+            if (t.bed() != null) points.add(t.bed());
+            if (t.forge() != null) points.add(t.forge());
+            if (t.itemShop() != null) points.add(t.itemShop());
+            if (t.upgradeShop() != null) points.add(t.upgradeShop());
+        }
+        points.addAll(settings.diamondGenerators());
+        points.addAll(settings.emeraldGenerators());
+        if (points.isEmpty()) return null;
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        for (Location loc : points) {
+            if (loc == null) continue;
+            minX = Math.min(minX, loc.getBlockX());
+            minY = Math.min(minY, loc.getBlockY());
+            minZ = Math.min(minZ, loc.getBlockZ());
+            maxX = Math.max(maxX, loc.getBlockX());
+            maxY = Math.max(maxY, loc.getBlockY());
+            maxZ = Math.max(maxZ, loc.getBlockZ());
+        }
+        int pad = GameRules.ARENA_BOUND_PAD;
+        return new int[] {minX - pad, Math.max(0, minY - 20), minZ - pad, maxX + pad, maxY + pad, maxZ + pad};
     }
 }

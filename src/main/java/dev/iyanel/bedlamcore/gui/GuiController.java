@@ -9,6 +9,7 @@ import dev.iyanel.bedlamcore.arena.TeamColor;
 import dev.iyanel.bedlamcore.compat.Enchantments;
 import dev.iyanel.bedlamcore.compat.Items;
 import dev.iyanel.bedlamcore.compat.Skins;
+import dev.iyanel.bedlamcore.game.GameRules;
 import dev.iyanel.bedlamcore.lobby.LobbySettings;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -331,7 +332,7 @@ public final class GuiController {
             if (!missing.isEmpty()) { reportMissing(player, missing); return; }
             plugin.games().remove(settings.id());
             World world = Bukkit.getWorld(settings.worldName());
-            if (world != null) world.save();
+            plugin.worlds().saveOnce(world);
             plugin.games().register(settings.copy());
             plugin.saveSettings();
             arenaDrafts.remove(player.getUniqueId());
@@ -481,16 +482,18 @@ public final class GuiController {
         inventory.setItem(10, offer(TeamColor.RED.wool(16), "16 Wool", 4, "Iron"));
         inventory.setItem(11, offer(new ItemStack(Items.material("STONE_SWORD")), "Stone Sword", 10, "Iron"));
         inventory.setItem(12, offer(new ItemStack(Items.material("IRON_SWORD")), "Iron Sword", 7, "Gold"));
-        inventory.setItem(13, offer(new ItemStack(Items.material("IRON_CHESTPLATE")), "Permanent Iron Armor", 12, "Gold"));
-        inventory.setItem(14, offer(Items.stack("OAK_PLANKS", "WOOD", 16, (short) 0), "16 Oak Planks", 4, "Gold"));
-        inventory.setItem(15, offer(new ItemStack(Material.LADDER, 8), "8 Ladders", 4, "Iron"));
-        inventory.setItem(16, offer(new ItemStack(Items.material("GOLDEN_APPLE")), "Golden Apple", 3, "Gold"));
-        inventory.setItem(20, offer(new ItemStack(Material.TNT), "TNT", 4, "Gold"));
-        inventory.setItem(21, offer(new ItemStack(Items.material("FIRE_CHARGE", "FIREBALL")), "Fireball", 40, "Iron"));
-        inventory.setItem(22, offer(new ItemStack(Material.ENDER_PEARL), "Ender Pearl", 4, "Emerald"));
-        inventory.setItem(23, offer(new ItemStack(Material.BOW), "Bow", 12, "Gold"));
-        inventory.setItem(24, offer(new ItemStack(Material.ARROW, 8), "8 Arrows", 2, "Gold"));
-        inventory.setItem(25, offer(new ItemStack(Material.WATER_BUCKET), "Water Bucket", 3, "Gold"));
+        inventory.setItem(13, offer(new ItemStack(Items.material("DIAMOND_SWORD")), "Diamond Sword", 4, "Emerald"));
+        inventory.setItem(14, offer(new ItemStack(Items.material("IRON_CHESTPLATE")), "Permanent Iron Armor", 12, "Gold"));
+        inventory.setItem(15, offer(new ItemStack(Items.material("DIAMOND_CHESTPLATE")), "Permanent Diamond Armor", 6, "Emerald"));
+        inventory.setItem(16, offer(Items.stack("OAK_PLANKS", "WOOD", 16, (short) 0), "16 Oak Planks", 4, "Gold"));
+        inventory.setItem(19, offer(new ItemStack(Material.LADDER, 8), "8 Ladders", 4, "Iron"));
+        inventory.setItem(20, offer(new ItemStack(Items.material("GOLDEN_APPLE")), "Golden Apple", 3, "Gold"));
+        inventory.setItem(21, offer(new ItemStack(Material.TNT), "TNT", 4, "Gold"));
+        inventory.setItem(22, offer(new ItemStack(Items.material("FIRE_CHARGE", "FIREBALL")), "Fireball", 40, "Iron"));
+        inventory.setItem(23, offer(new ItemStack(Material.ENDER_PEARL), "Ender Pearl", 4, "Emerald"));
+        inventory.setItem(24, offer(new ItemStack(Material.BOW), "Bow", 12, "Gold"));
+        inventory.setItem(25, offer(new ItemStack(Material.ARROW, 8), "8 Arrows", 2, "Gold"));
+        inventory.setItem(28, offer(new ItemStack(Material.WATER_BUCKET), "Water Bucket", 3, "Gold"));
         player.openInventory(inventory);
     }
 
@@ -500,10 +503,15 @@ public final class GuiController {
         Arena arena = manager.arena();
         TeamColor team = arena.team(player.getUniqueId());
         Inventory inventory = Bukkit.createInventory(null, 27, UPGRADES_TITLE);
-        inventory.setItem(11, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Sharpened Swords", arena.sharpness(team) ? ChatColor.GREEN + "Purchased" : ChatColor.GRAY + "Cost: 4 Diamond"));
+        inventory.setItem(10, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Sharpened Swords", arena.sharpness(team) ? ChatColor.GREEN + "Purchased" : ChatColor.GRAY + "Cost: 4 Diamond"));
         int level = arena.protection(team);
         int cost = new int[] {2, 4, 8, 16}[Math.min(level, 3)];
-        inventory.setItem(15, Items.named(new ItemStack(Material.IRON_CHESTPLATE), ChatColor.AQUA + "Reinforced Armor " + roman(level + 1), level >= 4 ? ChatColor.GREEN + "Maximum level" : ChatColor.GRAY + "Cost: " + cost + " Diamond"));
+        inventory.setItem(11, Items.named(new ItemStack(Material.IRON_CHESTPLATE), ChatColor.AQUA + "Reinforced Armor " + roman(level + 1), level >= 4 ? ChatColor.GREEN + "Maximum level" : ChatColor.GRAY + "Cost: " + cost + " Diamond"));
+        int forge = arena.forgeLevel(team);
+        inventory.setItem(12, Items.named(new ItemStack(Material.IRON_INGOT), ChatColor.AQUA + "Forge " + roman(forge + 1), forge >= 4 ? ChatColor.GREEN + "Maximum level" : ChatColor.GRAY + "Cost: " + (forge + 2) + " Diamond"));
+        int haste = arena.hasteLevel(team);
+        inventory.setItem(13, Items.named(new ItemStack(Items.material("GOLDEN_PICKAXE", "GOLD_PICKAXE")), ChatColor.AQUA + "Maniac Miner " + roman(haste + 1), haste >= 2 ? ChatColor.GREEN + "Maximum level" : ChatColor.GRAY + "Cost: " + (haste == 0 ? 2 : 4) + " Diamond"));
+        inventory.setItem(14, Items.named(new ItemStack(Items.material("BEACON")), ChatColor.AQUA + "Heal Pool", arena.healPool(team) ? ChatColor.GREEN + "Purchased" : ChatColor.GRAY + "Cost: 3 Diamond"));
         player.openInventory(inventory);
     }
 
@@ -514,9 +522,16 @@ public final class GuiController {
         TeamColor team = arena.team(player.getUniqueId());
         if (team == null || arena.state() != Arena.State.RUNNING) return;
         if (name.equals("16 Wool") && pay(player, Material.IRON_INGOT, 4)) give(player, team.wool(16));
-        else if (name.equals("Stone Sword") && pay(player, Material.IRON_INGOT, 10)) give(player, sword(Items.material("STONE_SWORD"), arena.sharpness(team)));
-        else if (name.equals("Iron Sword") && pay(player, Material.GOLD_INGOT, 7)) give(player, sword(Material.IRON_SWORD, arena.sharpness(team)));
-        else if (name.equals("Permanent Iron Armor") && pay(player, Material.GOLD_INGOT, 12)) { arena.ironArmor().add(player.getUniqueId()); manager.equipArmor(player, team); }
+        else if (name.equals("Stone Sword") && pay(player, Material.IRON_INGOT, 10)) giveSword(player, sword(Items.material("STONE_SWORD"), arena.sharpness(team)));
+        else if (name.equals("Iron Sword") && pay(player, Material.GOLD_INGOT, 7)) giveSword(player, sword(Material.IRON_SWORD, arena.sharpness(team)));
+        else if (name.equals("Diamond Sword") && pay(player, Material.EMERALD, 4)) giveSword(player, sword(Items.material("DIAMOND_SWORD"), arena.sharpness(team)));
+        else if (name.equals("Permanent Iron Armor") && pay(player, Material.GOLD_INGOT, 12)) {
+            if (arena.armorTier(player.getUniqueId()) < 1) arena.armorTier(player.getUniqueId(), 1);
+            manager.equipArmor(player, team);
+        } else if (name.equals("Permanent Diamond Armor") && pay(player, Material.EMERALD, 6)) {
+            arena.armorTier(player.getUniqueId(), 2);
+            manager.equipArmor(player, team);
+        }
         else if (name.equals("16 Oak Planks") && pay(player, Material.GOLD_INGOT, 4)) give(player, Items.stack("OAK_PLANKS", "WOOD", 16, (short) 0));
         else if (name.equals("8 Ladders") && pay(player, Material.IRON_INGOT, 4)) give(player, new ItemStack(Material.LADDER, 8));
         else if (name.equals("Golden Apple") && pay(player, Material.GOLD_INGOT, 3)) give(player, new ItemStack(Items.material("GOLDEN_APPLE")));
@@ -543,6 +558,17 @@ public final class GuiController {
                 arena.protection(team, level + 1);
                 for (Player member : Bukkit.getOnlinePlayers()) if (team == arena.team(member.getUniqueId())) manager.equipArmor(member, team);
             }
+        } else if (name.startsWith("Forge") && arena.forgeLevel(team) < 4) {
+            int level = arena.forgeLevel(team);
+            if (pay(player, Material.DIAMOND, level + 2)) arena.forgeLevel(team, level + 1);
+        } else if (name.startsWith("Maniac Miner") && arena.hasteLevel(team) < 2) {
+            int level = arena.hasteLevel(team);
+            if (pay(player, Material.DIAMOND, level == 0 ? 2 : 4)) {
+                arena.hasteLevel(team, level + 1);
+                for (Player member : Bukkit.getOnlinePlayers()) if (team == arena.team(member.getUniqueId())) manager.applyHaste(member, team);
+            }
+        } else if (name.equals("Heal Pool") && !arena.healPool(team) && pay(player, Material.DIAMOND, 3)) {
+            arena.healPool(team, true);
         }
         openUpgrades(player);
     }
@@ -579,6 +605,20 @@ public final class GuiController {
     private static void give(Player player, ItemStack item) {
         Map<Integer, ItemStack> excess = player.getInventory().addItem(item);
         for (ItemStack stack : excess.values()) player.getWorld().dropItemNaturally(player.getLocation(), stack);
+    }
+
+    /** Replace any existing sword so purchases never stack duplicates. */
+    private static void giveSword(Player player, ItemStack sword) {
+        int slot = -1;
+        for (int i = 0; i < player.getInventory().getSize(); i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (stack != null && GameRules.isSword(stack.getType().name())) {
+                if (slot < 0) slot = i;
+                player.getInventory().setItem(i, null);
+            }
+        }
+        if (slot >= 0) player.getInventory().setItem(slot, sword);
+        else give(player, sword);
     }
 
     private void removeNpcPlacers(Player player) {

@@ -10,6 +10,7 @@ import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.util.Locations;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Fireball;
@@ -30,10 +31,12 @@ import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
+import org.bukkit.event.player.PlayerBedEnterEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
@@ -69,6 +72,13 @@ public final class GameListener implements Listener {
         Player player = event.getPlayer();
         ItemStack item = event.getItem();
         String name = Items.name(item);
+        if (plugin.waitingTemplates().isTool(item) && event.getClickedBlock() != null
+            && (event.getAction() == Action.LEFT_CLICK_BLOCK || event.getAction() == Action.RIGHT_CLICK_BLOCK)) {
+            event.setCancelled(true);
+            if (plugin.isAdmin(player)) plugin.waitingTemplates().select(player, event.getClickedBlock(), event.getAction() == Action.LEFT_CLICK_BLOCK);
+            else player.sendMessage(ChatColor.RED + "You do not have permission.");
+            return;
+        }
         if (name.equals("Bedlam Menu") || name.equals("Bedlam Setup")) {
             event.setCancelled(true);
             if (name.equals("Bedlam Setup")) plugin.gui().openContextSetup(player); else plugin.gui().openMain(player);
@@ -99,6 +109,7 @@ public final class GameListener implements Listener {
             return;
         }
         if (event.getClickedBlock() == null || arena.state() != Arena.State.RUNNING) return;
+        if (event.getClickedBlock().getType().name().contains("BED")) { event.setCancelled(true); return; }
         for (TeamColor team : arena.settings().configuredTeams()) {
             if (Locations.near(event.getClickedBlock().getLocation(), arena.settings().team(team).itemShop(), 2.0)) { event.setCancelled(true); plugin.gui().openShop(player); return; }
             if (Locations.near(event.getClickedBlock().getLocation(), arena.settings().team(team).upgradeShop(), 2.0)) { event.setCancelled(true); plugin.gui().openUpgrades(player); return; }
@@ -124,6 +135,7 @@ public final class GameListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onDamage(EntityDamageEvent event) {
         if (plugin.npcs().mode(event.getEntity()) != null) { event.setCancelled(true); return; }
+        if (event.getEntity().hasMetadata(LobbyNpcService.META_HOLO)) { event.setCancelled(true); return; }
         ArenaManager displayArena = plugin.games().arenaInWorld(event.getEntity().getWorld().getName());
         if (displayArena != null && displayArena.isDisplay(event.getEntity())) { event.setCancelled(true); return; }
         if (!(event.getEntity() instanceof Player)) return;
@@ -131,7 +143,19 @@ public final class GameListener implements Listener {
         ArenaManager manager = plugin.games().arena(player);
         if (manager == null) return;
         Arena arena = manager.arena();
-        if (arena.state() != Arena.State.RUNNING || arena.eliminated().contains(player.getUniqueId())) event.setCancelled(true);
+        if (arena.state() != Arena.State.RUNNING || arena.eliminated().contains(player.getUniqueId())) {
+            event.setCancelled(true);
+            return;
+        }
+        // Faster void / deep-fall kill instead of slow drain.
+        if (event.getCause() == EntityDamageEvent.DamageCause.VOID) {
+            event.setDamage(1000);
+            return;
+        }
+        Location waiting = arena.settings().waitingSpawn();
+        if (waiting != null && player.getLocation().getY() <= GameRules.voidKillY(waiting.getY())) {
+            event.setDamage(1000);
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -148,7 +172,15 @@ public final class GameListener implements Listener {
         ArenaManager manager = plugin.games().arenaInWorld(event.getEntity().getWorld().getName());
         if (plugin.npcs().mode(event.getEntity()) != null || manager != null && manager.isDisplay(event.getEntity())) event.setCancelled(true);
     }
-    @EventHandler public void onNpcArmor(PlayerArmorStandManipulateEvent event) { if (plugin.npcs().mode(event.getRightClicked()) != null) event.setCancelled(true); }
+    @EventHandler public void onNpcArmor(PlayerArmorStandManipulateEvent event) {
+        ArenaManager manager = plugin.games().arenaInWorld(event.getRightClicked().getWorld().getName());
+        if (plugin.npcs().mode(event.getRightClicked()) != null || event.getRightClicked().hasMetadata(LobbyNpcService.META_HOLO)
+            || manager != null && manager.isDisplay(event.getRightClicked())) event.setCancelled(true);
+    }
+
+    @EventHandler public void onBedEnter(PlayerBedEnterEvent event) {
+        if (plugin.games().arena(event.getPlayer()) != null) event.setCancelled(true);
+    }
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
@@ -164,6 +196,10 @@ public final class GameListener implements Listener {
     public void onPlace(final BlockPlaceEvent event) {
         ArenaManager manager = plugin.games().arena(event.getPlayer());
         if (manager == null || manager.arena().state() != Arena.State.RUNNING) return;
+        if (!manager.mayPlace(event.getPlayer(), event.getBlockPlaced())) {
+            event.setCancelled(true);
+            return;
+        }
         manager.recordPlaced(event.getBlockPlaced());
         if (event.getBlockPlaced().getType() == Material.TNT) {
             final org.bukkit.Location location = event.getBlockPlaced().getLocation().add(0.5, 0, 0.5);
@@ -180,7 +216,9 @@ public final class GameListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent event) {
         ArenaManager manager = plugin.games().arena(event.getPlayer());
-        if (manager != null && !manager.mayBreak(event.getPlayer(), event.getBlock())) event.setCancelled(true);
+        if (manager == null) return;
+        boolean bed = manager.isBed(event.getBlock());
+        if (!manager.mayBreak(event.getPlayer(), event.getBlock()) || bed) event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -196,10 +234,31 @@ public final class GameListener implements Listener {
     }
 
     @EventHandler
+    public void onMove(PlayerMoveEvent event) {
+        if (event.getTo() == null || event.getFrom().getBlockY() == event.getTo().getBlockY()) return;
+        Player player = event.getPlayer();
+        ArenaManager manager = plugin.games().arena(player);
+        if (manager == null || manager.arena().state() != Arena.State.RUNNING) return;
+        if (manager.arena().eliminated().contains(player.getUniqueId())) return;
+        Location waiting = manager.arena().settings().waitingSpawn();
+        if (waiting != null && event.getTo().getY() <= GameRules.voidKillY(waiting.getY())) player.setHealth(0);
+    }
+
+    @EventHandler
     public void onDeath(PlayerDeathEvent event) {
         ArenaManager manager = plugin.games().arena(event.getEntity());
         if (manager == null) return;
-        event.getDrops().clear(); event.setDroppedExp(0); event.setDeathMessage(null); manager.handleDeath(event.getEntity());
+        event.getDrops().clear();
+        event.setDroppedExp(0);
+        event.setDeathMessage(null);
+        manager.handleDeath(event.getEntity());
+        final Player player = event.getEntity();
+        // Skip vanilla respawn screen (Spigot API).
+        Bukkit.getScheduler().runTask(plugin, new Runnable() {
+            @Override public void run() {
+                try { player.spigot().respawn(); } catch (Throwable ignored) { }
+            }
+        });
     }
 
     @EventHandler
@@ -237,7 +296,7 @@ public final class GameListener implements Listener {
 
     @EventHandler public void onDrop(PlayerDropItemEvent event) {
         String name = Items.name(event.getItemDrop().getItemStack());
-        if (name.equals("Bedlam Menu") || name.equals("Bedlam Setup") || name.equals("Leave Game") || plugin.gui().npcPlacer(event.getItemDrop().getItemStack()) != null) event.setCancelled(true);
+        if (name.equals("Bedlam Menu") || name.equals("Bedlam Setup") || name.equals("Leave Game") || plugin.waitingTemplates().isTool(event.getItemDrop().getItemStack()) || plugin.gui().npcPlacer(event.getItemDrop().getItemStack()) != null) event.setCancelled(true);
     }
 
     public void giveNavigation(Player player) {

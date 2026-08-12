@@ -22,9 +22,21 @@ chat:
     green: "&a[GREEN] "
     yellow: "&e[YELLOW] "
 scoreboard:
-  footer: "&fplay.bedlam"
+  footer: "&eplay.bedlam"
+void-drop-blocks: 30
 generator-periods:
   iron: 20
   gold: 80
   diamond: 600
   emerald: 1200
+generator-upgrades:
+  diamond:
+    tier-2-seconds: 360
+    tier-3-seconds: 720
+    tier-2-period: 460
+    tier-3-period: 240
+  emerald:
+    tier-2-seconds: 720
+    tier-3-seconds: 1080
+    tier-2-period: 900
+    tier-3-period: 600

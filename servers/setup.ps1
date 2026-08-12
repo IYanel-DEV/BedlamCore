@@ -5,11 +5,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$pluginJar = Join-Path $root "build\libs\BedlamCore-0.3.0.jar"
-
-if (-not (Test-Path $pluginJar)) {
+$pluginJar = Get-ChildItem (Join-Path $root "build\libs") -Filter "BedlamCore-*.jar" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+if (-not $pluginJar) {
     & (Join-Path $root "gradlew.bat") clean check build
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $pluginJar = Get-ChildItem (Join-Path $root "build\libs") -Filter "BedlamCore-*.jar" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 }
 
 function Install-PaperServer {
@@ -32,7 +32,7 @@ function Install-PaperServer {
     }
 
     if ($Force -or -not (Test-Path $jar)) {
-        $headers = @{ "User-Agent" = "BedlamCore/0.3.0 (https://github.com/IYanel-DEV/BedlamCore)" }
+        $headers = @{ "User-Agent" = "BedlamCore/0.5.0 (https://github.com/IYanel-DEV/BedlamCore)" }
         $builds = Invoke-RestMethod -Headers $headers -Uri "https://fill.papermc.io/v3/projects/paper/versions/$Version/builds"
         $build = $builds | Where-Object { $_.channel -in @("STABLE", "RECOMMENDED", "stable", "recommended") } | Select-Object -First 1
         if (-not $build) { $build = $builds | Select-Object -First 1 }

@@ -35,7 +35,7 @@ public final class SidebarService {
         Scoreboard board = Bukkit.getScoreboardManager().getNewScoreboard();
         Objective objective = board.registerNewObjective("bedlam", "dummy");
         objective.setDisplaySlot(DisplaySlot.SIDEBAR);
-        objective.setDisplayName(ChatColor.RED + "" + ChatColor.BOLD + "BEDLAM");
+        objective.setDisplayName(ChatColor.YELLOW + "" + ChatColor.BOLD + "BED WARS");
         List<String> lines = lines(player);
         int score = lines.size();
         for (String line : lines) objective.getScore(unique(line, score)).setScore(score--);
@@ -44,36 +44,52 @@ public final class SidebarService {
 
     private List<String> lines(Player player) {
         List<String> lines = new ArrayList<String>();
-        lines.add(ChatColor.DARK_GRAY + "────────────");
         ArenaManager manager = plugin.games().arena(player);
         if (manager == null) {
+            lines.add(ChatColor.GRAY + date());
+            lines.add(" ");
             lines.add(ChatColor.WHITE + "Lobby");
             lines.add(ChatColor.GRAY + "Online: " + ChatColor.GREEN + Bukkit.getOnlinePlayers().size());
-            lines.add(ChatColor.AQUA + "Solo: " + ChatColor.WHITE + plugin.games().waiting(GameType.SOLO));
-            lines.add(ChatColor.GOLD + "Doubles: " + ChatColor.WHITE + plugin.games().waiting(GameType.DOUBLES));
-            lines.add(ChatColor.GRAY + trim(player.getWorld().getName(), 13));
+            lines.add(ChatColor.AQUA + "Solo " + ChatColor.WHITE + plugin.games().waiting(GameType.SOLO));
+            lines.add(ChatColor.GOLD + "Doubles " + ChatColor.WHITE + plugin.games().waiting(GameType.DOUBLES));
         } else {
             Arena arena = manager.arena();
-            lines.add(ChatColor.WHITE + arena.settings().gameType().displayName());
-            lines.add(ChatColor.GRAY + trim(arena.settings().worldName(), 13));
+            lines.add(ChatColor.GRAY + date());
+            lines.add(" ");
             if (arena.state() == Arena.State.WAITING || arena.state() == Arena.State.COUNTDOWN) {
-                lines.add(ChatColor.YELLOW + state(manager));
+                lines.add(ChatColor.WHITE + "Mode: " + ChatColor.GREEN + arena.settings().gameType().displayName());
+                lines.add(ChatColor.WHITE + "Map: " + ChatColor.GREEN + trim(arena.settings().id(), 12));
                 lines.add(ChatColor.WHITE + "Players: " + ChatColor.GREEN + arena.players().size() + "/" + arena.settings().maximumPlayers());
+                lines.add(arena.state() == Arena.State.COUNTDOWN
+                    ? ChatColor.WHITE + "Starting in " + ChatColor.GREEN + manager.countdownRemaining() + "s"
+                    : ChatColor.YELLOW + "Waiting...");
             } else {
-                TeamColor team = arena.team(player.getUniqueId());
-                lines.add(ChatColor.WHITE + "Team: " + (team == null ? ChatColor.GRAY + "Spectator" : team.coloredName()));
+                lines.add(ChatColor.WHITE + formatTime(manager.gameSeconds()));
+                lines.add(" ");
                 for (TeamColor color : arena.settings().configuredTeams()) {
-                    lines.add(color.chatColor() + color.displayName() + ": " + (arena.bedAlive(color) ? ChatColor.GREEN + "BED" : ChatColor.RED + "FINAL"));
+                    String bed = arena.bedAlive(color) ? ChatColor.GREEN + "+" : ChatColor.RED + "X";
+                    int alive = arena.aliveCount(color);
+                    String you = color == arena.team(player.getUniqueId()) ? ChatColor.GRAY + " YOU" : "";
+                    lines.add(bed + " " + color.chatColor() + color.displayName().charAt(0) + " " + ChatColor.GREEN + alive + you);
                 }
+                lines.add(" ");
+                lines.add(ChatColor.WHITE + manager.nextGeneratorUpgrade());
+                lines.add(ChatColor.AQUA + "Mode: " + ChatColor.GRAY + arena.settings().gameType().displayName());
+                lines.add(ChatColor.AQUA + "Map: " + ChatColor.GRAY + trim(arena.settings().id(), 12));
             }
         }
-        lines.add(ChatColor.DARK_GRAY + "─────────── ");
-        lines.add(colors(plugin.getConfig().getString("scoreboard.footer", "&fplay.bedlam")));
+        lines.add(" ");
+        lines.add(colors(plugin.getConfig().getString("scoreboard.footer", "&eplay.bedlam")));
         return lines;
     }
 
-    private static String state(ArenaManager manager) {
-        return manager.arena().state() == Arena.State.COUNTDOWN ? "Starts: " + manager.countdownRemaining() + "s" : "Waiting...";
+    private static String date() {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        return String.format("%02d/%02d/%02d", cal.get(java.util.Calendar.MONTH) + 1, cal.get(java.util.Calendar.DAY_OF_MONTH), cal.get(java.util.Calendar.YEAR) % 100);
+    }
+
+    private static String formatTime(int seconds) {
+        return (seconds / 60) + ":" + (seconds % 60 < 10 ? "0" : "") + (seconds % 60);
     }
 
     private static String unique(String line, int salt) {

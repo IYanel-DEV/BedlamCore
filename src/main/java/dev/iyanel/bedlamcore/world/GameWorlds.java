@@ -30,6 +30,8 @@ public final class GameWorlds {
         world.getBlockAt(0, 64, 0).setType(Material.STONE);
         world.setSpawnLocation(0, 65, 0);
         world.setAutoSave(true);
+        world.save();
+        world.setAutoSave(false);
         return new ArenaSettings(name, type, name);
     }
 
@@ -66,10 +68,49 @@ public final class GameWorlds {
 
     public World load(ArenaSettings settings) {
         World world = Bukkit.getWorld(settings.worldName());
-        if (world != null) return world;
+        if (world != null) {
+            disableAutoSave(world);
+            return world;
+        }
         WorldCreator creator = new WorldCreator(settings.worldName());
         if (managedName(settings.worldName())) creator.generator(oneBlockGenerator());
-        return creator.createWorld();
+        world = creator.createWorld();
+        if (world != null) disableAutoSave(world);
+        return world;
+    }
+
+    public void disableAutoSave(World world) {
+        if (world != null) world.setAutoSave(false);
+    }
+
+    public void saveOnce(World world) {
+        if (world == null) return;
+        world.save();
+        world.setAutoSave(false);
+    }
+
+    /** Unload without writing match dirt, then load pristine disk copy. */
+    public void reloadDiscarding(ArenaSettings settings) {
+        World world = Bukkit.getWorld(settings.worldName());
+        if (world != null) {
+            LocationFallback teleport = new LocationFallback(plugin);
+            for (Player player : new java.util.ArrayList<Player>(world.getPlayers())) teleport.toLobby(player);
+            world.setAutoSave(false);
+            if (!Bukkit.unloadWorld(world, false)) {
+                plugin.getLogger().warning("Could not unload " + settings.worldName() + " without saving; builds may linger until restart.");
+                return;
+            }
+        }
+        load(settings);
+    }
+
+    public void unloadDiscarding(ArenaSettings settings) {
+        World world = Bukkit.getWorld(settings.worldName());
+        if (world == null) return;
+        LocationFallback teleport = new LocationFallback(plugin);
+        for (Player player : new java.util.ArrayList<Player>(world.getPlayers())) teleport.toLobby(player);
+        world.setAutoSave(false);
+        Bukkit.unloadWorld(world, false);
     }
 
     private static boolean deleteRecursively(File file) {
@@ -89,6 +130,15 @@ public final class GameWorlds {
         @Override
         public byte[][] generateBlockSections(World world, Random random, int chunkX, int chunkZ, BiomeGrid biomes) {
             return new byte[16][];
+        }
+    }
+
+    private static final class LocationFallback {
+        private final BedlamCore plugin;
+        private LocationFallback(BedlamCore plugin) { this.plugin = plugin; }
+        private void toLobby(Player player) {
+            if (plugin.lobby().spawn() != null) player.teleport(plugin.lobby().spawn());
+            else if (!Bukkit.getWorlds().isEmpty()) player.teleport(Bukkit.getWorlds().get(0).getSpawnLocation());
         }
     }
 }

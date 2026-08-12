@@ -19,8 +19,19 @@ public final class GameRulesCheck {
         assertTrue(GameRules.canRespawn(true, false));
         assertFalse(GameRules.canRespawn(false, false));
         assertFalse(GameRules.canRespawn(true, true));
+        assertEquals(1, GameRules.generatorTier(359, 360, 720));
+        assertEquals(2, GameRules.generatorTier(360, 360, 720));
+        assertEquals(3, GameRules.generatorTier(720, 360, 720));
         assertEquals(1, GameType.SOLO.teamSize());
         assertEquals(2, GameType.DOUBLES.teamSize());
+        assertEquals(70.0, GameRules.voidKillY(100.0));
+        assertTrue(GameRules.tooHigh(101, 100));
+        assertFalse(GameRules.tooHigh(100, 100));
+        assertTrue(GameRules.isSword("WOOD_SWORD"));
+        assertTrue(GameRules.isSword("IRON_SWORD"));
+        assertEquals(2, GameRules.swordRank("IRON_SWORD"));
+        assertEquals(3, GameRules.swordRank("DIAMOND_SWORD"));
+        assertTrue(GameRules.swordRank("IRON_SWORD") > GameRules.swordRank("WOODEN_SWORD"));
         System.out.println("BedlamCore game rules: PASS");
     }
 
