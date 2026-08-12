@@ -8,6 +8,7 @@ import dev.iyanel.bedlamcore.arena.GameType;
 import dev.iyanel.bedlamcore.arena.TeamColor;
 import dev.iyanel.bedlamcore.compat.Enchantments;
 import dev.iyanel.bedlamcore.compat.Items;
+import dev.iyanel.bedlamcore.compat.Skins;
 import dev.iyanel.bedlamcore.lobby.LobbySettings;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -27,6 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class GuiController {
     public static final String MAIN_TITLE = ChatColor.DARK_GRAY + "Bedlam Menu";
@@ -41,6 +43,8 @@ public final class GuiController {
     private final Map<UUID, ArenaDraft> arenaDrafts = new HashMap<UUID, ArenaDraft>();
     private final Map<UUID, String> selectedArena = new HashMap<UUID, String>();
     private final Map<UUID, TeamColor> selectedTeam = new HashMap<UUID, TeamColor>();
+    private final Map<UUID, GameType> selectedNpc = new HashMap<UUID, GameType>();
+    private final Map<UUID, GameType> skinInputs = new ConcurrentHashMap<UUID, GameType>();
 
     public GuiController(BedlamCore plugin) { this.plugin = plugin; }
 
@@ -51,7 +55,7 @@ public final class GuiController {
         inventory.setItem(14, Items.named(new ItemStack(Material.EMERALD), ChatColor.AQUA + "Browse Solo Games", ChatColor.GRAY + "Select a waiting arena"));
         inventory.setItem(15, Items.named(new ItemStack(Material.MAP), ChatColor.GOLD + "Browse Doubles Games", ChatColor.GRAY + "Select a waiting arena"));
         inventory.setItem(16, Items.named(new ItemStack(Items.material("RED_BED", "BED")), ChatColor.RED + "Leave Game"));
-        if (player.hasPermission("bedlam.admin")) inventory.setItem(22, Items.named(new ItemStack(Material.COMPASS), ChatColor.GOLD + "Admin Setup"));
+        if (admin(player)) inventory.setItem(22, Items.named(new ItemStack(Material.COMPASS), ChatColor.GOLD + "Admin Setup"));
         player.openInventory(inventory);
     }
 
@@ -67,8 +71,16 @@ public final class GuiController {
     }
 
     public void beginLobbySetup(Player player) {
-        lobbyDrafts.put(player.getUniqueId(), plugin.lobby().copy());
+        if (!lobbyDrafts.containsKey(player.getUniqueId())) lobbyDrafts.put(player.getUniqueId(), plugin.lobby().copy());
         openLobbySetup(player);
+    }
+
+    public void openContextSetup(Player player) {
+        if (!admin(player)) return;
+        if (arenaDrafts.containsKey(player.getUniqueId())) { openArenaSetup(player); return; }
+        ArenaManager manager = plugin.games().arenaInWorld(player.getWorld().getName());
+        if (manager != null) beginArenaSetup(player, manager.arena().settings(), false);
+        else openAdmin(player);
     }
 
     private void openLobbySetup(Player player) {
@@ -135,6 +147,20 @@ public final class GuiController {
 
     public boolean hasArenaDraft(Player player) { return arenaDrafts.containsKey(player.getUniqueId()); }
 
+    public void disconnect(Player player) {
+        UUID uuid = player.getUniqueId();
+        LobbySettings lobbyDraft = lobbyDrafts.remove(uuid);
+        if (lobbyDraft != null) plugin.npcs().respawnAll();
+        final ArenaDraft arenaDraft = arenaDrafts.remove(uuid);
+        if (arenaDraft != null && arenaDraft.newWorld) Bukkit.getScheduler().runTask(plugin, new Runnable() {
+            @Override public void run() { plugin.worlds().delete(arenaDraft.settings, player); }
+        });
+        selectedArena.remove(uuid);
+        selectedTeam.remove(uuid);
+        selectedNpc.remove(uuid);
+        skinInputs.remove(uuid);
+    }
+
     private void openArenaSetup(Player player) {
         ArenaDraft session = arenaDrafts.get(player.getUniqueId());
         if (session == null) { openWorlds(player); return; }
@@ -142,7 +168,8 @@ public final class GuiController {
         Inventory inventory = Bukkit.createInventory(null, 54, ChatColor.DARK_GRAY + "Game Setup");
         inventory.setItem(0, Items.named(new ItemStack(Material.COMPASS), ChatColor.YELLOW + "Current World", ChatColor.WHITE + settings.worldName()));
         inventory.setItem(1, Items.named(new ItemStack(settings.gameType() == GameType.SOLO ? Material.IRON_SWORD : Material.DIAMOND_SWORD), ChatColor.AQUA + "Mode: " + settings.gameType().displayName()));
-        inventory.setItem(4, setupItem(Items.material("ENDER_EYE", "EYE_OF_ENDER"), "Set Spectator Spawn", settings.spectator() != null));
+        inventory.setItem(3, setupItem(Material.GLASS, "Set Waiting Spawn", settings.waitingSpawn() != null));
+        inventory.setItem(5, setupItem(Items.material("ENDER_EYE", "EYE_OF_ENDER"), "Set Spectator Spawn", settings.spectator() != null));
         int[] slots = {10, 12, 14, 16};
         int index = 0;
         for (TeamColor color : TeamColor.values()) {
@@ -197,6 +224,7 @@ public final class GuiController {
         else if (cleanTitle.equals("Confirm World Delete")) clickDelete(player, name);
         else if (cleanTitle.equals("Game Setup")) clickArenaSetup(player, name);
         else if (cleanTitle.equals("Team Setup")) clickTeamSetup(player, name);
+        else if (cleanTitle.equals("NPC Editor")) clickNpcEditor(player, name);
         else if (cleanTitle.equals("Solo Games")) clickQueue(player, GameType.SOLO, name);
         else if (cleanTitle.equals("Doubles Games")) clickQueue(player, GameType.DOUBLES, name);
         else if (cleanTitle.equals("Item Shop")) buy(player, name);
@@ -292,7 +320,8 @@ public final class GuiController {
         ArenaDraft session = arenaDrafts.get(player.getUniqueId());
         if (session == null) return;
         ArenaSettings settings = session.settings;
-        if (name.equals("Set Spectator Spawn")) settings.spectator(player.getLocation());
+        if (name.equals("Set Waiting Spawn")) settings.waitingSpawn(player.getLocation());
+        else if (name.equals("Set Spectator Spawn")) settings.spectator(player.getLocation());
         else if (name.equals("Add Diamond Generator")) settings.diamondGenerators().add(player.getLocation());
         else if (name.equals("Add Emerald Generator")) settings.emeraldGenerators().add(player.getLocation());
         else if (name.equals("Check Setup")) reportMissing(player, settings.validate());
@@ -300,11 +329,17 @@ public final class GuiController {
         else if (name.equals("Apply")) {
             List<String> missing = settings.validate();
             if (!missing.isEmpty()) { reportMissing(player, missing); return; }
+            plugin.games().remove(settings.id());
+            World world = Bukkit.getWorld(settings.worldName());
+            if (world != null) world.save();
             plugin.games().register(settings.copy());
             plugin.saveSettings();
             arenaDrafts.remove(player.getUniqueId());
-            player.sendMessage(ChatColor.GREEN + "Game setup applied for " + settings.id() + ".");
-            openWorlds(player);
+            player.closeInventory();
+            Location lobby = plugin.lobby().spawn();
+            if (lobby == null && !Bukkit.getWorlds().isEmpty()) lobby = Bukkit.getWorlds().get(0).getSpawnLocation();
+            if (lobby != null) player.teleport(lobby);
+            player.sendMessage(ChatColor.GREEN + "Game setup applied and world saved for " + settings.id() + ". Nothing is missing.");
             return;
         } else {
             for (TeamColor team : TeamColor.values()) if (name.equals("Configure " + team.displayName())) { openTeamSetup(player, team); return; }
@@ -358,25 +393,79 @@ public final class GuiController {
         LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
         if (draft == null || !admin(player)) return;
         draft.npc(type).location(location);
-        plugin.npcs().spawn(type, location, draft.npc(type).entityType());
+        plugin.npcs().spawn(type, draft.npc(type));
         player.getInventory().removeItem(player.getItemInHand());
         player.sendMessage(ChatColor.GREEN + type.displayName() + " NPC placed. Shift-left-click it to change its entity.");
+        if (lobbyMissing(draft).isEmpty()) player.sendMessage(ChatColor.GREEN + "Lobby setup is complete. Click Apply to save both NPCs.");
         openLobbySetup(player);
     }
 
-    public void cycleNpc(Player player, GameType type) {
+    public void openNpcEditor(Player player, GameType type) {
         if (!admin(player)) return;
         LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
         if (draft == null) {
             draft = plugin.lobby().copy();
             lobbyDrafts.put(player.getUniqueId(), draft);
         }
+        selectedNpc.put(player.getUniqueId(), type);
         LobbySettings.NpcSettings settings = draft.npc(type);
-        EntityType next = plugin.npcs().next(settings.entityType());
-        settings.entityType(next);
-        if (settings.location() != null) plugin.npcs().spawn(type, settings.location(), next);
-        player.sendMessage(ChatColor.YELLOW + type.displayName() + " NPC changed to " + next.name() + ". Apply or Cancel in Lobby Setup.");
-        openLobbySetup(player);
+        Inventory inventory = Bukkit.createInventory(null, 27, ChatColor.DARK_GRAY + "NPC Editor");
+        inventory.setItem(4, Items.named(settings.human() ? Skins.head(settings.skin()) : new ItemStack(Items.material("VILLAGER_SPAWN_EGG", "MONSTER_EGG")),
+            ChatColor.GOLD + type.displayName() + " NPC", ChatColor.GRAY + appearance(settings)));
+        inventory.setItem(10, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Previous Mob"));
+        inventory.setItem(12, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Next Mob"));
+        inventory.setItem(14, Items.named(new ItemStack(Material.EGG), ChatColor.AQUA + "Age: " + (settings.baby() ? "Baby" : "Adult"), ChatColor.GRAY + "Click to toggle"));
+        inventory.setItem(16, Items.named(Skins.head(settings.skin()), ChatColor.GREEN + "Use Human Player", ChatColor.GRAY + "Uses Citizens when installed"));
+        inventory.setItem(20, Items.named(new ItemStack(Material.NAME_TAG), ChatColor.LIGHT_PURPLE + "Set Skin", ChatColor.GRAY + "Username or textures.minecraft.net URL"));
+        inventory.setItem(24, Items.named(new ItemStack(Items.material("ENDER_EYE", "EYE_OF_ENDER")),
+            (settings.lookAtPlayers() ? ChatColor.GREEN : ChatColor.RED) + "Look at Players: " + (settings.lookAtPlayers() ? "ON" : "OFF"), ChatColor.GRAY + "Default: OFF"));
+        inventory.setItem(22, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
+        player.openInventory(inventory);
+    }
+
+    private void clickNpcEditor(Player player, String name) {
+        GameType type = selectedNpc.get(player.getUniqueId());
+        LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
+        if (type == null || draft == null) return;
+        LobbySettings.NpcSettings settings = draft.npc(type);
+        if (name.equals("Previous Mob") || name.equals("Next Mob")) {
+            settings.human(false);
+            settings.entityType(plugin.npcs().next(settings.entityType(), name.equals("Next Mob") ? 1 : -1));
+        } else if (name.startsWith("Age: ")) settings.baby(!settings.baby());
+        else if (name.equals("Use Human Player")) settings.human(true);
+        else if (name.startsWith("Look at Players: ")) settings.lookAtPlayers(!settings.lookAtPlayers());
+        else if (name.equals("Set Skin")) {
+            settings.human(true);
+            skinInputs.put(player.getUniqueId(), type);
+            player.closeInventory();
+            player.sendMessage(ChatColor.YELLOW + "Type a Minecraft username or direct textures.minecraft.net URL in chat. Type cancel to stop.");
+            return;
+        } else if (name.equals("Back")) { openLobbySetup(player); return; }
+        if (settings.location() != null) plugin.npcs().spawn(type, settings);
+        openNpcEditor(player, type);
+    }
+
+    public boolean acceptSkinInput(final Player player, final String message) {
+        final GameType type = skinInputs.remove(player.getUniqueId());
+        if (type == null) return false;
+        Bukkit.getScheduler().runTask(plugin, new Runnable() {
+            @Override public void run() {
+                LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
+                if (draft == null || message.equalsIgnoreCase("cancel")) { player.sendMessage(ChatColor.YELLOW + "Skin input cancelled."); return; }
+                if (!message.matches("[A-Za-z0-9_]{1,16}") && !message.startsWith("https://textures.minecraft.net/texture/")) {
+                    player.sendMessage(ChatColor.RED + "Use a Minecraft username or a direct https://textures.minecraft.net/texture/... URL.");
+                    openNpcEditor(player, type);
+                    return;
+                }
+                LobbySettings.NpcSettings settings = draft.npc(type);
+                settings.human(true);
+                settings.skin(message);
+                if (settings.location() != null) plugin.npcs().spawn(type, settings);
+                player.sendMessage(ChatColor.GREEN + "Skin saved in the draft. Click Apply in Lobby Setup to keep it.");
+                openNpcEditor(player, type);
+            }
+        });
+        return true;
     }
 
     private void giveNpcPlacer(Player player, GameType type) {
@@ -501,7 +590,12 @@ public final class GuiController {
     private static ItemStack npcItem(GameType type, LobbySettings draft) {
         LobbySettings.NpcSettings npc = draft.npc(type);
         return Items.named(new ItemStack(Material.ARMOR_STAND), ChatColor.GOLD + "Place " + type.displayName() + " NPC",
-            npc.location() == null ? ChatColor.RED + "Not placed" : ChatColor.GREEN + "Placed as " + npc.entityType().name());
+            npc.location() == null ? ChatColor.RED + "Not placed" : ChatColor.GREEN + "Placed as " + appearance(npc),
+            ChatColor.GRAY + "Shift-left-click the placed NPC to edit");
+    }
+
+    private static String appearance(LobbySettings.NpcSettings npc) {
+        return npc.human() ? "Human" + (npc.skin() == null ? "" : " (" + npc.skin() + ")") : (npc.baby() ? "Baby " : "Adult ") + npc.entityType().name();
     }
 
     private static ItemStack setupItem(Material material, String name, boolean set) { return Items.named(new ItemStack(material), (set ? ChatColor.GREEN : ChatColor.YELLOW) + name, status(set)); }
@@ -510,7 +604,7 @@ public final class GuiController {
     private static ItemStack sword(Material material, boolean sharp) { ItemStack item = new ItemStack(material); if (sharp) Enchantments.add(item, 1, "SHARPNESS", "DAMAGE_ALL"); return item; }
     private static void enchantSwords(Player player) { for (ItemStack item : player.getInventory().getContents()) if (item != null && item.getType().name().endsWith("_SWORD")) Enchantments.add(item, 1, "SHARPNESS", "DAMAGE_ALL"); }
     private static String roman(int level) { return new String[] {"I", "II", "III", "IV", "MAX"}[Math.min(level - 1, 4)]; }
-    private static boolean admin(Player player) { return player.hasPermission("bedlam.admin"); }
+    private boolean admin(Player player) { return plugin.isAdmin(player); }
 
     private static Block targetBlock(Player player, int range) {
         Location point = player.getEyeLocation().clone();

@@ -59,7 +59,10 @@ public final class GameListener implements Listener {
         }, 5L);
     }
 
-    @EventHandler public void onQuit(PlayerQuitEvent event) { plugin.games().leave(event.getPlayer()); }
+    @EventHandler public void onQuit(PlayerQuitEvent event) {
+        plugin.gui().disconnect(event.getPlayer());
+        plugin.games().leave(event.getPlayer());
+    }
 
     @EventHandler(priority = EventPriority.HIGH)
     public void onInteract(PlayerInteractEvent event) {
@@ -68,7 +71,7 @@ public final class GameListener implements Listener {
         String name = Items.name(item);
         if (name.equals("Bedlam Menu") || name.equals("Bedlam Setup")) {
             event.setCancelled(true);
-            if (name.equals("Bedlam Setup")) plugin.gui().openAdmin(player); else plugin.gui().openMain(player);
+            if (name.equals("Bedlam Setup")) plugin.gui().openContextSetup(player); else plugin.gui().openMain(player);
             return;
         }
         if (name.equals("Leave Game")) {
@@ -105,14 +108,24 @@ public final class GameListener implements Listener {
     @EventHandler
     public void onNpcInteract(PlayerInteractEntityEvent event) {
         GameType mode = plugin.npcs().mode(event.getRightClicked());
-        if (mode == null) return;
+        if (mode != null) {
+            event.setCancelled(true);
+            plugin.gui().openQueue(event.getPlayer(), mode);
+            return;
+        }
+        ArenaManager manager = plugin.games().arenaInWorld(event.getRightClicked().getWorld().getName());
+        String shop = manager == null ? null : manager.shop(event.getRightClicked());
+        if (shop == null) return;
         event.setCancelled(true);
-        plugin.gui().openQueue(event.getPlayer(), mode);
+        if (shop.equals("ITEM")) plugin.gui().openShop(event.getPlayer());
+        else plugin.gui().openUpgrades(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onDamage(EntityDamageEvent event) {
         if (plugin.npcs().mode(event.getEntity()) != null) { event.setCancelled(true); return; }
+        ArenaManager displayArena = plugin.games().arenaInWorld(event.getEntity().getWorld().getName());
+        if (displayArena != null && displayArena.isDisplay(event.getEntity())) { event.setCancelled(true); return; }
         if (!(event.getEntity() instanceof Player)) return;
         Player player = (Player) event.getEntity();
         ArenaManager manager = plugin.games().arena(player);
@@ -127,11 +140,14 @@ public final class GameListener implements Listener {
         if (mode == null || !(event.getDamager() instanceof Player)) return;
         event.setCancelled(true);
         Player player = (Player) event.getDamager();
-        if (player.isSneaking() && player.hasPermission("bedlam.admin")) plugin.gui().cycleNpc(player, mode);
+        if (player.isSneaking() && plugin.isAdmin(player)) plugin.gui().openNpcEditor(player, mode);
         else plugin.gui().openQueue(player, mode);
     }
 
-    @EventHandler public void onNpcTarget(EntityTargetEvent event) { if (plugin.npcs().mode(event.getEntity()) != null) event.setCancelled(true); }
+    @EventHandler public void onNpcTarget(EntityTargetEvent event) {
+        ArenaManager manager = plugin.games().arenaInWorld(event.getEntity().getWorld().getName());
+        if (plugin.npcs().mode(event.getEntity()) != null || manager != null && manager.isDisplay(event.getEntity())) event.setCancelled(true);
+    }
     @EventHandler public void onNpcArmor(PlayerArmorStandManipulateEvent event) { if (plugin.npcs().mode(event.getRightClicked()) != null) event.setCancelled(true); }
 
     @EventHandler
@@ -199,7 +215,10 @@ public final class GameListener implements Listener {
         if (event.getEntity() instanceof Player && plugin.games().arena((Player) event.getEntity()) != null) { event.setCancelled(true); ((Player) event.getEntity()).setFoodLevel(20); }
     }
 
-    @EventHandler public void onChat(AsyncPlayerChatEvent event) { plugin.views().formatChat(event); }
+    @EventHandler public void onChat(AsyncPlayerChatEvent event) {
+        if (plugin.gui().acceptSkinInput(event.getPlayer(), event.getMessage())) event.setCancelled(true);
+        else plugin.views().formatChat(event);
+    }
 
     @EventHandler
     public void onTeleport(final PlayerTeleportEvent event) {
@@ -207,7 +226,8 @@ public final class GameListener implements Listener {
             @Override public void run() {
                 plugin.views().updateAll();
                 Player player = event.getPlayer();
-                if (!player.hasPermission("bedlam.admin") || plugin.games().arena(player) != null || plugin.gui().hasArenaDraft(player)) return;
+                giveNavigation(player);
+                if (!plugin.isAdmin(player) || plugin.games().arena(player) != null || plugin.gui().hasArenaDraft(player)) return;
                 if (!plugin.getConfig().getBoolean("setup.auto-open-on-game-world-teleport", true) || event.getTo() == null) return;
                 ArenaManager destination = plugin.games().arenaInWorld(event.getTo().getWorld().getName());
                 if (destination != null) plugin.gui().beginArenaSetup(player, destination.arena().settings(), false);
@@ -222,15 +242,19 @@ public final class GameListener implements Listener {
 
     public void giveNavigation(Player player) {
         if (plugin.games().arena(player) != null) return;
-        player.getInventory().setItem(7, Items.named(new ItemStack(Material.NETHER_STAR), ChatColor.RED + "Bedlam Menu"));
-        if (player.hasPermission("bedlam.admin")) player.getInventory().setItem(8, Items.named(new ItemStack(Material.COMPASS), ChatColor.GOLD + "Bedlam Setup"));
+        if (Items.name(player.getInventory().getItem(7)).equals("Bedlam Menu")) player.getInventory().setItem(7, null);
+        if (plugin.isAdmin(player)) {
+            boolean gameSetup = plugin.games().arenaInWorld(player.getWorld().getName()) != null || plugin.gui().hasArenaDraft(player);
+            player.getInventory().setItem(8, Items.named(new ItemStack(Material.COMPASS), ChatColor.GOLD + "Bedlam Setup",
+                ChatColor.GRAY + (gameSetup ? "Open this world's game setup" : "Open lobby and world setup")));
+        } else if (Items.name(player.getInventory().getItem(8)).equals("Bedlam Setup")) player.getInventory().setItem(8, null);
     }
 
     private static boolean isBedlamTitle(String title) {
         String clean = ChatColor.stripColor(title);
         return clean.equals("Bedlam Menu") || clean.equals("Bedlam Setup") || clean.equals("Lobby Setup") || clean.equals("Game Worlds")
             || clean.equals("World Actions") || clean.equals("Confirm World Delete") || clean.equals("Game Setup") || clean.equals("Team Setup")
-            || clean.equals("Solo Games") || clean.equals("Doubles Games") || clean.equals("Item Shop") || clean.equals("Team Upgrades");
+            || clean.equals("NPC Editor") || clean.equals("Solo Games") || clean.equals("Doubles Games") || clean.equals("Item Shop") || clean.equals("Team Upgrades");
     }
 
     private static void takeOne(Player player, ItemStack item) { if (item.getAmount() <= 1) player.setItemInHand(null); else item.setAmount(item.getAmount() - 1); }

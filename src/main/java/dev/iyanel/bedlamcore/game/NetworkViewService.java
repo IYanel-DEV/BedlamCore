@@ -38,7 +38,7 @@ public final class NetworkViewService {
         String prefix = team == null
             ? plugin.getConfig().getString("chat.lobby-prefix", "&7[LOBBY] ")
             : plugin.getConfig().getString("chat.team-prefixes." + team.name().toLowerCase(), "&" + colorCode(team) + "[" + team.displayName() + "] ");
-        String suffix = plugin.getConfig().getString("chat.name-suffix", " &8» &f");
+        String suffix = plugin.getConfig().getString("chat.name-suffix", " &8> &f");
         event.setFormat(colors(prefix) + "%1$s" + colors(suffix) + "%2$s");
     }
 

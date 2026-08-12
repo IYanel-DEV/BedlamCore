@@ -4,6 +4,7 @@ import dev.iyanel.bedlamcore.BedlamCore;
 import dev.iyanel.bedlamcore.compat.Enchantments;
 import dev.iyanel.bedlamcore.compat.Items;
 import dev.iyanel.bedlamcore.game.GameRules;
+import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.util.Locations;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -15,12 +16,15 @@ import org.bukkit.block.BlockState;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.EntityType;
+import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -29,12 +33,19 @@ import java.util.UUID;
 public final class ArenaManager {
     private final BedlamCore plugin;
     private final Arena arena;
+    private final WaitingStructure waitingStructure;
+    private final Map<UUID, Entity> displays = new HashMap<UUID, Entity>();
+    private final Map<UUID, Location> displayPins = new HashMap<UUID, Location>();
+    private int displayTask = -1;
     private int countdownTask = -1;
     private int countdownRemaining;
 
     public ArenaManager(BedlamCore plugin, ArenaSettings settings) {
         this.plugin = plugin;
         this.arena = new Arena(settings);
+        this.waitingStructure = new WaitingStructure(settings.waitingSpawn());
+        waitingStructure.build();
+        spawnDisplays();
     }
 
     public Arena arena() { return arena; }
@@ -121,6 +132,7 @@ public final class ArenaManager {
             arena.state(Arena.State.WAITING);
             return;
         }
+        waitingStructure.remove();
         arena.resetMatchData();
         Map<TeamColor, Integer> sizes = arena.teamSizes();
         for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
@@ -236,16 +248,31 @@ public final class ArenaManager {
         arena.players().clear();
         arena.resetMatchData();
         arena.state(Arena.State.WAITING);
+        waitingStructure.build();
     }
 
     public void shutdown() {
         if (arena.state() != Arena.State.WAITING || !arena.players().isEmpty()) reset();
+        waitingStructure.remove();
+        if (displayTask != -1) Bukkit.getScheduler().cancelTask(displayTask);
+        for (Entity entity : displays.values()) if (entity != null) entity.remove();
+        displays.clear();
+        displayPins.clear();
+    }
+
+    public String shop(Entity entity) {
+        if (!entity.hasMetadata("bedlamShop") || entity.getMetadata("bedlamShop").isEmpty()) return null;
+        return entity.getMetadata("bedlamShop").get(0).asString();
+    }
+
+    public boolean isDisplay(Entity entity) {
+        return entity.hasMetadata("bedlamShop") || entity.hasMetadata("bedlamGeneratorDisplay");
     }
 
     private void prepareLobby(Player player) {
         clearPlayer(player);
         player.setGameMode(GameMode.ADVENTURE);
-        player.teleport(arena.settings().spectator());
+        player.teleport(arena.settings().waitingSpawn());
         player.getInventory().setItem(8, Items.named(new ItemStack(Items.material("RED_BED", "BED")), ChatColor.RED + "Leave Game"));
     }
 
@@ -311,6 +338,51 @@ public final class ArenaManager {
         }
         for (Location location : arena.settings().diamondGenerators()) generator(location, new ItemStack(Material.DIAMOND), plugin.getConfig().getInt("generator-periods.diamond", 600));
         for (Location location : arena.settings().emeraldGenerators()) generator(location, new ItemStack(Material.EMERALD), plugin.getConfig().getInt("generator-periods.emerald", 1200));
+    }
+
+    private void spawnDisplays() {
+        for (TeamColor team : arena.settings().configuredTeams()) {
+            spawnShop(arena.settings().team(team).itemShop(), "ITEM", ChatColor.GREEN + "ITEM SHOP");
+            spawnShop(arena.settings().team(team).upgradeShop(), "UPGRADE", ChatColor.AQUA + "TEAM UPGRADES");
+        }
+        for (Location location : arena.settings().diamondGenerators()) spawnGeneratorDisplay(location, Material.DIAMOND_BLOCK);
+        for (Location location : arena.settings().emeraldGenerators()) spawnGeneratorDisplay(location, Material.EMERALD_BLOCK);
+        if (!displays.isEmpty()) displayTask = new BukkitRunnable() {
+            @Override public void run() {
+                for (Map.Entry<UUID, Entity> entry : new HashMap<UUID, Entity>(displays).entrySet()) {
+                    Entity entity = entry.getValue();
+                    Location pin = displayPins.get(entry.getKey());
+                    if (entity == null || entity.isDead() || pin == null) continue;
+                    entity.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
+                    if (entity.getLocation().distanceSquared(pin) > 0.0001) entity.teleport(pin);
+                    if (entity instanceof Item && entity.getTicksLived() > 5000) entity.setTicksLived(1);
+                }
+            }
+        }.runTaskTimer(plugin, 1L, 1L).getTaskId();
+    }
+
+    private void spawnShop(Location location, String kind, String name) {
+        if (location == null || location.getWorld() == null) return;
+        Entity villager = location.getWorld().spawnEntity(location, EntityType.VILLAGER);
+        villager.setMetadata("bedlamShop", new FixedMetadataValue(plugin, kind));
+        villager.setCustomName(name);
+        villager.setCustomNameVisible(true);
+        LobbyNpcService.freeze(villager, false);
+        pin(villager, location);
+    }
+
+    private void spawnGeneratorDisplay(Location location, Material block) {
+        if (location == null || location.getWorld() == null) return;
+        Location pin = location.clone().add(0, 1.25, 0);
+        Item item = location.getWorld().dropItem(pin, new ItemStack(block));
+        item.setPickupDelay(Integer.MAX_VALUE);
+        item.setMetadata("bedlamGeneratorDisplay", new FixedMetadataValue(plugin, block.name()));
+        pin(item, pin);
+    }
+
+    private void pin(Entity entity, Location location) {
+        displays.put(entity.getUniqueId(), entity);
+        displayPins.put(entity.getUniqueId(), location.clone());
     }
 
     private void generator(final Location location, final ItemStack stack, int ticks) {

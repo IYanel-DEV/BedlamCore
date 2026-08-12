@@ -10,6 +10,7 @@ import dev.iyanel.bedlamcore.gui.GuiController;
 import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.lobby.LobbySettings;
 import dev.iyanel.bedlamcore.world.GameWorlds;
+import org.bukkit.command.CommandSender;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -55,6 +56,7 @@ public final class BedlamCore extends JavaPlugin {
     public NetworkViewService views() { return views; }
     public SidebarService sidebars() { return sidebars; }
     public GuiController gui() { return gui; }
+    public boolean isAdmin(CommandSender sender) { return sender.isOp() || sender.hasPermission("bedlam.admin"); }
 
     public void applyLobby(LobbySettings value) { lobby = value; saveSettings(); }
     public void saveSettings() { repository.save(lobby, games.settings()); }

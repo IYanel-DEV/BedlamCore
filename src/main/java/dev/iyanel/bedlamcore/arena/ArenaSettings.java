@@ -11,6 +11,7 @@ public final class ArenaSettings {
     private final String id;
     private GameType gameType;
     private String worldName;
+    private Location waitingSpawn;
     private Location spectator;
     private final Map<TeamColor, TeamSettings> teams = new EnumMap<TeamColor, TeamSettings>(TeamColor.class);
     private final List<Location> diamondGenerators = new ArrayList<Location>();
@@ -28,6 +29,8 @@ public final class ArenaSettings {
     public void gameType(GameType value) { gameType = value; }
     public String worldName() { return worldName; }
     public void worldName(String value) { worldName = value; }
+    public Location waitingSpawn() { return clone(waitingSpawn); }
+    public void waitingSpawn(Location value) { waitingSpawn = clone(value); }
     public Location spectator() { return clone(spectator); }
     public void spectator(Location value) { spectator = clone(value); }
     public TeamSettings team(TeamColor color) { return teams.get(color); }
@@ -47,6 +50,7 @@ public final class ArenaSettings {
     public List<String> validate() {
         List<String> missing = new ArrayList<String>();
         if (worldName == null || worldName.isEmpty()) missing.add("game world");
+        if (waitingSpawn == null) missing.add("waiting spawn");
         if (spectator == null) missing.add("spectator spawn");
         int completeTeams = configuredTeams().size();
         if (completeTeams < 2) {
@@ -60,6 +64,7 @@ public final class ArenaSettings {
 
     public ArenaSettings copy() {
         ArenaSettings copy = new ArenaSettings(id, gameType, worldName);
+        copy.waitingSpawn(waitingSpawn);
         copy.spectator(spectator);
         for (TeamColor color : TeamColor.values()) copy.team(color).copyFrom(team(color));
         for (Location location : diamondGenerators) copy.diamondGenerators.add(clone(location));

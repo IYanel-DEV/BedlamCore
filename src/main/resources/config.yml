@@ -15,7 +15,7 @@ isolation:
   chat: true
 chat:
   lobby-prefix: "&7[LOBBY] "
-  name-suffix: " &8» &f"
+  name-suffix: " &8> &f"
   team-prefixes:
     red: "&c[RED] "
     blue: "&9[BLUE] "

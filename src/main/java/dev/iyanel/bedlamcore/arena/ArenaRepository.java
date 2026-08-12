@@ -2,6 +2,7 @@ package dev.iyanel.bedlamcore.arena;
 
 import dev.iyanel.bedlamcore.lobby.LobbySettings;
 import dev.iyanel.bedlamcore.util.Locations;
+import dev.iyanel.bedlamcore.world.GameWorlds;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.WorldCreator;
@@ -36,6 +37,10 @@ public final class ArenaRepository {
             lobby.npc(type).location(decode(yaml.getString(path + "location")));
             try { lobby.npc(type).entityType(EntityType.valueOf(yaml.getString(path + "entity", "VILLAGER"))); }
             catch (IllegalArgumentException ignored) { lobby.npc(type).entityType(EntityType.VILLAGER); }
+            lobby.npc(type).baby(yaml.getBoolean(path + "baby", false));
+            lobby.npc(type).human(yaml.getBoolean(path + "human", false));
+            lobby.npc(type).skin(yaml.getString(path + "skin"));
+            lobby.npc(type).lookAtPlayers(yaml.getBoolean(path + "look-at-players", false));
         }
         return lobby;
     }
@@ -60,6 +65,10 @@ public final class ArenaRepository {
             String path = "lobby.npcs." + type.name().toLowerCase() + ".";
             yaml.set(path + "location", Locations.encode(lobby.npc(type).location()));
             yaml.set(path + "entity", lobby.npc(type).entityType().name());
+            yaml.set(path + "baby", lobby.npc(type).baby());
+            yaml.set(path + "human", lobby.npc(type).human());
+            yaml.set(path + "skin", lobby.npc(type).skin());
+            yaml.set(path + "look-at-players", lobby.npc(type).lookAtPlayers());
         }
         for (ArenaSettings arena : arenas) writeArena(yaml, arena);
         try {
@@ -76,6 +85,7 @@ public final class ArenaRepository {
         Location spectator = decode(yaml.getString(root + ".spectator"));
         if (world == null && spectator != null) world = spectator.getWorld().getName();
         ArenaSettings settings = new ArenaSettings(id, GameType.parse(yaml.getString(root + ".mode")), world);
+        settings.waitingSpawn(decode(yaml.getString(root + ".waiting-spawn")));
         settings.spectator(spectator);
         for (TeamColor color : TeamColor.values()) {
             String path = root + ".teams." + color.name().toLowerCase() + ".";
@@ -95,6 +105,7 @@ public final class ArenaRepository {
         String root = "arenas." + settings.id();
         yaml.set(root + ".mode", settings.gameType().name());
         yaml.set(root + ".world", settings.worldName());
+        yaml.set(root + ".waiting-spawn", Locations.encode(settings.waitingSpawn()));
         yaml.set(root + ".spectator", Locations.encode(settings.spectator()));
         for (TeamColor color : TeamColor.values()) {
             String path = root + ".teams." + color.name().toLowerCase() + ".";
@@ -132,7 +143,9 @@ public final class ArenaRepository {
         File folder = new File(container, name);
         try {
             if (!folder.isDirectory() || !folder.getCanonicalFile().getParentFile().equals(container.getCanonicalFile())) return;
-            new WorldCreator(name).createWorld();
+            WorldCreator creator = new WorldCreator(name);
+            if (GameWorlds.managedName(name)) creator.generator(GameWorlds.oneBlockGenerator());
+            creator.createWorld();
         } catch (IOException exception) {
             plugin.getLogger().warning("Could not load world " + name + ": " + exception.getMessage());
         }

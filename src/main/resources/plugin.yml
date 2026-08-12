@@ -3,6 +3,7 @@ version: ${version}
 main: dev.iyanel.bedlamcore.BedlamCore
 author: Youniss
 description: GUI-first Bed Wars game engine for Spigot and Paper.
+softdepend: [Citizens]
 commands:
   bedlam:
     description: BedlamCore fallback controls.

@@ -18,7 +18,7 @@ public final class BedlamCommand implements CommandExecutor {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         String action = args.length == 0 ? "menu" : args[0].toLowerCase();
         if (action.equals("reload") || action.equals("forcestart") || action.equals("start")) {
-            if (!sender.hasPermission("bedlam.admin")) { sender.sendMessage(ChatColor.RED + "You do not have permission."); return true; }
+            if (!plugin.isAdmin(sender)) { sender.sendMessage(ChatColor.RED + "You do not have permission."); return true; }
             if (action.equals("reload")) { plugin.reloadBedlam(); sender.sendMessage(ChatColor.GREEN + "BedlamCore reloaded."); return true; }
             if (!(sender instanceof Player)) { sender.sendMessage("A player must stand in the arena to force-start it."); return true; }
             ArenaManager manager = plugin.games().arena((Player) sender);
