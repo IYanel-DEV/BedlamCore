@@ -15,6 +15,8 @@ import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 public final class SidebarService {
     private final BedlamCore plugin;
@@ -39,7 +41,33 @@ public final class SidebarService {
         List<String> lines = lines(player);
         int score = lines.size();
         for (String line : lines) objective.getScore(unique(line, score)).setScore(score--);
+        applyTeamColors(board, player);
         player.setScoreboard(board);
+    }
+
+    /** Tab list + nametag colors from match teams. */
+    @SuppressWarnings("deprecation")
+    private void applyTeamColors(Scoreboard board, Player viewer) {
+        ArenaManager manager = plugin.games().arena(viewer);
+        if (manager == null || manager.arena().state() == Arena.State.WAITING || manager.arena().state() == Arena.State.COUNTDOWN) {
+            viewer.setPlayerListName(null);
+            return;
+        }
+        Arena arena = manager.arena();
+        for (TeamColor color : arena.settings().configuredTeams()) {
+            org.bukkit.scoreboard.Team team = board.registerNewTeam(color.name());
+            team.setPrefix(color.chatColor().toString());
+            try {
+                team.getClass().getMethod("setColor", ChatColor.class).invoke(team, color.chatColor());
+            } catch (Throwable ignored) { }
+        }
+        for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
+            Player member = Bukkit.getPlayer(entry.getKey());
+            if (member == null || entry.getValue() == null) continue;
+            org.bukkit.scoreboard.Team team = board.getTeam(entry.getValue().name());
+            if (team != null) team.addEntry(member.getName());
+            member.setPlayerListName(entry.getValue().chatColor() + member.getName());
+        }
     }
 
     private List<String> lines(Player player) {

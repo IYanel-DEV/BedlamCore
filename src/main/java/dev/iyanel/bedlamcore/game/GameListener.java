@@ -22,13 +22,17 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerBedEnterEvent;
@@ -84,10 +88,15 @@ public final class GameListener implements Listener {
             if (name.equals("Bedlam Setup")) plugin.gui().openContextSetup(player); else plugin.gui().openMain(player);
             return;
         }
-        if (name.equals("Leave Game")) {
+        if (name.equals("Leave Game") || name.equals("Return to Lobby")) {
             event.setCancelled(true);
             plugin.games().leave(player);
             giveNavigation(player);
+            return;
+        }
+        if (name.equals("Spectate") && (event.getAction() == Action.RIGHT_CLICK_AIR || event.getAction() == Action.RIGHT_CLICK_BLOCK)) {
+            event.setCancelled(true);
+            plugin.gui().openSpectate(player);
             return;
         }
         GameType placer = plugin.gui().npcPlacer(item);
@@ -143,7 +152,7 @@ public final class GameListener implements Listener {
         ArenaManager manager = plugin.games().arena(player);
         if (manager == null) return;
         Arena arena = manager.arena();
-        if (arena.state() != Arena.State.RUNNING || arena.eliminated().contains(player.getUniqueId())) {
+        if (arena.state() != Arena.State.RUNNING || arena.eliminated().contains(player.getUniqueId()) || manager.isRespawning(player.getUniqueId())) {
             event.setCancelled(true);
             return;
         }
@@ -182,14 +191,43 @@ public final class GameListener implements Listener {
         if (plugin.games().arena(event.getPlayer()) != null) event.setCancelled(true);
     }
 
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onCreatureSpawn(CreatureSpawnEvent event) {
+        ArenaManager manager = plugin.games().arenaInWorld(event.getLocation().getWorld().getName());
+        if (manager == null) return;
+        CreatureSpawnEvent.SpawnReason reason = event.getSpawnReason();
+        // Plugin shopkeepers / holograms / generators use CUSTOM; cancel natural/chunk mobs.
+        if (reason == CreatureSpawnEvent.SpawnReason.CUSTOM) return;
+        event.setCancelled(true);
+    }
+
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player)) return;
+        Player player = (Player) event.getWhoClicked();
         String title = event.getView().getTitle();
-        if (!isBedlamTitle(title)) return;
-        event.setCancelled(true);
-        if (event.getRawSlot() < 0 || event.getRawSlot() >= event.getView().getTopInventory().getSize()) return;
-        plugin.gui().click((Player) event.getWhoClicked(), title, event.getCurrentItem());
+        if (isBedlamTitle(title)) {
+            event.setCancelled(true);
+            if (event.getRawSlot() < 0 || event.getRawSlot() >= event.getView().getTopInventory().getSize()) return;
+            plugin.gui().click(player, title, event.getCurrentItem());
+            return;
+        }
+        if (lockMatchArmor(player, event)) event.setCancelled(true);
+    }
+
+    @EventHandler
+    public void onInventoryDrag(InventoryDragEvent event) {
+        if (!(event.getWhoClicked() instanceof Player)) return;
+        Player player = (Player) event.getWhoClicked();
+        if (isBedlamTitle(event.getView().getTitle())) { event.setCancelled(true); return; }
+        ArenaManager manager = plugin.games().arena(player);
+        if (manager == null || manager.arena().state() != Arena.State.RUNNING) return;
+        if (manager.arena().eliminated().contains(player.getUniqueId())) return;
+        for (int raw : event.getRawSlots()) {
+            if (raw >= 5 && raw <= 8) { event.setCancelled(true); return; }
+        }
+        ItemStack dragged = event.getOldCursor();
+        if (dragged != null && GameRules.isArmor(dragged.getType().name())) event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -201,6 +239,21 @@ public final class GameListener implements Listener {
             return;
         }
         manager.recordPlaced(event.getBlockPlaced());
+        final Player player = event.getPlayer();
+        final ItemStack hand = player.getItemInHand();
+        if (hand != null && hand.getType() == Material.WATER_BUCKET) {
+            // One-use shop bucket: do not leave an empty bucket (Hypixel-style).
+            Bukkit.getScheduler().runTask(plugin, new Runnable() {
+                @Override public void run() {
+                    ItemStack now = player.getItemInHand();
+                    if (now != null && now.getType() == Material.BUCKET) player.setItemInHand(null);
+                    for (int slot = 0; slot < player.getInventory().getSize(); slot++) {
+                        ItemStack stack = player.getInventory().getItem(slot);
+                        if (stack != null && stack.getType() == Material.BUCKET) player.getInventory().setItem(slot, null);
+                    }
+                }
+            });
+        }
         if (event.getBlockPlaced().getType() == Material.TNT) {
             final org.bukkit.Location location = event.getBlockPlaced().getLocation().add(0.5, 0, 0.5);
             Bukkit.getScheduler().runTask(plugin, new Runnable() {
@@ -239,7 +292,7 @@ public final class GameListener implements Listener {
         Player player = event.getPlayer();
         ArenaManager manager = plugin.games().arena(player);
         if (manager == null || manager.arena().state() != Arena.State.RUNNING) return;
-        if (manager.arena().eliminated().contains(player.getUniqueId())) return;
+        if (manager.arena().eliminated().contains(player.getUniqueId()) || manager.isRespawning(player.getUniqueId())) return;
         Location waiting = manager.arena().settings().waitingSpawn();
         if (waiting != null && event.getTo().getY() <= GameRules.voidKillY(waiting.getY())) player.setHealth(0);
     }
@@ -295,8 +348,19 @@ public final class GameListener implements Listener {
     }
 
     @EventHandler public void onDrop(PlayerDropItemEvent event) {
-        String name = Items.name(event.getItemDrop().getItemStack());
-        if (name.equals("Bedlam Menu") || name.equals("Bedlam Setup") || name.equals("Leave Game") || plugin.waitingTemplates().isTool(event.getItemDrop().getItemStack()) || plugin.gui().npcPlacer(event.getItemDrop().getItemStack()) != null) event.setCancelled(true);
+        ItemStack stack = event.getItemDrop().getItemStack();
+        String name = Items.name(stack);
+        if (name.equals("Bedlam Menu") || name.equals("Bedlam Setup") || name.equals("Leave Game") || name.equals("Return to Lobby")
+            || name.equals("Spectate") || plugin.waitingTemplates().isTool(stack) || plugin.gui().npcPlacer(stack) != null) {
+            event.setCancelled(true);
+            return;
+        }
+        ArenaManager manager = plugin.games().arena(event.getPlayer());
+        if (manager == null || manager.arena().state() != Arena.State.RUNNING) return;
+        if (GameRules.isSword(stack.getType().name())) {
+            int swords = GameRules.countSwords(event.getPlayer().getInventory().getContents());
+            if (!GameRules.canDropSword(swords)) event.setCancelled(true);
+        }
     }
 
     public void giveNavigation(Player player) {
@@ -309,11 +373,25 @@ public final class GameListener implements Listener {
         } else if (Items.name(player.getInventory().getItem(8)).equals("Bedlam Setup")) player.getInventory().setItem(8, null);
     }
 
+    private boolean lockMatchArmor(Player player, InventoryClickEvent event) {
+        ArenaManager manager = plugin.games().arena(player);
+        if (manager == null || manager.arena().state() != Arena.State.RUNNING) return false;
+        if (manager.arena().eliminated().contains(player.getUniqueId())) return false;
+        if (event.getSlotType() == InventoryType.SlotType.ARMOR) return true;
+        ItemStack current = event.getCurrentItem();
+        if (event.isShiftClick() && current != null && GameRules.isArmor(current.getType().name())) return true;
+        if (event.getClick() == ClickType.NUMBER_KEY && event.getSlotType() == InventoryType.SlotType.ARMOR) return true;
+        ItemStack cursor = event.getCursor();
+        if (cursor != null && GameRules.isArmor(cursor.getType().name()) && event.getSlotType() == InventoryType.SlotType.ARMOR) return true;
+        return false;
+    }
+
     private static boolean isBedlamTitle(String title) {
         String clean = ChatColor.stripColor(title);
         return clean.equals("Bedlam Menu") || clean.equals("Bedlam Setup") || clean.equals("Lobby Setup") || clean.equals("Game Worlds")
             || clean.equals("World Actions") || clean.equals("Confirm World Delete") || clean.equals("Game Setup") || clean.equals("Team Setup")
-            || clean.equals("NPC Editor") || clean.equals("Solo Games") || clean.equals("Doubles Games") || clean.equals("Item Shop") || clean.equals("Team Upgrades");
+            || clean.equals("NPC Editor") || clean.equals("Solo Games") || clean.equals("Doubles Games") || clean.equals("Item Shop")
+            || clean.equals("Team Upgrades") || clean.equals("Spectate");
     }
 
     private static void takeOne(Player player, ItemStack item) { if (item.getAmount() <= 1) player.setItemInHand(null); else item.setAmount(item.getAmount() - 1); }

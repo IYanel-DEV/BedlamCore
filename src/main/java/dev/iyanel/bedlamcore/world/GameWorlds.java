@@ -80,7 +80,10 @@ public final class GameWorlds {
     }
 
     public void disableAutoSave(World world) {
-        if (world != null) world.setAutoSave(false);
+        if (world == null) return;
+        world.setAutoSave(false);
+        // Arena worlds: no natural animal/monster spawns (shopkeepers spawned by plugin still allowed).
+        world.setSpawnFlags(false, false);
     }
 
     public void saveOnce(World world) {

@@ -32,6 +32,12 @@ public final class GameRulesCheck {
         assertEquals(2, GameRules.swordRank("IRON_SWORD"));
         assertEquals(3, GameRules.swordRank("DIAMOND_SWORD"));
         assertTrue(GameRules.swordRank("IRON_SWORD") > GameRules.swordRank("WOODEN_SWORD"));
+        assertTrue(GameRules.isArmor("IRON_CHESTPLATE"));
+        assertTrue(GameRules.isArmor("LEATHER_BOOTS"));
+        assertFalse(GameRules.isArmor("IRON_SWORD"));
+        assertFalse(GameRules.canDropSword(1));
+        assertTrue(GameRules.canDropSword(2));
+        assertEquals(8.0, GameRules.HEAL_POOL_RADIUS);
         System.out.println("BedlamCore game rules: PASS");
     }
 

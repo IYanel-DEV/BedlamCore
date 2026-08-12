@@ -43,6 +43,22 @@ public final class Items {
         return item;
     }
 
+    /** Spigot 1.8+ / Paper unbreakable so swords and armor never show durability wear. */
+    public static ItemStack unbreakable(ItemStack item) {
+        if (item == null) return null;
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) return item;
+        try {
+            meta.spigot().setUnbreakable(true);
+        } catch (Throwable ignored) {
+            try {
+                meta.getClass().getMethod("setUnbreakable", boolean.class).invoke(meta, true);
+            } catch (Throwable ignored2) { }
+        }
+        item.setItemMeta(meta);
+        return item;
+    }
+
     public static String name(ItemStack item) {
         if (item == null || !item.hasItemMeta() || !item.getItemMeta().hasDisplayName()) {
             return "";

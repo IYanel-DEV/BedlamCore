@@ -1,5 +1,7 @@
 package dev.iyanel.bedlamcore.game;
 
+import org.bukkit.inventory.ItemStack;
+
 import java.util.List;
 import java.util.Map;
 
@@ -9,7 +11,11 @@ public final class GameRules {
     public static final double FORGE_PROTECT = 3.0;
     public static final double SHOP_PROTECT = 2.0;
     public static final double DISPLAY_VIEW = 20.0;
+    public static final double HEAL_POOL_RADIUS = 8.0;
     public static final int ARENA_BOUND_PAD = 40;
+    /** Shop hologram title height above villager feet (Hypixel-like, just over head). */
+    public static final double SHOP_HOLO_TITLE_Y = 2.05;
+    public static final double SHOP_HOLO_SUB_Y = 1.75;
 
     private GameRules() {
     }
@@ -62,5 +68,25 @@ public final class GameRules {
 
     public static boolean isSword(String materialName) {
         return swordRank(materialName) >= 0;
+    }
+
+    public static boolean isArmor(String materialName) {
+        if (materialName == null) return false;
+        return materialName.endsWith("_HELMET") || materialName.endsWith("_CHESTPLATE")
+            || materialName.endsWith("_LEGGINGS") || materialName.endsWith("_BOOTS");
+    }
+
+    public static int countSwords(ItemStack[] contents) {
+        if (contents == null) return 0;
+        int count = 0;
+        for (ItemStack stack : contents) {
+            if (stack != null && isSword(stack.getType().name())) count++;
+        }
+        return count;
+    }
+
+    /** Last sword stays; extras (2+) may be dropped for teammates. */
+    public static boolean canDropSword(int swordCount) {
+        return swordCount >= 2;
     }
 }
