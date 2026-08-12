@@ -1,0 +1,7 @@
+.gradle/
+build/
+.idea/
+*.iml
+.tools/
+servers/legacy-1.8.8/
+servers/current-26.2/

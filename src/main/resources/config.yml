@@ -1,0 +1,9 @@
+minimum-players: 2
+countdown-seconds: 10
+respawn-seconds: 5
+ending-seconds: 8
+generator-periods:
+  iron: 20
+  gold: 80
+  diamond: 600
+  emerald: 1200

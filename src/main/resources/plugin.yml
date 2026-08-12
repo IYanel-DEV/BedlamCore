@@ -1,0 +1,17 @@
+name: BedlamCore
+version: ${version}
+main: dev.iyanel.bedlamcore.BedlamCore
+author: Youniss
+description: GUI-first Bed Wars game engine for Spigot and Paper.
+commands:
+  bedlam:
+    description: BedlamCore fallback controls.
+    usage: /bedlam [menu|join|leave|start|reload]
+    aliases: [bc]
+permissions:
+  bedlam.admin:
+    description: Configure and control BedlamCore arenas.
+    default: op
+  bedlam.play:
+    description: Join BedlamCore games.
+    default: true
