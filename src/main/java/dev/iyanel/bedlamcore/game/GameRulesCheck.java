@@ -1,5 +1,7 @@
 package dev.iyanel.bedlamcore.game;
 
+import dev.iyanel.bedlamcore.arena.GameType;
+
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -17,6 +19,8 @@ public final class GameRulesCheck {
         assertTrue(GameRules.canRespawn(true, false));
         assertFalse(GameRules.canRespawn(false, false));
         assertFalse(GameRules.canRespawn(true, true));
+        assertEquals(1, GameType.SOLO.teamSize());
+        assertEquals(2, GameType.DOUBLES.teamSize());
         System.out.println("BedlamCore game rules: PASS");
     }
 

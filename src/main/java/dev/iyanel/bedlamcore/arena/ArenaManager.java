@@ -30,6 +30,7 @@ public final class ArenaManager {
     private final BedlamCore plugin;
     private final Arena arena;
     private int countdownTask = -1;
+    private int countdownRemaining;
 
     public ArenaManager(BedlamCore plugin, ArenaSettings settings) {
         this.plugin = plugin;
@@ -37,6 +38,7 @@ public final class ArenaManager {
     }
 
     public Arena arena() { return arena; }
+    public int countdownRemaining() { return countdownRemaining; }
 
     public boolean join(Player player) {
         if (!player.hasPermission("bedlam.play")) return false;
@@ -49,10 +51,14 @@ public final class ArenaManager {
             return false;
         }
         if (arena.contains(player.getUniqueId())) return true;
+        if (arena.players().size() >= arena.settings().maximumPlayers()) {
+            player.sendMessage(ChatColor.RED + "That game is full.");
+            return false;
+        }
         arena.players().put(player.getUniqueId(), null);
         prepareLobby(player);
         broadcast(ChatColor.YELLOW + player.getName() + ChatColor.GRAY + " joined " + ChatColor.YELLOW + "(" + arena.players().size() + ")");
-        if (arena.players().size() >= plugin.getConfig().getInt("minimum-players", 2)) beginCountdown();
+        if (arena.players().size() >= minimumPlayers()) beginCountdown();
         return true;
     }
 
@@ -61,14 +67,14 @@ public final class ArenaManager {
         TeamColor team = arena.players().remove(player.getUniqueId());
         arena.eliminated().remove(player.getUniqueId());
         clearPlayer(player);
-        Location lobby = arena.settings().lobby();
+        Location lobby = plugin.lobby().spawn();
         if (lobby != null) player.teleport(lobby);
         if (arena.state() == Arena.State.RUNNING && team != null) checkWinner();
-        if (arena.state() == Arena.State.COUNTDOWN && arena.players().size() < plugin.getConfig().getInt("minimum-players", 2)) cancelCountdown();
+        if (arena.state() == Arena.State.COUNTDOWN && arena.players().size() < minimumPlayers()) cancelCountdown();
     }
 
     public boolean forceStart() {
-        if (arena.state() == Arena.State.RUNNING || arena.state() == Arena.State.ENDING || arena.players().size() < 2) return false;
+        if (arena.state() == Arena.State.RUNNING || arena.state() == Arena.State.ENDING || arena.players().isEmpty()) return false;
         cancelCountdown();
         startGame();
         return true;
@@ -78,6 +84,7 @@ public final class ArenaManager {
         if (arena.state() != Arena.State.WAITING) return;
         arena.state(Arena.State.COUNTDOWN);
         final int start = plugin.getConfig().getInt("countdown-seconds", 10);
+        countdownRemaining = start;
         countdownTask = new BukkitRunnable() {
             private int seconds = start;
 
@@ -93,6 +100,7 @@ public final class ArenaManager {
                     startGame();
                     return;
                 }
+                countdownRemaining = seconds;
                 if (seconds <= 5 || seconds % 5 == 0) broadcast(ChatColor.YELLOW + "Game starts in " + seconds + "s");
                 seconds--;
             }
@@ -102,6 +110,7 @@ public final class ArenaManager {
     private void cancelCountdown() {
         if (countdownTask != -1) Bukkit.getScheduler().cancelTask(countdownTask);
         countdownTask = -1;
+        countdownRemaining = 0;
         if (arena.state() == Arena.State.COUNTDOWN) arena.state(Arena.State.WAITING);
         broadcast(ChatColor.RED + "Countdown cancelled: not enough players.");
     }
@@ -167,7 +176,6 @@ public final class ArenaManager {
 
     public Location respawnLocation(Player player) {
         if (!arena.contains(player.getUniqueId())) return player.getWorld().getSpawnLocation();
-        TeamColor team = arena.team(player.getUniqueId());
         if (arena.eliminated().contains(player.getUniqueId())) return arena.settings().spectator();
         return arena.settings().spectator();
     }
@@ -221,7 +229,8 @@ public final class ArenaManager {
             if (player != null) {
                 clearPlayer(player);
                 player.setGameMode(GameMode.ADVENTURE);
-                player.teleport(arena.settings().lobby());
+                Location lobby = plugin.lobby().spawn();
+                if (lobby != null) player.teleport(lobby);
             }
         }
         arena.players().clear();
@@ -236,7 +245,7 @@ public final class ArenaManager {
     private void prepareLobby(Player player) {
         clearPlayer(player);
         player.setGameMode(GameMode.ADVENTURE);
-        player.teleport(arena.settings().lobby());
+        player.teleport(arena.settings().spectator());
         player.getInventory().setItem(8, Items.named(new ItemStack(Items.material("RED_BED", "BED")), ChatColor.RED + "Leave Game"));
     }
 
@@ -320,6 +329,7 @@ public final class ArenaManager {
         arena.tasks().clear();
         if (countdownTask != -1) Bukkit.getScheduler().cancelTask(countdownTask);
         countdownTask = -1;
+        countdownRemaining = 0;
     }
 
     private void broadcast(String message) {
@@ -340,5 +350,10 @@ public final class ArenaManager {
     private Entity findEntity(UUID uuid) {
         for (org.bukkit.World world : Bukkit.getWorlds()) for (Entity entity : world.getEntities()) if (entity.getUniqueId().equals(uuid)) return entity;
         return null;
+    }
+
+    private int minimumPlayers() {
+        String mode = arena.settings().gameType().name().toLowerCase();
+        return plugin.getConfig().getInt("modes." + mode + ".minimum-players", 2);
     }
 }

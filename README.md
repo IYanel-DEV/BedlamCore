@@ -8,18 +8,20 @@ BedlamCore is an original, GUI-first Bed Wars minigame for Spigot and Paper. It 
 .\gradlew.bat clean check build
 ```
 
-The jar is written to `build/libs/BedlamCore-0.1.0.jar`.
+The jar is written to `build/libs/BedlamCore-0.2.0.jar`.
 
 ## Configure without commands
 
 1. Join as an operator. The **Bedlam Setup** compass is placed in slot 9.
-2. Right-click it and choose **Arena Setup**.
-3. Set the lobby and spectator spawn.
-4. Configure at least Red and Blue. Stand where players should spawn or where a generator/shop should be placed, then click the matching GUI entry. Look directly at a bed before choosing **Set Bed**.
-5. Add diamond and emerald generators, then choose **Validate & Save**.
-6. Open the compass again and use **Quick Join**. The game begins when the configured minimum player count is reached.
+2. Choose **Lobby Setup** to set the join spawn and place the Solo and Doubles NPCs. Right-click a block with the supplied armor stand to place an NPC; shift-left-click it to cycle its entity type. Choose **Apply** to save or **Cancel** to discard the draft.
+3. Choose **Game World Setup** to create a Solo or Doubles world, view every arena, teleport to one, edit it, or delete it after confirmation.
+4. Entering an existing game world opens its setup for administrators. New and incomplete setups print every missing field in chat.
+5. Configure spectator spawn, teams, beds, forges, shops, and diamond/emerald generators. Changes remain drafts until **Apply**; **Cancel** discards them and removes a newly-created draft world.
+6. Players use an NPC or the menu for quick join or a list of waiting games. Admins may run `/bedlam forcestart` inside a waiting arena with one player for testing.
 
-`/bedlam menu`, `join`, `leave`, `start`, and `reload` remain as recovery and console-friendly fallbacks.
+`/bedlam menu`, `solo`, `doubles`, `leave`, `forcestart`, and `reload` remain as recovery and console-friendly fallbacks.
+
+`config.yml` controls lobby-on-join teleporting, world/chat/tab isolation, team chat prefixes and suffix, mode minimum-player counts, and scoreboard footer text.
 
 ## Local compatibility servers
 

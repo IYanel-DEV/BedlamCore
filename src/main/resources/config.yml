@@ -1,7 +1,28 @@
-minimum-players: 2
 countdown-seconds: 10
 respawn-seconds: 5
 ending-seconds: 8
+modes:
+  solo:
+    minimum-players: 2
+  doubles:
+    minimum-players: 2
+lobby:
+  teleport-on-join: true
+setup:
+  auto-open-on-game-world-teleport: true
+isolation:
+  enabled: true
+  chat: true
+chat:
+  lobby-prefix: "&7[LOBBY] "
+  name-suffix: " &8» &f"
+  team-prefixes:
+    red: "&c[RED] "
+    blue: "&9[BLUE] "
+    green: "&a[GREEN] "
+    yellow: "&e[YELLOW] "
+scoreboard:
+  footer: "&fplay.bedlam"
 generator-periods:
   iron: 20
   gold: 80

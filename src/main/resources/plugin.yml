@@ -6,7 +6,7 @@ description: GUI-first Bed Wars game engine for Spigot and Paper.
 commands:
   bedlam:
     description: BedlamCore fallback controls.
-    usage: /bedlam [menu|join|leave|start|reload]
+    usage: /bedlam [menu|solo|doubles|leave|forcestart|reload]
     aliases: [bc]
 permissions:
   bedlam.admin:
