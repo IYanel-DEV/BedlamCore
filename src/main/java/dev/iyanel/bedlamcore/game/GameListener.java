@@ -6,6 +6,7 @@ import dev.iyanel.bedlamcore.arena.ArenaManager;
 import dev.iyanel.bedlamcore.arena.GameType;
 import dev.iyanel.bedlamcore.arena.TeamColor;
 import dev.iyanel.bedlamcore.compat.Items;
+import dev.iyanel.bedlamcore.compat.Sounds;
 import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.util.Locations;
 import org.bukkit.Bukkit;
@@ -44,6 +45,7 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.Iterator;
@@ -91,7 +93,6 @@ public final class GameListener implements Listener {
         if (name.equals("Leave Game") || name.equals("Return to Lobby")) {
             event.setCancelled(true);
             plugin.games().leave(player);
-            giveNavigation(player);
             return;
         }
         if (name.equals("Spectate") && (event.getAction() == Action.RIGHT_CLICK_AIR || event.getAction() == Action.RIGHT_CLICK_BLOCK)) {
@@ -119,6 +120,28 @@ public final class GameListener implements Listener {
         }
         if (event.getClickedBlock() == null || arena.state() != Arena.State.RUNNING) return;
         if (event.getClickedBlock().getType().name().contains("BED")) { event.setCancelled(true); return; }
+        Location click = event.getClickedBlock().getLocation();
+        TeamColor teamChest = manager.teamChestAt(click);
+        if (teamChest != null) {
+            event.setCancelled(true);
+            if (event.getAction() == Action.LEFT_CLICK_BLOCK) {
+                Inventory inv = arena.teamChest(teamChest);
+                if (inv != null) manager.fastDeposit(player, inv, player.getItemInHand());
+            } else {
+                manager.openTeamChest(player, teamChest);
+            }
+            return;
+        }
+        TeamColor ender = manager.enderChestAt(click);
+        if (ender != null || event.getClickedBlock().getType().name().contains("ENDER_CHEST")) {
+            event.setCancelled(true);
+            if (event.getAction() == Action.LEFT_CLICK_BLOCK) {
+                manager.fastDeposit(player, player.getEnderChest(), player.getItemInHand());
+            } else {
+                manager.openEnderChest(player);
+            }
+            return;
+        }
         for (TeamColor team : arena.settings().configuredTeams()) {
             if (Locations.near(event.getClickedBlock().getLocation(), arena.settings().team(team).itemShop(), 2.0)) { event.setCancelled(true); plugin.gui().openShop(player); return; }
             if (Locations.near(event.getClickedBlock().getLocation(), arena.settings().team(team).upgradeShop(), 2.0)) { event.setCancelled(true); plugin.gui().openUpgrades(player); return; }
@@ -304,6 +327,12 @@ public final class GameListener implements Listener {
         event.getDrops().clear();
         event.setDroppedExp(0);
         event.setDeathMessage(null);
+        Sounds.death(event.getEntity());
+        Player killer = event.getEntity().getKiller();
+        if (killer != null && plugin.games().arena(killer) == manager) {
+            Sounds.kill(killer);
+            Sounds.levelUp(killer);
+        }
         manager.handleDeath(event.getEntity());
         final Player player = event.getEntity();
         // Skip vanilla respawn screen (Spigot API).
@@ -391,7 +420,8 @@ public final class GameListener implements Listener {
         return clean.equals("Bedlam Menu") || clean.equals("Bedlam Setup") || clean.equals("Lobby Setup") || clean.equals("Game Worlds")
             || clean.equals("World Actions") || clean.equals("Confirm World Delete") || clean.equals("Game Setup") || clean.equals("Team Setup")
             || clean.equals("NPC Editor") || clean.equals("Solo Games") || clean.equals("Doubles Games") || clean.equals("Item Shop")
-            || clean.equals("Team Upgrades") || clean.equals("Spectate");
+            || clean.equals("Quick Buy") || clean.equals("Team Upgrades") || clean.equals("Upgrades & Traps") || clean.equals("Spectate")
+            || clean.startsWith("Play Bed Wars ") || clean.startsWith("Map Selector ");
     }
 
     private static void takeOne(Player player, ItemStack item) { if (item.getAmount() <= 1) player.setItemInHand(null); else item.setAmount(item.getAmount() - 1); }

@@ -95,6 +95,8 @@ public final class ArenaRepository {
             team.forge(decode(yaml.getString(path + "forge")));
             team.itemShop(decode(yaml.getString(path + "item-shop")));
             team.upgradeShop(decode(yaml.getString(path + "upgrade-shop")));
+            team.teamChest(decode(yaml.getString(path + "team-chest")));
+            team.enderChest(decode(yaml.getString(path + "ender-chest")));
         }
         readLocations(yaml.getStringList(root + ".generators.diamond"), settings.diamondGenerators());
         readLocations(yaml.getStringList(root + ".generators.emerald"), settings.emeraldGenerators());
@@ -115,6 +117,8 @@ public final class ArenaRepository {
             yaml.set(path + "forge", Locations.encode(team.forge()));
             yaml.set(path + "item-shop", Locations.encode(team.itemShop()));
             yaml.set(path + "upgrade-shop", Locations.encode(team.upgradeShop()));
+            yaml.set(path + "team-chest", Locations.encode(team.teamChest()));
+            yaml.set(path + "ender-chest", Locations.encode(team.enderChest()));
         }
         yaml.set(root + ".generators.diamond", encode(settings.diamondGenerators()));
         yaml.set(root + ".generators.emerald", encode(settings.emeraldGenerators()));

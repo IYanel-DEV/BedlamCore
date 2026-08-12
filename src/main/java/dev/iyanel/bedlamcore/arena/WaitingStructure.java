@@ -9,13 +9,18 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class WaitingStructure {
+    private final WaitingTemplateService template;
     private final Location center;
     private final List<BlockState> replaced = new ArrayList<BlockState>();
 
-    WaitingStructure(Location center) { this.center = center == null ? null : center.getBlock().getLocation(); }
+    WaitingStructure(WaitingTemplateService template, Location center) {
+        this.template = template;
+        this.center = center == null ? null : center.getBlock().getLocation();
+    }
 
     void build() {
         if (center == null || !replaced.isEmpty()) return;
+        if (template.place(center, replaced)) return;
         for (int x = -3; x <= 3; x++) for (int z = -3; z <= 3; z++) place(x, -1, z, Material.GLASS);
         for (int y = 0; y <= 3; y++) {
             place(-3, y, -3, Material.GLASS); place(-3, y, 3, Material.GLASS);

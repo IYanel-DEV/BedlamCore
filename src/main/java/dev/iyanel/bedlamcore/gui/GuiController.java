@@ -35,8 +35,10 @@ public final class GuiController {
     public static final String ADMIN_TITLE = ChatColor.DARK_GRAY + "Bedlam Setup";
     public static final String LOBBY_TITLE = ChatColor.DARK_GRAY + "Lobby Setup";
     public static final String WORLDS_TITLE = ChatColor.DARK_GRAY + "Game Worlds";
-    public static final String SHOP_TITLE = ChatColor.DARK_GRAY + "Item Shop";
-    public static final String UPGRADES_TITLE = ChatColor.DARK_GRAY + "Team Upgrades";
+    public static final String SHOP_TITLE = ChatColor.DARK_GRAY + "Quick Buy";
+    public static final String UPGRADES_TITLE = ChatColor.DARK_GRAY + "Upgrades & Traps";
+    public static final String PLAY_TITLE_PREFIX = "Play Bed Wars ";
+    public static final String MAP_TITLE_PREFIX = "Map Selector ";
 
     private final BedlamCore plugin;
     private final Map<UUID, LobbySettings> lobbyDrafts = new HashMap<UUID, LobbySettings>();
@@ -196,20 +198,46 @@ public final class GuiController {
         inventory.setItem(12, setupItem(Material.IRON_INGOT, "Set Forge", settings.forge() != null));
         inventory.setItem(14, setupItem(Material.CHEST, "Set Item Shop", settings.itemShop() != null));
         inventory.setItem(15, setupItem(Items.material("ENCHANTING_TABLE", "ENCHANTMENT_TABLE"), "Set Upgrade Shop", settings.upgradeShop() != null));
+        inventory.setItem(16, setupItem(Material.CHEST, "Set Team Chest", settings.teamChest() != null));
+        inventory.setItem(17, setupItem(Items.material("ENDER_CHEST"), "Set Ender Chest", settings.enderChest() != null));
         inventory.setItem(22, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
         player.openInventory(inventory);
     }
 
     public void openQueue(Player player, GameType type) {
-        Inventory inventory = Bukkit.createInventory(null, 54, ChatColor.DARK_GRAY + type.displayName() + " Games");
-        inventory.setItem(4, Items.named(new ItemStack(Material.EMERALD), ChatColor.GREEN + "Quick Join " + type.displayName()));
+        Inventory inventory = Bukkit.createInventory(null, 27, ChatColor.DARK_GRAY + PLAY_TITLE_PREFIX + type.displayName());
+        inventory.setItem(11, Items.named(new ItemStack(Items.material("RED_BED", "BED")),
+            ChatColor.GREEN + "Bed Wars " + type.displayName(),
+            ChatColor.WHITE + "Play a game of Bed Wars " + type.displayName() + ".",
+            ChatColor.WHITE + (type == GameType.SOLO ? "One player per team." : "Two players per team."),
+            "",
+            ChatColor.YELLOW + "Click to play!"));
+        inventory.setItem(15, Items.named(new ItemStack(Items.material("OAK_SIGN", "SIGN")),
+            ChatColor.GREEN + "Map Selector (" + type.displayName() + ")",
+            ChatColor.WHITE + "Pick which map you want to play!",
+            "",
+            ChatColor.YELLOW + "Click to browse!"));
+        player.openInventory(inventory);
+    }
+
+    public void openMapSelector(Player player, GameType type) {
+        Inventory inventory = Bukkit.createInventory(null, 54, ChatColor.DARK_GRAY + MAP_TITLE_PREFIX + type.displayName());
+        inventory.setItem(4, Items.named(new ItemStack(Items.material("RED_BED", "BED")),
+            ChatColor.GREEN + "Random Map",
+            ChatColor.WHITE + "Quick join any waiting " + type.displayName() + " game.",
+            "",
+            ChatColor.YELLOW + "Click to play!"));
         int slot = 9;
         for (ArenaManager manager : plugin.games().arenas()) {
             Arena arena = manager.arena();
             if (arena.settings().gameType() != type || !arena.settings().validate().isEmpty()) continue;
             if (arena.state() != Arena.State.WAITING && arena.state() != Arena.State.COUNTDOWN) continue;
-            inventory.setItem(slot++, Items.named(new ItemStack(Material.MAP), ChatColor.YELLOW + "Join: " + arena.settings().id(),
-                ChatColor.GRAY + "Players: " + arena.players().size() + "/" + arena.settings().maximumPlayers(), ChatColor.GRAY + "State: " + arena.state().name()));
+            inventory.setItem(slot++, Items.named(new ItemStack(Items.material("OAK_SIGN", "SIGN")),
+                ChatColor.GREEN + arena.settings().id(),
+                ChatColor.WHITE + "Players: " + arena.players().size() + "/" + arena.settings().maximumPlayers(),
+                ChatColor.GRAY + "State: " + arena.state().name(),
+                "",
+                ChatColor.YELLOW + "Click to join!"));
             if (slot >= inventory.getSize()) break;
         }
         player.openInventory(inventory);
@@ -227,10 +255,16 @@ public final class GuiController {
         else if (cleanTitle.equals("Game Setup")) clickArenaSetup(player, name);
         else if (cleanTitle.equals("Team Setup")) clickTeamSetup(player, name);
         else if (cleanTitle.equals("NPC Editor")) clickNpcEditor(player, name);
-        else if (cleanTitle.equals("Solo Games")) clickQueue(player, GameType.SOLO, name);
+        else if (cleanTitle.startsWith("Play Bed Wars ")) {
+            GameType type = GameType.parse(cleanTitle.substring("Play Bed Wars ".length()));
+            clickPlay(player, type, name);
+        } else if (cleanTitle.startsWith("Map Selector ")) {
+            GameType type = GameType.parse(cleanTitle.substring("Map Selector ".length()));
+            clickMap(player, type, name);
+        } else if (cleanTitle.equals("Solo Games")) clickQueue(player, GameType.SOLO, name);
         else if (cleanTitle.equals("Doubles Games")) clickQueue(player, GameType.DOUBLES, name);
-        else if (cleanTitle.equals("Item Shop")) buy(player, name);
-        else if (cleanTitle.equals("Team Upgrades")) upgrade(player, name);
+        else if (cleanTitle.equals("Quick Buy") || cleanTitle.equals("Item Shop")) buy(player, name);
+        else if (cleanTitle.equals("Upgrades & Traps") || cleanTitle.equals("Team Upgrades")) upgrade(player, name);
         else if (cleanTitle.equals("Spectate")) clickSpectate(player, name);
     }
 
@@ -370,12 +404,27 @@ public final class GuiController {
         else if (name.equals("Set Forge")) settings.forge(player.getLocation());
         else if (name.equals("Set Item Shop")) settings.itemShop(player.getLocation());
         else if (name.equals("Set Upgrade Shop")) settings.upgradeShop(player.getLocation());
+        else if (name.equals("Set Team Chest")) settings.teamChest(player.getLocation());
+        else if (name.equals("Set Ender Chest")) settings.enderChest(player.getLocation());
         else if (name.equals("Set Bed (look at it)")) {
             Block target = targetBlock(player, 6);
             if (target == null || !target.getType().name().contains("BED")) { player.sendMessage(ChatColor.RED + "Look directly at a bed within six blocks."); return; }
             settings.bed(target.getLocation());
         } else if (name.equals("Back")) { openArenaSetup(player); return; }
         openTeamSetup(player, team);
+    }
+
+    private void clickPlay(Player player, GameType type, String name) {
+        if (name.equals("Bed Wars " + type.displayName())) plugin.games().quickJoin(player, type);
+        else if (name.startsWith("Map Selector")) openMapSelector(player, type);
+    }
+
+    private void clickMap(Player player, GameType type, String name) {
+        if (name.equals("Random Map")) plugin.games().quickJoin(player, type);
+        else {
+            ArenaManager manager = plugin.games().byId(name);
+            if (manager != null) { plugin.games().leave(player); manager.join(player); }
+        }
     }
 
     private void clickQueue(Player player, GameType type, String name) {
@@ -520,21 +569,28 @@ public final class GuiController {
         shopCategory.put(player.getUniqueId(), category);
         Inventory inventory = Bukkit.createInventory(null, 54, SHOP_TITLE);
         inventory.setItem(0, categoryTab(Material.NETHER_STAR, "Quick Buy", category));
-        inventory.setItem(1, categoryTab(Items.material("WHITE_WOOL", "WOOL"), "Blocks", category));
+        inventory.setItem(1, categoryTab(Items.material("WHITE_TERRACOTTA", "STAINED_CLAY"), "Blocks", category));
         inventory.setItem(2, categoryTab(Items.material("GOLDEN_SWORD", "GOLD_SWORD"), "Melee", category));
         inventory.setItem(3, categoryTab(Items.material("CHAINMAIL_BOOTS"), "Armor", category));
         inventory.setItem(4, categoryTab(Items.material("STONE_PICKAXE"), "Tools", category));
         inventory.setItem(5, categoryTab(Material.BOW, "Ranged", category));
         inventory.setItem(6, categoryTab(Items.material("BREWING_STAND", "BREWING_STAND_ITEM"), "Potions", category));
         inventory.setItem(7, categoryTab(Material.TNT, "Utility", category));
-        ItemStack pane = Items.named(Items.stack("GRAY_STAINED_GLASS_PANE", "STAINED_GLASS_PANE", 1, (short) 7), " ");
-        for (int i = 9; i < 18; i++) inventory.setItem(i, pane);
+        inventory.setItem(8, categoryTab(Items.material("REDSTONE_TORCH", "REDSTONE_TORCH_ON"), "Traps", category));
+        ItemStack gray = Items.named(Items.stack("GRAY_STAINED_GLASS_PANE", "STAINED_GLASS_PANE", 1, (short) 7), " ");
+        ItemStack lime = Items.named(Items.stack("LIME_STAINED_GLASS_PANE", "STAINED_GLASS_PANE", 1, (short) 5), " ");
+        String[] cats = {"Quick Buy", "Blocks", "Melee", "Armor", "Tools", "Ranged", "Potions", "Utility", "Traps"};
+        for (int i = 0; i < 9; i++) inventory.setItem(9 + i, cats[i].equals(category) ? lime : gray);
+        ArenaManager manager = plugin.games().arena(player);
+        TeamColor team = manager == null ? TeamColor.RED : manager.arena().team(player.getUniqueId());
+        if (team == null) team = TeamColor.RED;
         if (category.equals("Quick Buy") || category.equals("Blocks")) {
-            inventory.setItem(19, offer(TeamColor.RED.wool(16), "16 Wool", 4, "Iron"));
-            inventory.setItem(20, offer(Items.stack("OAK_PLANKS", "WOOD", 16, (short) 0), "16 Oak Planks", 4, "Gold"));
-            inventory.setItem(21, offer(new ItemStack(Items.material("END_STONE", "ENDER_STONE"), 12), "12 End Stone", 24, "Iron"));
-            inventory.setItem(22, offer(new ItemStack(Material.LADDER, 8), "8 Ladders", 4, "Iron"));
-            inventory.setItem(23, offer(new ItemStack(Material.GLASS, 4), "4 Glass", 12, "Iron"));
+            inventory.setItem(19, offer(team.wool(16), "16 Wool", 4, "Iron"));
+            inventory.setItem(20, offer(Items.stack("WHITE_TERRACOTTA", "STAINED_CLAY", 16, (short) 0), "16 Hardened Clay", 12, "Iron"));
+            inventory.setItem(21, offer(new ItemStack(Material.GLASS, 4), "4 Glass", 12, "Iron"));
+            inventory.setItem(22, offer(Items.stack("OAK_PLANKS", "WOOD", 16, (short) 0), "16 Oak Planks", 4, "Gold"));
+            inventory.setItem(23, offer(new ItemStack(Items.material("END_STONE", "ENDER_STONE"), 12), "12 End Stone", 24, "Iron"));
+            inventory.setItem(24, offer(new ItemStack(Material.LADDER, 8), "8 Ladders", 4, "Iron"));
         }
         if (category.equals("Quick Buy") || category.equals("Melee")) {
             int base = category.equals("Melee") ? 19 : 28;
@@ -546,19 +602,29 @@ public final class GuiController {
         if (category.equals("Quick Buy") || category.equals("Armor")) {
             int base = category.equals("Armor") ? 19 : 37;
             inventory.setItem(base, offer(new ItemStack(Items.material("CHAINMAIL_BOOTS")), "Permanent Chainmail Armor", 40, "Iron"));
-            inventory.setItem(base + 1, offer(new ItemStack(Items.material("IRON_CHESTPLATE")), "Permanent Iron Armor", 12, "Gold"));
-            inventory.setItem(base + 2, offer(new ItemStack(Items.material("DIAMOND_CHESTPLATE")), "Permanent Diamond Armor", 6, "Emerald"));
+            inventory.setItem(base + 1, offer(new ItemStack(Items.material("IRON_BOOTS")), "Permanent Iron Armor", 12, "Gold"));
+            inventory.setItem(base + 2, offer(new ItemStack(Items.material("DIAMOND_BOOTS")), "Permanent Diamond Armor", 6, "Emerald"));
         }
-        if (category.equals("Tools")) {
-            inventory.setItem(19, offer(new ItemStack(Items.material("WOODEN_PICKAXE", "WOOD_PICKAXE")), "Wooden Pickaxe", 10, "Iron"));
-            inventory.setItem(20, offer(new ItemStack(Items.material("IRON_PICKAXE")), "Iron Pickaxe", 10, "Gold"));
-            inventory.setItem(21, offer(new ItemStack(Items.material("DIAMOND_PICKAXE")), "Diamond Pickaxe", 6, "Gold"));
-            inventory.setItem(22, offer(new ItemStack(Items.material("WOODEN_AXE", "WOOD_AXE")), "Wooden Axe", 10, "Iron"));
-            inventory.setItem(23, offer(new ItemStack(Items.material("SHEARS")), "Shears", 20, "Iron"));
+        if (category.equals("Tools") || category.equals("Quick Buy")) {
+            int base = category.equals("Tools") ? 19 : 29;
+            if (category.equals("Tools")) {
+                inventory.setItem(19, offer(new ItemStack(Items.material("WOODEN_PICKAXE", "WOOD_PICKAXE")), "Wooden Pickaxe", 10, "Iron"));
+                inventory.setItem(20, offer(new ItemStack(Items.material("IRON_PICKAXE")), "Iron Pickaxe", 10, "Gold"));
+                inventory.setItem(21, offer(new ItemStack(Items.material("DIAMOND_PICKAXE")), "Diamond Pickaxe", 6, "Gold"));
+                inventory.setItem(22, offer(new ItemStack(Items.material("WOODEN_AXE", "WOOD_AXE")), "Wooden Axe", 10, "Iron"));
+                inventory.setItem(23, offer(new ItemStack(Items.material("SHEARS")), "Shears", 20, "Iron"));
+            } else {
+                inventory.setItem(base, offer(new ItemStack(Items.material("SHEARS")), "Shears", 20, "Iron"));
+            }
         }
-        if (category.equals("Ranged")) {
-            inventory.setItem(19, offer(new ItemStack(Material.BOW), "Bow", 12, "Gold"));
-            inventory.setItem(20, offer(new ItemStack(Material.ARROW, 8), "8 Arrows", 2, "Gold"));
+        if (category.equals("Ranged") || category.equals("Quick Buy")) {
+            int base = category.equals("Ranged") ? 19 : 30;
+            if (category.equals("Ranged")) {
+                inventory.setItem(19, offer(new ItemStack(Material.BOW), "Bow", 12, "Gold"));
+                inventory.setItem(20, offer(new ItemStack(Material.ARROW, 8), "8 Arrows", 2, "Gold"));
+            } else {
+                inventory.setItem(base, offer(new ItemStack(Material.BOW), "Bow", 12, "Gold"));
+            }
         }
         if (category.equals("Potions")) {
             inventory.setItem(19, offer(new ItemStack(Items.material("POTION")), "Speed Potion", 1, "Emerald"));
@@ -570,22 +636,28 @@ public final class GuiController {
                 inventory.setItem(19, offer(new ItemStack(Items.material("GOLDEN_APPLE")), "Golden Apple", 3, "Gold"));
                 inventory.setItem(20, offer(new ItemStack(Material.TNT), "TNT", 4, "Gold"));
                 inventory.setItem(21, offer(new ItemStack(Items.material("FIRE_CHARGE", "FIREBALL")), "Fireball", 40, "Iron"));
-                inventory.setItem(22, offer(new ItemStack(Material.ENDER_PEARL), "Ender Pearl", 4, "Emerald"));
-                inventory.setItem(23, offer(new ItemStack(Material.WATER_BUCKET), "Water Bucket", 3, "Gold"));
+                inventory.setItem(22, offer(new ItemStack(Material.WATER_BUCKET), "Water Bucket", 3, "Gold"));
+                inventory.setItem(23, offer(new ItemStack(Material.ENDER_PEARL), "Ender Pearl", 4, "Emerald"));
                 inventory.setItem(24, offer(new ItemStack(Material.SPONGE, 4), "4 Sponges", 3, "Gold"));
             } else {
+                inventory.setItem(39, offer(new ItemStack(Material.TNT), "TNT", 4, "Gold"));
                 inventory.setItem(40, offer(new ItemStack(Items.material("FIRE_CHARGE", "FIREBALL")), "Fireball", 40, "Iron"));
-                inventory.setItem(41, offer(new ItemStack(Material.TNT), "TNT", 4, "Gold"));
-                inventory.setItem(42, offer(new ItemStack(Material.WATER_BUCKET), "Water Bucket", 3, "Gold"));
-                inventory.setItem(43, offer(new ItemStack(Items.material("GOLDEN_APPLE")), "Golden Apple", 3, "Gold"));
+                inventory.setItem(41, offer(new ItemStack(Material.WATER_BUCKET), "Water Bucket", 3, "Gold"));
+                inventory.setItem(42, offer(new ItemStack(Items.material("GOLDEN_APPLE")), "Golden Apple", 3, "Gold"));
+                inventory.setItem(43, offer(new ItemStack(Material.ENDER_PEARL), "Ender Pearl", 4, "Emerald"));
             }
         }
+        if (category.equals("Traps")) {
+            inventory.setItem(19, offer(new ItemStack(Items.material("REDSTONE_TORCH", "REDSTONE_TORCH_ON")), "Alarm Trap", 1, "Diamond"));
+        }
+        inventory.setItem(48, Items.named(new ItemStack(Material.COMPASS), ChatColor.GREEN + "Quick Buy Settings", ChatColor.GRAY + "Coming soon"));
+        inventory.setItem(49, Items.named(new ItemStack(Items.material("FIREWORK_STAR", "FIREWORK_CHARGE")), ChatColor.GREEN + "Close", ChatColor.YELLOW + "Click to close"));
         player.openInventory(inventory);
     }
 
     private static ItemStack categoryTab(Material material, String name, String selected) {
         boolean on = name.equals(selected);
-        return Items.named(new ItemStack(material), (on ? ChatColor.GREEN : ChatColor.YELLOW) + name,
+        return Items.named(new ItemStack(material), (on ? ChatColor.GREEN : ChatColor.GRAY) + name,
             on ? ChatColor.GRAY + "Selected" : ChatColor.GRAY + "Click to browse");
     }
 
@@ -594,46 +666,63 @@ public final class GuiController {
         if (manager == null) return;
         Arena arena = manager.arena();
         TeamColor team = arena.team(player.getUniqueId());
-        Inventory inventory = Bukkit.createInventory(null, 45, UPGRADES_TITLE);
+        Inventory inventory = Bukkit.createInventory(null, 54, UPGRADES_TITLE);
         ItemStack pane = Items.named(Items.stack("GRAY_STAINED_GLASS_PANE", "STAINED_GLASS_PANE", 1, (short) 7), " ");
-        for (int i = 0; i < 9; i++) inventory.setItem(i, pane);
-        for (int i = 36; i < 45; i++) inventory.setItem(i, pane);
-        inventory.setItem(4, Items.named(new ItemStack(Items.material("BEACON")), ChatColor.AQUA + "" + ChatColor.BOLD + "Team Upgrades",
-            ChatColor.GRAY + "Purchases help your whole team"));
-        inventory.setItem(19, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Sharpened Swords",
+        for (int i = 27; i < 36; i++) inventory.setItem(i, pane);
+        inventory.setItem(10, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Sharpened Swords",
             arena.sharpness(team) ? ChatColor.GREEN + "Purchased" : ChatColor.GRAY + "Cost: 4 Diamond",
             ChatColor.DARK_GRAY + "Sharpness I on team swords"));
         int level = arena.protection(team);
         int cost = new int[] {2, 4, 8, 16}[Math.min(level, 3)];
-        inventory.setItem(20, Items.named(new ItemStack(Material.IRON_CHESTPLATE), ChatColor.AQUA + "Reinforced Armor " + roman(level + 1),
+        inventory.setItem(11, Items.named(new ItemStack(Material.IRON_CHESTPLATE), ChatColor.AQUA + "Reinforced Armor " + roman(level + 1),
             level >= 4 ? ChatColor.GREEN + "Maximum level" : ChatColor.GRAY + "Cost: " + cost + " Diamond",
             ChatColor.DARK_GRAY + "Protection on team armor"));
-        int forge = arena.forgeLevel(team);
-        inventory.setItem(21, Items.named(new ItemStack(Material.IRON_INGOT), ChatColor.AQUA + "Forge " + roman(forge + 1),
-            forge >= 4 ? ChatColor.GREEN + "Maximum level" : ChatColor.GRAY + "Cost: " + (forge + 2) + " Diamond",
-            ChatColor.DARK_GRAY + "Faster iron/gold at your forge"));
         int haste = arena.hasteLevel(team);
-        inventory.setItem(22, Items.named(new ItemStack(Items.material("GOLDEN_PICKAXE", "GOLD_PICKAXE")), ChatColor.AQUA + "Maniac Miner " + roman(haste + 1),
+        inventory.setItem(12, Items.named(new ItemStack(Items.material("GOLDEN_PICKAXE", "GOLD_PICKAXE")), ChatColor.AQUA + "Maniac Miner " + roman(haste + 1),
             haste >= 2 ? ChatColor.GREEN + "Maximum level" : ChatColor.GRAY + "Cost: " + (haste == 0 ? 2 : 4) + " Diamond",
             ChatColor.DARK_GRAY + "Haste for your team"));
-        inventory.setItem(23, Items.named(new ItemStack(Items.material("BEACON")), ChatColor.AQUA + "Heal Pool",
+        inventory.setItem(14, Items.named(new ItemStack(Items.material("TRIPWIRE_HOOK")), ChatColor.YELLOW + "Alarm Trap",
+            ChatColor.GRAY + "Cost: 1 Diamond", ChatColor.DARK_GRAY + "Alerts when enemies enter base",
+            ChatColor.GRAY + "Queue: " + arena.traps(team).size() + "/" + GameRules.TRAP_QUEUE_MAX));
+        int forge = arena.forgeLevel(team);
+        inventory.setItem(19, Items.named(new ItemStack(Material.FURNACE), ChatColor.AQUA + "Forge " + roman(forge + 1),
+            forge >= 4 ? ChatColor.GREEN + "Maximum level" : ChatColor.GRAY + "Cost: " + (forge + 2) + " Diamond",
+            ChatColor.DARK_GRAY + "Faster iron/gold at your forge"));
+        inventory.setItem(20, Items.named(new ItemStack(Items.material("BEACON")), ChatColor.AQUA + "Heal Pool",
             arena.healPool(team) ? ChatColor.GREEN + "Purchased" : ChatColor.GRAY + "Cost: 3 Diamond",
             ChatColor.DARK_GRAY + "Regen + green particles at base"));
+        inventory.setItem(21, Items.named(new ItemStack(Items.material("DRAGON_EGG")), ChatColor.AQUA + "Dragon Buff",
+            arena.dragonBuff(team) ? ChatColor.GREEN + "Purchased" : ChatColor.GRAY + "Cost: 5 Diamond",
+            ChatColor.DARK_GRAY + "Your team gets a late-game edge"));
+        inventory.setItem(23, Items.named(new ItemStack(Items.material("FEATHER")), ChatColor.YELLOW + "More traps soon",
+            ChatColor.GRAY + "Scaffold slot"));
+        List<Arena.TrapType> traps = arena.traps(team);
+        for (int i = 0; i < GameRules.TRAP_QUEUE_MAX; i++) {
+            if (i < traps.size()) {
+                inventory.setItem(39 + i, Items.named(team.wool(1), ChatColor.GREEN + "Trap #" + (i + 1),
+                    ChatColor.WHITE + traps.get(i).name()));
+            } else {
+                inventory.setItem(39 + i, Items.named(Items.stack("GRAY_WOOL", "WOOL", 1, (short) 7), ChatColor.GRAY + "Empty Trap Slot",
+                    ChatColor.DARK_GRAY + "Buy a trap above"));
+            }
+        }
         player.openInventory(inventory);
     }
 
     private void buy(Player player, String name) {
         if (name.equals("Quick Buy") || name.equals("Blocks") || name.equals("Melee") || name.equals("Armor")
-            || name.equals("Tools") || name.equals("Ranged") || name.equals("Potions") || name.equals("Utility")) {
+            || name.equals("Tools") || name.equals("Ranged") || name.equals("Potions") || name.equals("Utility") || name.equals("Traps")) {
             openShopCategory(player, name);
             return;
         }
+        if (name.equals("Close") || name.equals("Quick Buy Settings")) { player.closeInventory(); return; }
         ArenaManager manager = plugin.games().arena(player);
         if (manager == null) return;
         Arena arena = manager.arena();
         TeamColor team = arena.team(player.getUniqueId());
         if (team == null || arena.state() != Arena.State.RUNNING) return;
         if (name.equals("16 Wool") && pay(player, Material.IRON_INGOT, 4)) give(player, team.wool(16));
+        else if (name.equals("16 Hardened Clay") && pay(player, Material.IRON_INGOT, 12)) give(player, Items.stack("WHITE_TERRACOTTA", "STAINED_CLAY", 16, (short) 0));
         else if (name.equals("Stone Sword") && pay(player, Material.IRON_INGOT, 10)) giveSword(player, sword(Items.material("STONE_SWORD"), arena.sharpness(team)));
         else if (name.equals("Iron Sword") && pay(player, Material.GOLD_INGOT, 7)) giveSword(player, sword(Material.IRON_SWORD, arena.sharpness(team)));
         else if (name.equals("Diamond Sword") && pay(player, Material.EMERALD, 4)) giveSword(player, sword(Items.material("DIAMOND_SWORD"), arena.sharpness(team)));
@@ -680,6 +769,9 @@ public final class GuiController {
         else if (name.equals("Speed Potion") && pay(player, Material.EMERALD, 1)) give(player, potion(8194));
         else if (name.equals("Jump Potion") && pay(player, Material.EMERALD, 1)) give(player, potion(8203));
         else if (name.equals("Invisibility Potion") && pay(player, Material.EMERALD, 2)) give(player, potion(8206));
+        else if (name.equals("Alarm Trap") && pay(player, Material.DIAMOND, 1)) {
+            if (!arena.enqueueTrap(team, Arena.TrapType.ALARM)) player.sendMessage(ChatColor.RED + "Trap queue is full.");
+        }
         openShopCategory(player, shopCategory.containsKey(player.getUniqueId()) ? shopCategory.get(player.getUniqueId()) : "Quick Buy");
     }
 
@@ -715,6 +807,10 @@ public final class GuiController {
             }
         } else if (name.equals("Heal Pool") && !arena.healPool(team) && pay(player, Material.DIAMOND, 3)) {
             arena.healPool(team, true);
+        } else if (name.equals("Dragon Buff") && !arena.dragonBuff(team) && pay(player, Material.DIAMOND, 5)) {
+            arena.dragonBuff(team, true);
+        } else if (name.equals("Alarm Trap") && pay(player, Material.DIAMOND, 1)) {
+            if (!arena.enqueueTrap(team, Arena.TrapType.ALARM)) player.sendMessage(ChatColor.RED + "Trap queue is full.");
         }
         openUpgrades(player);
     }

@@ -17,21 +17,21 @@ Build **BedlamCore**, an original Bed Wars minigame inspired by the familiar fou
 3. Game Setup manages multiple dedicated void worlds. New worlds contain one spawn block only. Operators can create Solo or Doubles worlds, see the current world, teleport to an arena, edit it, or delete it after confirmation.
 4. Teleporting to a game world opens its setup automatically. New and incomplete arenas print every missing field in chat. Existing arenas remain editable.
 5. Setup is transactional: all changes are held in a per-operator draft. Apply validates every required field, saves the world once, disables auto-save again, persists configuration, and returns the operator to the lobby; Cancel discards edits and deletes a newly-created draft world.
-6. The setup flow records a waiting-structure spawn, spectator location, team spawns, beds, forges, item shops, upgrade shops, and diamond/emerald generators. `/bc spawnbuild` gives an operator a two-point golden-axe selector that saves a reusable waiting-building cuboid. Require exactly one diamond block inside it as the relative player-spawn anchor. Paste the saved structure during waiting/countdown and restore the original blocks when play starts.
-7. Players can quick-join or choose a waiting arena from Solo/Doubles NPC GUIs, with commands retained only as fallback and automation controls.
+6. The setup flow records a waiting-structure spawn, spectator location, team spawns, beds, forges, item shops, upgrade shops, **team chests**, **ender chests**, and diamond/emerald generators. `/bc spawnbuild` gives an operator a two-point golden-axe selector that saves a reusable waiting-building cuboid. Require exactly one diamond block inside it as the relative player-spawn anchor. Paste the saved structure during waiting/countdown and restore the original blocks when play starts.
+7. Players can quick-join or choose a waiting arena from Solo/Doubles NPC GUIs (**Play Bed Wars** layout: red bed quick play + sign map selector with green title / white lore / yellow CTA), with commands retained only as fallback and automation controls.
 8. Solo uses one player per team and Doubles uses two. Admin force-start accepts one player for testing.
 9. Lobby players, separate arenas, chat, and tab visibility are isolated by configurable world channels. Team chat uses configurable colored prefixes and a suffix after the player name. **In-match tab list names use that player's team color** (scoreboard teams + `setPlayerListName`).
-10. Hypixel-like sidebars: lobby / waiting / in-game. In-game lines show match timer, per-team bed status (+/X) with alive count, next diamond/emerald upgrade countdown, mode, and map id.
+10. Hypixel-like sidebars: lobby / waiting / in-game. In-game lines show date + map id, next generator event as `Diamond X in M:SS` (time green), team lines `R Red: ✓` (or alive count when bed gone) with YOU marker, and `play.bedlam` footer.
 11. Give operators one contextual setup compass instead of separate menu/setup navigation items.
-12. Implement balanced teams, countdown, resource generation, bed destruction without sleep messages or bed-item drops, respawn while the bed survives, final death, winner detection, and automatic reset. `/leave` returns the player to the lobby and immediately resolves an empty arena or awards the remaining team. Match death must skip the vanilla respawn screen (`Player.spigot().respawn()` next tick).
+12. Implement balanced teams, countdown, resource generation, bed destruction without sleep messages or bed-item drops, respawn while the bed survives, final death, winner detection, and automatic reset. `/leave` and Return-to-Lobby **clear match inventory** then give lobby items only. Match death must skip the vanilla respawn screen (`Player.spigot().respawn()` next tick).
 13. **Shop / upgrade NPCs:** frozen villagers with **no vanilla nametag**. Two centered hologram lines just above the head (~`SHOP_HOLO_TITLE_Y` / `SHOP_HOLO_SUB_Y`): title (`ITEM SHOP` / `TEAM UPGRADES`) and `Right Click`. Hide holograms past 20 blocks. Shopkeepers must **never** despawn (`setRemoveWhenFarAway(false)` / freeze) and must be excluded from mob-clear / spawn-cancel rules.
-14. **Item Shop GUI** uses Hypixel-style category tabs (Quick Buy / Blocks / Melee / Armor / Tools / Ranged / Potions / Utility) with sensible offers. **Team Upgrades GUI** uses a clearer team-upgrade layout (sharpened swords, reinforced armor, forge, maniac miner, heal pool).
+14. **Item Shop GUI** uses Hypixel-style Quick Buy categories (Nether Star / terracotta Blocks / Melee / Armor / Tools / Ranged / Potions / Utility / Traps) with lime/gray selection bar, fuller offers, and footer compass + firework close. **Upgrades & Traps GUI** has sharpness/prot/miner | traps, forge/heal/dragon | trap scaffold, gray glass separator, and trap-queue wool slots. Alarm trap purchases enqueue and fire when an enemy enters the base radius.
 15. **Heal Pool:** while active, green particles (`Effect.HAPPY_VILLAGER`) ring the team base; players in radius regenerate.
 16. Build protection (place and break):
     - generators: 3-block radius
     - team spawn: 4 blocks
     - forge: 3 blocks
-    - item/upgrade shops: 2 blocks
+    - item/upgrade shops / team & ender chests: 2 blocks
     - outside arena bounds (padded AABB of setup points)
     - above waiting-spawn Y
     - spectators cannot build
@@ -44,6 +44,9 @@ Build **BedlamCore**, an original Bed Wars minigame inspired by the familiar fou
     - Bed alive: skip respawn UI; respawn at **team spawn** (not death location / not spectator point while still fighting). During the configured respawn delay, hold the player in spectator at the island with damage cancelled, then `spawnPlayer`.
     - Bed gone / final kill: **Spectator** mode; give a **Bed** item (`Return to Lobby`) and a **Compass** that opens a **Spectate** GUI of alive players’ heads; click teleports/spectates that player.
 22. Keep lobby and arena configuration in `arenas.yml`; keep transient match and setup-draft state in memory. No free wool at start — blocks come from the shop.
+23. **Match start message:** title/subtitle plus green dashed chat box explaining protect bed / destroy beds / collect resources (original Bedlam wording).
+24. **Team chest + ender chest:** setup per team; at match start place both with **PUNCH TO DEPOSIT** holograms (hide >20 blocks). Team chest inventory is shared among teammates; ender chest is personal (`Player#getEnderChest`). Left-click/punch deposits held stack (exclude sword/armor/tools) with `Deposited xN …` chat. Enemies cannot open a team's normal chest while that team's bed is alive.
+25. **Sounds (compat helper):** bed break plays Ender Dragon growl; kill plays orb/level-up; death plays wither hurt.
 
 ## Engineering bar
 
@@ -58,8 +61,8 @@ Build **BedlamCore**, an original Bed Wars minigame inspired by the familiar fou
 
 - `./gradlew clean check build` succeeds.
 - The produced jar enables without errors on local 1.8.8 and 26.2 servers (`servers/setup.ps1`).
-- An operator can complete lobby and multi-world game setup without a command.
-- Two players can join, start, buy from category shops, purchase upgrades (heal pool shows green base particles), break an enemy bed, receive a final death into spectator with bed+compass tools (no respawn UI / no survival death-loop), and trigger reset with builds cleared.
+- An operator can complete lobby and multi-world game setup without a command (including team/ender chests).
+- Two players can join via Play Bed Wars GUI, start, see start message + Hypixel-like scoreboard, buy from category shops, purchase upgrades/traps (heal pool particles; alarm trap fires), deposit into chests, break an enemy bed (dragon growl), receive kill/death sounds, final death into spectator with bed+compass tools, and return to lobby with **cleared match inventory**.
 - Shop holograms sit close above villagers with a Right Click line; no vanilla villager nametag; hide past 20 blocks.
 - Arena worlds spawn no sheep/hostile mobs; shopkeepers remain.
 - Match armor is locked in slots; swords/armor show no durability bar wear; last sword cannot be dropped.

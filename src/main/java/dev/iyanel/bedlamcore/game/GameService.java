@@ -78,6 +78,10 @@ public final class GameService {
         if (current != null) current.leave(player);
     }
 
+    public void rebuildWaitingStructures() {
+        for (ArenaManager manager : arenas.values()) manager.rebuildWaitingStructure();
+    }
+
     public int waiting(GameType type) {
         int count = 0;
         for (ArenaManager manager : arenas.values()) {

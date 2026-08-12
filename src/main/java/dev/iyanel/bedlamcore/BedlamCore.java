@@ -25,6 +25,7 @@ public final class BedlamCore extends JavaPlugin {
     private NetworkViewService views;
     private SidebarService sidebars;
     private GuiController gui;
+    private GameListener listener;
 
     @Override
     public void onEnable() {
@@ -38,7 +39,8 @@ public final class BedlamCore extends JavaPlugin {
         gui = new GuiController(this);
         npcs = new LobbyNpcService(this);
         sidebars = new SidebarService(this);
-        getServer().getPluginManager().registerEvents(new GameListener(this), this);
+        listener = new GameListener(this);
+        getServer().getPluginManager().registerEvents(listener, this);
         PluginCommand command = getCommand("bedlam");
         if (command != null) command.setExecutor(new BedlamCommand(this));
         PluginCommand leave = getCommand("leave");
@@ -62,6 +64,7 @@ public final class BedlamCore extends JavaPlugin {
     public NetworkViewService views() { return views; }
     public SidebarService sidebars() { return sidebars; }
     public GuiController gui() { return gui; }
+    public GameListener listener() { return listener; }
     public boolean isAdmin(CommandSender sender) { return sender.isOp() || sender.hasPermission("bedlam.admin"); }
 
     public void applyLobby(LobbySettings value) { lobby = value; saveSettings(); }

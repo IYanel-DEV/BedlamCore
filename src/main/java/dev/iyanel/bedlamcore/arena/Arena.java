@@ -1,6 +1,9 @@
 package dev.iyanel.bedlamcore.arena;
 
+import dev.iyanel.bedlamcore.game.GameRules;
+import org.bukkit.Bukkit;
 import org.bukkit.block.BlockState;
+import org.bukkit.inventory.Inventory;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -14,6 +17,7 @@ import java.util.UUID;
 
 public final class Arena {
     public enum State { WAITING, COUNTDOWN, RUNNING, ENDING }
+    public enum TrapType { ALARM }
 
     private final ArenaSettings settings;
     private State state = State.WAITING;
@@ -27,6 +31,9 @@ public final class Arena {
     private final Map<TeamColor, Integer> hasteLevel = new EnumMap<TeamColor, Integer>(TeamColor.class);
     private final Set<TeamColor> sharpness = new HashSet<TeamColor>();
     private final Set<TeamColor> healPool = new HashSet<TeamColor>();
+    private final Set<TeamColor> dragonBuff = new HashSet<TeamColor>();
+    private final Map<TeamColor, List<TrapType>> traps = new EnumMap<TeamColor, List<TrapType>>(TeamColor.class);
+    private final Map<TeamColor, Inventory> teamChests = new EnumMap<TeamColor, Inventory>(TeamColor.class);
     private final Set<String> placedBlocks = new HashSet<String>();
     private final Map<TeamColor, List<BlockState>> bedSnapshots = new EnumMap<TeamColor, List<BlockState>>(TeamColor.class);
     private final List<Integer> tasks = new ArrayList<Integer>();
@@ -58,10 +65,27 @@ public final class Arena {
     public void sharpness(TeamColor team, boolean value) { if (value) sharpness.add(team); else sharpness.remove(team); }
     public boolean healPool(TeamColor team) { return healPool.contains(team); }
     public void healPool(TeamColor team, boolean value) { if (value) healPool.add(team); else healPool.remove(team); }
+    public boolean dragonBuff(TeamColor team) { return dragonBuff.contains(team); }
+    public void dragonBuff(TeamColor team, boolean value) { if (value) dragonBuff.add(team); else dragonBuff.remove(team); }
+    public List<TrapType> traps(TeamColor team) { return traps.get(team); }
+    public Inventory teamChest(TeamColor team) { return teamChests.get(team); }
     public Set<String> placedBlocks() { return placedBlocks; }
     public Map<TeamColor, List<BlockState>> bedSnapshots() { return bedSnapshots; }
     public List<Integer> tasks() { return tasks; }
     public Set<UUID> generatedItems() { return generatedItems; }
+
+    public boolean enqueueTrap(TeamColor team, TrapType type) {
+        List<TrapType> queue = traps.get(team);
+        if (queue == null || queue.size() >= GameRules.TRAP_QUEUE_MAX) return false;
+        queue.add(type);
+        return true;
+    }
+
+    public TrapType popTrap(TeamColor team) {
+        List<TrapType> queue = traps.get(team);
+        if (queue == null || queue.isEmpty()) return null;
+        return queue.remove(0);
+    }
 
     public int aliveCount(TeamColor team) {
         int count = 0;
@@ -76,6 +100,7 @@ public final class Arena {
         armorTier.clear();
         sharpness.clear();
         healPool.clear();
+        dragonBuff.clear();
         placedBlocks.clear();
         bedSnapshots.clear();
         generatedItems.clear();
@@ -83,11 +108,15 @@ public final class Arena {
         forgeLevel.clear();
         hasteLevel.clear();
         beds.clear();
+        traps.clear();
+        teamChests.clear();
         for (TeamColor team : TeamColor.values()) {
             beds.put(team, true);
             protection.put(team, 0);
             forgeLevel.put(team, 0);
             hasteLevel.put(team, 0);
+            traps.put(team, new ArrayList<TrapType>());
+            teamChests.put(team, Bukkit.createInventory(null, 27, team.coloredName() + " Chest"));
         }
     }
 

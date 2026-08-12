@@ -38,6 +38,12 @@ public final class GameRulesCheck {
         assertFalse(GameRules.canDropSword(1));
         assertTrue(GameRules.canDropSword(2));
         assertEquals(8.0, GameRules.HEAL_POOL_RADIUS);
+        assertTrue(GameRules.canFastDeposit("IRON_INGOT"));
+        assertTrue(GameRules.canFastDeposit("WOOL"));
+        assertFalse(GameRules.canFastDeposit("IRON_SWORD"));
+        assertFalse(GameRules.canFastDeposit("DIAMOND_PICKAXE"));
+        assertFalse(GameRules.canFastDeposit("IRON_BOOTS"));
+        assertEquals(3, GameRules.TRAP_QUEUE_MAX);
         System.out.println("BedlamCore game rules: PASS");
     }
 

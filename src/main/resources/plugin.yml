@@ -7,8 +7,11 @@ softdepend: [Citizens]
 commands:
   bedlam:
     description: BedlamCore fallback controls.
-    usage: /bedlam [menu|solo|doubles|leave|forcestart|reload]
+    usage: /bedlam [menu|solo|doubles|leave|spawnbuild|forcestart|reload]
     aliases: [bc]
+  leave:
+    description: Leave the current BedlamCore game.
+    usage: /leave
 permissions:
   bedlam.admin:
     description: Configure and control BedlamCore arenas.

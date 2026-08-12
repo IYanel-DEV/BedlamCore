@@ -16,8 +16,21 @@ public final class GameRules {
     /** Shop hologram title height above villager feet (Hypixel-like, just over head). */
     public static final double SHOP_HOLO_TITLE_Y = 2.05;
     public static final double SHOP_HOLO_SUB_Y = 1.75;
+    public static final double CHEST_HOLO_Y = 1.15;
+    public static final double TRAP_TRIGGER_RADIUS = 10.0;
+    public static final int TRAP_QUEUE_MAX = 3;
 
     private GameRules() {
+    }
+
+    /** Hypixel-like: deposit resources/blocks; keep sword/armor/tools in hand. */
+    public static boolean canFastDeposit(String materialName) {
+        if (materialName == null || materialName.equals("AIR")) return false;
+        if (isSword(materialName) || isArmor(materialName)) return false;
+        if (materialName.contains("PICKAXE") || materialName.contains("AXE") || materialName.contains("SHEARS")
+            || materialName.contains("HOE") || materialName.contains("BOW") || materialName.contains("SHOVEL")
+            || materialName.contains("SPADE")) return false;
+        return true;
     }
 
     public static <T> T leastPopulated(List<T> orderedTeams, Map<T, Integer> sizes) {

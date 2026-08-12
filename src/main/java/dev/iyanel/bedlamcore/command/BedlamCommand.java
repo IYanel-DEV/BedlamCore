@@ -16,10 +16,22 @@ public final class BedlamCommand implements CommandExecutor {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (command.getName().equalsIgnoreCase("leave")) {
+            if (!(sender instanceof Player)) { sender.sendMessage("Players only."); return true; }
+            Player player = (Player) sender;
+            plugin.games().leave(player);
+            if (plugin.games().arena(player) == null) plugin.listener().giveNavigation(player);
+            return true;
+        }
         String action = args.length == 0 ? "menu" : args[0].toLowerCase();
-        if (action.equals("reload") || action.equals("forcestart") || action.equals("start")) {
+        if (action.equals("reload") || action.equals("forcestart") || action.equals("start") || action.equals("spawnbuild")) {
             if (!plugin.isAdmin(sender)) { sender.sendMessage(ChatColor.RED + "You do not have permission."); return true; }
             if (action.equals("reload")) { plugin.reloadBedlam(); sender.sendMessage(ChatColor.GREEN + "BedlamCore reloaded."); return true; }
+            if (action.equals("spawnbuild")) {
+                if (!(sender instanceof Player)) { sender.sendMessage("A player must select the waiting building."); return true; }
+                plugin.waitingTemplates().giveTool((Player) sender);
+                return true;
+            }
             if (!(sender instanceof Player)) { sender.sendMessage("A player must stand in the arena to force-start it."); return true; }
             ArenaManager manager = plugin.games().arena((Player) sender);
             if (manager == null || !manager.forceStart()) sender.sendMessage(ChatColor.RED + "Join a waiting game first. One player is enough for admin testing.");
@@ -31,7 +43,7 @@ public final class BedlamCommand implements CommandExecutor {
         else if (action.equals("solo")) plugin.games().quickJoin(player, GameType.SOLO);
         else if (action.equals("doubles") || action.equals("duals")) plugin.games().quickJoin(player, GameType.DOUBLES);
         else if (action.equals("leave")) plugin.games().leave(player);
-        else player.sendMessage(ChatColor.YELLOW + "/bedlam [menu|solo|doubles|leave|forcestart|reload]");
+        else player.sendMessage(ChatColor.YELLOW + "/bedlam [menu|solo|doubles|leave|spawnbuild|forcestart|reload]");
         return true;
     }
 }

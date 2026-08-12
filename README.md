@@ -8,7 +8,7 @@ BedlamCore is an original, GUI-first Bed Wars minigame for Spigot and Paper. It 
 .\gradlew.bat clean check build
 ```
 
-The jar is written to `build/libs/BedlamCore-0.3.0.jar`.
+The jar is written to `build/libs/BedlamCore-0.4.0.jar`.
 
 ## Configure without commands
 
@@ -21,7 +21,11 @@ The jar is written to `build/libs/BedlamCore-0.3.0.jar`.
 
 Shift-left-click a lobby NPC to choose its mob type, adult/baby state, and whether it looks at players (OFF by default). **Human Player** uses a real fake-player NPC when a compatible Citizens build is installed; otherwise it falls back to a human-shaped armor stand with the selected player head. Enter a Minecraft username or paste the direct `https://textures.minecraft.net/texture/...` link shown by Minecraft-Heads.
 
-`/bedlam menu`, `solo`, `doubles`, `leave`, `forcestart`, and `reload` remain as recovery and console-friendly fallbacks.
+Use `/bc spawnbuild` as an operator to receive the waiting-build selector. Left-click one corner and right-click the opposite corner of a building. The selection must contain exactly one diamond block; that block becomes the player-spawn anchor when the saved building is pasted at each arena's waiting spawn.
+
+Running games announce timed Diamond and Emerald generator tier upgrades and show the next upgrade on the sidebar. `/leave` immediately returns a player to the lobby and resolves the match when only one team remains. Beds cannot be entered or collected as drops, and players start with a wooden sword and armor but no free wool.
+
+`/bedlam menu`, `solo`, `doubles`, `leave`, `spawnbuild`, `forcestart`, and `reload` remain as recovery and console-friendly fallbacks.
 
 `config.yml` controls lobby-on-join teleporting, world/chat/tab isolation, team chat prefixes and suffix, mode minimum-player counts, and scoreboard footer text.
 

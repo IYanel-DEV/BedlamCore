@@ -54,7 +54,7 @@ public final class ArenaSettings {
         if (spectator == null) missing.add("spectator spawn");
         int completeTeams = configuredTeams().size();
         if (completeTeams < 2) {
-            missing.add("at least two complete teams (spawn, bed, forge, item shop, upgrade shop)");
+            missing.add("at least two complete teams (spawn, bed, forge, item shop, upgrade shop, team chest, ender chest)");
             for (TeamColor color : TeamColor.values()) addTeamMissing(missing, color, team(color));
         }
         if (diamondGenerators.isEmpty()) missing.add("at least one diamond generator");
@@ -79,6 +79,8 @@ public final class ArenaSettings {
         if (team.forge == null) fields.add("forge");
         if (team.itemShop == null) fields.add("item shop");
         if (team.upgradeShop == null) fields.add("upgrade shop");
+        if (team.teamChest == null) fields.add("team chest");
+        if (team.enderChest == null) fields.add("ender chest");
         if (!fields.isEmpty()) missing.add(color.displayName() + ": " + join(fields));
     }
 
@@ -99,6 +101,8 @@ public final class ArenaSettings {
         private Location forge;
         private Location itemShop;
         private Location upgradeShop;
+        private Location teamChest;
+        private Location enderChest;
 
         public Location spawn() { return ArenaSettings.clone(spawn); }
         public void spawn(Location value) { spawn = ArenaSettings.clone(value); }
@@ -110,11 +114,19 @@ public final class ArenaSettings {
         public void itemShop(Location value) { itemShop = ArenaSettings.clone(value); }
         public Location upgradeShop() { return ArenaSettings.clone(upgradeShop); }
         public void upgradeShop(Location value) { upgradeShop = ArenaSettings.clone(value); }
+        public Location teamChest() { return ArenaSettings.clone(teamChest); }
+        public void teamChest(Location value) { teamChest = ArenaSettings.clone(value); }
+        public Location enderChest() { return ArenaSettings.clone(enderChest); }
+        public void enderChest(Location value) { enderChest = ArenaSettings.clone(value); }
 
-        public boolean complete() { return spawn != null && bed != null && forge != null && itemShop != null && upgradeShop != null; }
+        public boolean complete() {
+            return spawn != null && bed != null && forge != null && itemShop != null && upgradeShop != null
+                && teamChest != null && enderChest != null;
+        }
 
         private void copyFrom(TeamSettings source) {
             spawn(source.spawn); bed(source.bed); forge(source.forge); itemShop(source.itemShop); upgradeShop(source.upgradeShop);
+            teamChest(source.teamChest); enderChest(source.enderChest);
         }
     }
 }

@@ -82,7 +82,8 @@ public final class SidebarService {
             lines.add(ChatColor.GOLD + "Doubles " + ChatColor.WHITE + plugin.games().waiting(GameType.DOUBLES));
         } else {
             Arena arena = manager.arena();
-            lines.add(ChatColor.GRAY + date());
+            String instance = trim(arena.settings().id(), 10);
+            lines.add(ChatColor.GRAY + date() + " " + ChatColor.DARK_GRAY + instance);
             lines.add(" ");
             if (arena.state() == Arena.State.WAITING || arena.state() == Arena.State.COUNTDOWN) {
                 lines.add(ChatColor.WHITE + "Mode: " + ChatColor.GREEN + arena.settings().gameType().displayName());
@@ -92,18 +93,17 @@ public final class SidebarService {
                     ? ChatColor.WHITE + "Starting in " + ChatColor.GREEN + manager.countdownRemaining() + "s"
                     : ChatColor.YELLOW + "Waiting...");
             } else {
-                lines.add(ChatColor.WHITE + formatTime(manager.gameSeconds()));
+                lines.add(manager.nextGeneratorUpgradeLine());
                 lines.add(" ");
+                TeamColor you = arena.team(player.getUniqueId());
                 for (TeamColor color : arena.settings().configuredTeams()) {
-                    String bed = arena.bedAlive(color) ? ChatColor.GREEN + "+" : ChatColor.RED + "X";
-                    int alive = arena.aliveCount(color);
-                    String you = color == arena.team(player.getUniqueId()) ? ChatColor.GRAY + " YOU" : "";
-                    lines.add(bed + " " + color.chatColor() + color.displayName().charAt(0) + " " + ChatColor.GREEN + alive + you);
+                    String marker = arena.bedAlive(color)
+                        ? ChatColor.GREEN + "✓"
+                        : ChatColor.GREEN + String.valueOf(arena.aliveCount(color));
+                    String youTag = color == you ? ChatColor.GRAY + " YOU" : "";
+                    lines.add(color.chatColor() + "" + color.displayName().charAt(0) + " " + ChatColor.WHITE + color.displayName()
+                        + ChatColor.GRAY + ": " + marker + youTag);
                 }
-                lines.add(" ");
-                lines.add(ChatColor.WHITE + manager.nextGeneratorUpgrade());
-                lines.add(ChatColor.AQUA + "Mode: " + ChatColor.GRAY + arena.settings().gameType().displayName());
-                lines.add(ChatColor.AQUA + "Map: " + ChatColor.GRAY + trim(arena.settings().id(), 12));
             }
         }
         lines.add(" ");
@@ -114,10 +114,6 @@ public final class SidebarService {
     private static String date() {
         java.util.Calendar cal = java.util.Calendar.getInstance();
         return String.format("%02d/%02d/%02d", cal.get(java.util.Calendar.MONTH) + 1, cal.get(java.util.Calendar.DAY_OF_MONTH), cal.get(java.util.Calendar.YEAR) % 100);
-    }
-
-    private static String formatTime(int seconds) {
-        return (seconds / 60) + ":" + (seconds % 60 < 10 ? "0" : "") + (seconds % 60);
     }
 
     private static String unique(String line, int salt) {

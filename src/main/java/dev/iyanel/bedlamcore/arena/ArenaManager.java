@@ -3,6 +3,7 @@ package dev.iyanel.bedlamcore.arena;
 import dev.iyanel.bedlamcore.BedlamCore;
 import dev.iyanel.bedlamcore.compat.Enchantments;
 import dev.iyanel.bedlamcore.compat.Items;
+import dev.iyanel.bedlamcore.compat.Sounds;
 import dev.iyanel.bedlamcore.game.GameRules;
 import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.util.Locations;
@@ -22,6 +23,7 @@ import org.bukkit.entity.Item;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.metadata.FixedMetadataValue;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.potion.PotionEffect;
@@ -84,7 +86,15 @@ public final class ArenaManager {
         else if (emeraldTier < 3 && emeraldThree > gameSeconds && emeraldThree < next) { next = emeraldThree; name = "Emerald III"; }
         if (next == Integer.MAX_VALUE) return name;
         int remaining = next - gameSeconds;
-        return name + " " + (remaining / 60) + ":" + (remaining % 60 < 10 ? "0" : "") + remaining % 60;
+        return name + " in " + (remaining / 60) + ":" + (remaining % 60 < 10 ? "0" : "") + remaining % 60;
+    }
+
+    /** Green countdown portion for scoreboard: "Diamond II in §aM:SS". */
+    public String nextGeneratorUpgradeLine() {
+        String raw = nextGeneratorUpgrade();
+        int idx = raw.lastIndexOf(" in ");
+        if (idx < 0) return ChatColor.WHITE + raw;
+        return ChatColor.WHITE + raw.substring(0, idx + 4) + ChatColor.GREEN + raw.substring(idx + 4);
     }
 
     public boolean join(Player player) {
@@ -114,11 +124,8 @@ public final class ArenaManager {
         TeamColor team = arena.players().remove(player.getUniqueId());
         arena.eliminated().remove(player.getUniqueId());
         respawning.remove(player.getUniqueId());
-        clearPlayer(player);
         player.setPlayerListName(null);
-        Location lobby = plugin.lobby().spawn();
-        if (lobby == null && !Bukkit.getWorlds().isEmpty()) lobby = Bukkit.getWorlds().get(0).getSpawnLocation();
-        if (lobby != null) player.teleport(lobby);
+        sendToNetworkLobby(player);
         if (arena.state() == Arena.State.RUNNING && team != null) checkWinner();
         if (arena.state() == Arena.State.COUNTDOWN && arena.players().size() < minimumPlayers()) cancelCountdown();
     }
@@ -193,8 +200,39 @@ public final class ArenaManager {
         }
         startGenerators();
         startMatchEffects();
+        ensureTeamChests();
         refreshGeneratorLabels();
-        broadcast(ChatColor.GOLD + "Protect your bed and destroy the enemy beds!");
+        sendStartMessage();
+    }
+
+    private void sendStartMessage() {
+        for (UUID uuid : arena.players().keySet()) {
+            Player player = Bukkit.getPlayer(uuid);
+            if (player == null) continue;
+            title(player, ChatColor.YELLOW + "" + ChatColor.BOLD + "Bed Wars", ChatColor.YELLOW + "Protect your bed!");
+            player.sendMessage("");
+            player.sendMessage(ChatColor.GREEN + "" + ChatColor.STRIKETHROUGH + "------------------------------");
+            player.sendMessage(ChatColor.YELLOW + "            " + ChatColor.BOLD + "Bed Wars");
+            player.sendMessage("");
+            player.sendMessage(ChatColor.WHITE + "  Protect your bed and destroy the enemy beds.");
+            player.sendMessage(ChatColor.WHITE + "  Collect Iron, Gold, Diamonds and Emeralds");
+            player.sendMessage(ChatColor.WHITE + "  from generators to upgrade gear and traps.");
+            player.sendMessage(ChatColor.GREEN + "" + ChatColor.STRIKETHROUGH + "------------------------------");
+            player.sendMessage("");
+        }
+    }
+
+    private void title(Player player, String title, String subtitle) {
+        try {
+            player.sendTitle(title, subtitle);
+        } catch (Throwable ignored) {
+            player.sendMessage(title);
+            if (subtitle != null) player.sendMessage(subtitle);
+        }
+        try {
+            player.getClass().getMethod("sendTitle", String.class, String.class, int.class, int.class, int.class)
+                .invoke(player, title, subtitle, 10, 70, 20);
+        } catch (Throwable ignored) { }
     }
 
     public void recordPlaced(Block block) {
@@ -239,6 +277,10 @@ public final class ArenaManager {
             arena.destroyBed(brokenBed);
             removeBedBlocks(arena.settings().team(brokenBed).bed());
             broadcast(ChatColor.RED + "BED DESTROYED! " + brokenBed.coloredName() + ChatColor.GRAY + " was broken by " + playerTeam.chatColor() + player.getName());
+            for (UUID uuid : arena.players().keySet()) {
+                Player online = Bukkit.getPlayer(uuid);
+                if (online != null) Sounds.bedDestroyed(online);
+            }
             return true;
         }
         if (protectedZone(block.getLocation())) {
@@ -262,6 +304,8 @@ public final class ArenaManager {
             if (Locations.near(loc, settings.forge(), GameRules.FORGE_PROTECT)) return true;
             if (Locations.near(loc, settings.itemShop(), GameRules.SHOP_PROTECT)) return true;
             if (Locations.near(loc, settings.upgradeShop(), GameRules.SHOP_PROTECT)) return true;
+            if (Locations.near(loc, settings.teamChest(), GameRules.SHOP_PROTECT)) return true;
+            if (Locations.near(loc, settings.enderChest(), GameRules.SHOP_PROTECT)) return true;
         }
         return false;
     }
@@ -359,11 +403,8 @@ public final class ArenaManager {
         for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
             Player player = Bukkit.getPlayer(uuid);
             if (player != null) {
-                clearPlayer(player);
-                player.setGameMode(GameMode.ADVENTURE);
                 player.setPlayerListName(null);
-                Location lobby = plugin.lobby().spawn();
-                if (lobby != null) player.teleport(lobby);
+                sendToNetworkLobby(player);
             }
         }
         arena.players().clear();
@@ -383,9 +424,8 @@ public final class ArenaManager {
             for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
                 Player player = Bukkit.getPlayer(uuid);
                 if (player != null) {
-                    clearPlayer(player);
-                    Location lobby = plugin.lobby().spawn();
-                    if (lobby != null) player.teleport(lobby);
+                    player.setPlayerListName(null);
+                    sendToNetworkLobby(player);
                 }
             }
             arena.players().clear();
@@ -483,10 +523,53 @@ public final class ArenaManager {
     }
 
     private void clearPlayer(Player player) {
+        player.closeInventory();
         player.getInventory().clear();
         player.getInventory().setArmorContents(new ItemStack[4]);
+        try { player.setItemOnCursor(null); } catch (Throwable ignored) { }
         player.removePotionEffect(PotionEffectType.FAST_DIGGING);
         player.removePotionEffect(PotionEffectType.REGENERATION);
+    }
+
+    /** Strip match gear, teleport to network lobby, give lobby items only. */
+    public void sendToNetworkLobby(Player player) {
+        clearPlayer(player);
+        player.setGameMode(GameMode.ADVENTURE);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setFireTicks(0);
+        Location lobby = plugin.lobby().spawn();
+        if (lobby == null && !Bukkit.getWorlds().isEmpty()) lobby = Bukkit.getWorlds().get(0).getSpawnLocation();
+        if (lobby != null) player.teleport(lobby);
+        plugin.listener().giveNavigation(player);
+        // Belt: clear again next tick in case a race re-added items during teleport.
+        final UUID uuid = player.getUniqueId();
+        Bukkit.getScheduler().runTask(plugin, new Runnable() {
+            @Override public void run() {
+                Player online = Bukkit.getPlayer(uuid);
+                if (online == null || plugin.games().arena(online) != null) return;
+                if (hasMatchLeftovers(online)) {
+                    clearPlayer(online);
+                    plugin.listener().giveNavigation(online);
+                }
+            }
+        });
+    }
+
+    private static boolean hasMatchLeftovers(Player player) {
+        for (ItemStack stack : player.getInventory().getContents()) {
+            if (stack == null || stack.getType() == Material.AIR) continue;
+            String name = Items.name(stack);
+            if (name.equals("Bedlam Setup") || name.equals("Bedlam Menu")) continue;
+            String mat = stack.getType().name();
+            if (GameRules.isSword(mat) || mat.contains("WOOL") || mat.contains("INGOT") || mat.contains("DIAMOND")
+                || mat.contains("EMERALD") || mat.contains("TERRACOTTA") || mat.contains("CLAY") || mat.contains("SANDSTONE")) {
+                return true;
+            }
+        }
+        ItemStack[] armor = player.getInventory().getArmorContents();
+        if (armor != null) for (ItemStack piece : armor) if (piece != null && piece.getType() != Material.AIR) return true;
+        return false;
     }
 
     private void snapshotBeds() {
@@ -543,6 +626,7 @@ public final class ArenaManager {
         int id = new BukkitRunnable() {
             @Override public void run() {
                 if (arena.state() != Arena.State.RUNNING) return;
+                tickTraps();
                 for (TeamColor team : arena.settings().configuredTeams()) {
                     if (!arena.healPool(team)) continue;
                     Location spawn = arena.settings().team(team).spawn();
@@ -565,6 +649,105 @@ public final class ArenaManager {
             }
         }.runTaskTimer(plugin, 20L, 20L).getTaskId();
         arena.tasks().add(id);
+    }
+
+    private void tickTraps() {
+        for (TeamColor team : arena.settings().configuredTeams()) {
+            List<Arena.TrapType> queue = arena.traps(team);
+            if (queue == null || queue.isEmpty()) continue;
+            Location spawn = arena.settings().team(team).spawn();
+            if (spawn == null) continue;
+            for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
+                if (entry.getValue() == team || arena.eliminated().contains(entry.getKey())) continue;
+                Player enemy = Bukkit.getPlayer(entry.getKey());
+                if (enemy == null || !Locations.near(enemy.getLocation(), spawn, GameRules.TRAP_TRIGGER_RADIUS)) continue;
+                Arena.TrapType trap = arena.popTrap(team);
+                if (trap == null) break;
+                if (trap == Arena.TrapType.ALARM) {
+                    for (Map.Entry<UUID, TeamColor> member : arena.players().entrySet()) {
+                        if (member.getValue() != team) continue;
+                        Player online = Bukkit.getPlayer(member.getKey());
+                        if (online == null) continue;
+                        title(online, ChatColor.RED + "TRAP TRIGGERED!", ChatColor.WHITE + "Alarm: " + enemy.getName());
+                        Sounds.levelUp(online);
+                    }
+                    enemy.sendMessage(ChatColor.RED + "You triggered an Alarm Trap!");
+                }
+                break;
+            }
+        }
+    }
+
+    private void ensureTeamChests() {
+        for (TeamColor team : arena.settings().configuredTeams()) {
+            ArenaSettings.TeamSettings settings = arena.settings().team(team);
+            placeChestBlock(settings.teamChest(), Material.CHEST, false);
+            placeChestBlock(settings.enderChest(), Items.material("ENDER_CHEST"), true);
+            spawnChestHologram(settings.teamChest());
+            spawnChestHologram(settings.enderChest());
+        }
+    }
+
+    private void placeChestBlock(Location location, Material type, boolean ender) {
+        if (location == null || location.getWorld() == null) return;
+        Block block = location.getBlock();
+        if (block.getType() != type) block.setType(type);
+    }
+
+    private void spawnChestHologram(Location location) {
+        if (location == null || location.getWorld() == null) return;
+        Location pin = location.getBlock().getLocation().add(0.5, GameRules.CHEST_HOLO_Y, 0.5);
+        spawnHologram(pin, ChatColor.YELLOW + "" + ChatColor.BOLD + "PUNCH TO DEPOSIT");
+    }
+
+    public TeamColor teamChestAt(Location location) {
+        for (TeamColor team : arena.settings().configuredTeams()) {
+            if (Locations.near(location, arena.settings().team(team).teamChest(), 1.5)) return team;
+        }
+        return null;
+    }
+
+    public TeamColor enderChestAt(Location location) {
+        for (TeamColor team : arena.settings().configuredTeams()) {
+            if (Locations.near(location, arena.settings().team(team).enderChest(), 1.5)) return team;
+        }
+        return null;
+    }
+
+    public boolean openTeamChest(Player player, TeamColor chestTeam) {
+        TeamColor playerTeam = arena.team(player.getUniqueId());
+        if (playerTeam == null || chestTeam == null) return false;
+        if (playerTeam != chestTeam && arena.bedAlive(chestTeam)) {
+            player.sendMessage(ChatColor.RED + "You cannot open that chest while their bed is alive.");
+            return false;
+        }
+        Inventory inventory = arena.teamChest(chestTeam);
+        if (inventory != null) player.openInventory(inventory);
+        return true;
+    }
+
+    public boolean openEnderChest(Player player) {
+        player.openInventory(player.getEnderChest());
+        return true;
+    }
+
+    public boolean fastDeposit(Player player, Inventory target, ItemStack hand) {
+        if (hand == null || hand.getType() == Material.AIR) return false;
+        if (!GameRules.canFastDeposit(hand.getType().name())) return false;
+        ItemStack deposit = hand.clone();
+        Map<Integer, ItemStack> leftover = target.addItem(deposit);
+        int deposited = deposit.getAmount();
+        if (!leftover.isEmpty()) {
+            ItemStack remain = leftover.values().iterator().next();
+            deposited -= remain.getAmount();
+            player.setItemInHand(remain);
+        } else {
+            player.setItemInHand(null);
+        }
+        if (deposited <= 0) return false;
+        String pretty = hand.getType().name().toLowerCase().replace('_', ' ');
+        player.sendMessage(ChatColor.GREEN + "Deposited x" + deposited + " " + pretty);
+        return true;
     }
 
     private void clearWildMobs() {
@@ -844,6 +1027,8 @@ public final class ArenaManager {
             if (t.forge() != null) points.add(t.forge());
             if (t.itemShop() != null) points.add(t.itemShop());
             if (t.upgradeShop() != null) points.add(t.upgradeShop());
+            if (t.teamChest() != null) points.add(t.teamChest());
+            if (t.enderChest() != null) points.add(t.enderChest());
         }
         points.addAll(settings.diamondGenerators());
         points.addAll(settings.emeraldGenerators());
