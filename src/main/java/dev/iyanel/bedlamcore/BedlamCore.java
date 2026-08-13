@@ -7,6 +7,7 @@ import dev.iyanel.bedlamcore.game.GameListener;
 import dev.iyanel.bedlamcore.game.GameService;
 import dev.iyanel.bedlamcore.game.NetworkViewService;
 import dev.iyanel.bedlamcore.game.SidebarService;
+import dev.iyanel.bedlamcore.game.StatsStore;
 import dev.iyanel.bedlamcore.gui.GuiController;
 import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.lobby.LobbySettings;
@@ -24,6 +25,7 @@ public final class BedlamCore extends JavaPlugin {
     private LobbyNpcService npcs;
     private NetworkViewService views;
     private SidebarService sidebars;
+    private StatsStore stats;
     private GuiController gui;
     private GameListener listener;
 
@@ -32,6 +34,7 @@ public final class BedlamCore extends JavaPlugin {
         saveDefaultConfig();
         repository = new ArenaRepository(this);
         waitingTemplates = new WaitingTemplateService(this);
+        stats = new StatsStore(this);
         lobby = repository.loadLobby();
         worlds = new GameWorlds(this);
         npcs = new LobbyNpcService(this);
@@ -53,6 +56,7 @@ public final class BedlamCore extends JavaPlugin {
     public void onDisable() {
         if (npcs != null) npcs.removeAll();
         if (games != null) games.shutdown();
+        if (stats != null) stats.save();
         if (repository != null && lobby != null && games != null) saveSettings();
     }
 
@@ -63,6 +67,7 @@ public final class BedlamCore extends JavaPlugin {
     public LobbyNpcService npcs() { return npcs; }
     public NetworkViewService views() { return views; }
     public SidebarService sidebars() { return sidebars; }
+    public StatsStore stats() { return stats; }
     public GuiController gui() { return gui; }
     public GameListener listener() { return listener; }
     public boolean isAdmin(CommandSender sender) { return sender.isOp() || sender.hasPermission("bedlam.admin"); }

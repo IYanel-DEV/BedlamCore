@@ -48,8 +48,25 @@ public final class GameRules {
     public static final int TRAP_COOLDOWN_TICKS = 40;
     /** Wood=1 … Diamond=4; 0 = never purchased. */
     public static final int TOOL_TIER_MAX = 4;
-    /** Max wool blocks one Bridge Egg may place along its flight. */
-    public static final int BRIDGE_EGG_MAX_BLOCKS = 40;
+    /** Path cells (center of the 3-wide slice) one Bridge Egg may paint. */
+    public static final int BRIDGE_EGG_MAX_PATH = 20;
+    /** Flight ticks before the egg trail stops (~2s). */
+    public static final int BRIDGE_EGG_MAX_TICKS = 40;
+    /** Straight-line flight cap in blocks (Hypixel-ish 15–25). */
+    public static final double BRIDGE_EGG_MAX_DISTANCE = 20.0;
+    public static final int TOKENS_WIN = 50;
+    public static final int TOKENS_BED = 25;
+    public static final int TOKENS_KILL = 5;
+    public static final int TOKENS_FINAL_KILL = 10;
+    public static final int TOKENS_PLAY = 10;
+    public static final int XP_WIN = 100;
+    public static final int XP_BED = 50;
+    public static final int XP_KILL = 10;
+    public static final int XP_FINAL_KILL = 25;
+    public static final int XP_PLAY = 25;
+    /** Flat XP per level (low-level Hypixel-like 5k bar). */
+    public static final int XP_PER_LEVEL = 5000;
+    public static final int XP_BAR_SLOTS = 10;
     /** 1.8 client silently fails to open a chest if the title is longer than this (including color codes). */
     public static final int INVENTORY_TITLE_MAX = 32;
 
@@ -229,5 +246,50 @@ public final class GameRules {
 
     public static boolean isAxe(String materialName) {
         return materialName != null && materialName.contains("AXE") && !materialName.contains("PICKAXE");
+    }
+
+    /** Selector must click a real map block — not glass / panes used as visual corners. */
+    public static boolean isGlassBlock(String materialName) {
+        return materialName != null && materialName.contains("GLASS");
+    }
+
+    /** Perpendicular X offset for a 3-wide wool trail (center ± this, 0). */
+    public static int bridgeSideX(double dx, double dz) {
+        return Math.abs(dx) >= Math.abs(dz) ? 0 : 1;
+    }
+
+    /** Perpendicular Z offset for a 3-wide wool trail. */
+    public static int bridgeSideZ(double dx, double dz) {
+        return Math.abs(dx) >= Math.abs(dz) ? 1 : 0;
+    }
+
+    /** Level 1 at 0 XP; +1 per XP_PER_LEVEL. */
+    public static int levelFromXp(int xp) {
+        if (xp < 0) xp = 0;
+        return 1 + xp / XP_PER_LEVEL;
+    }
+
+    public static int xpIntoLevel(int xp) {
+        if (xp < 0) xp = 0;
+        return xp % XP_PER_LEVEL;
+    }
+
+    public static int xpBarFilled(int xpInto, int slots) {
+        if (slots <= 0 || xpInto <= 0) return 0;
+        if (xpInto >= XP_PER_LEVEL) return slots;
+        int filled = (xpInto * slots + XP_PER_LEVEL / 2) / XP_PER_LEVEL;
+        return filled > slots ? slots : filled;
+    }
+
+    /** Hypixel-like 3.4k / 5k; whole thousands drop the decimal. */
+    public static String compactXp(int n) {
+        if (n < 1000) return String.valueOf(n);
+        if (n % 1000 == 0) return (n / 1000) + "k";
+        int tenths = (n * 10) / 1000;
+        return (tenths / 10) + "." + (tenths % 10) + "k";
+    }
+
+    public static String commas(int n) {
+        return String.format(java.util.Locale.US, "%,d", n);
     }
 }

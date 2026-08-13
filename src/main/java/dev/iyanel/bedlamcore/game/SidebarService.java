@@ -3,7 +3,6 @@ package dev.iyanel.bedlamcore.game;
 import dev.iyanel.bedlamcore.BedlamCore;
 import dev.iyanel.bedlamcore.arena.Arena;
 import dev.iyanel.bedlamcore.arena.ArenaManager;
-import dev.iyanel.bedlamcore.arena.GameType;
 import dev.iyanel.bedlamcore.arena.TeamColor;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -74,12 +73,20 @@ public final class SidebarService {
         List<String> lines = new ArrayList<String>();
         ArenaManager manager = plugin.games().arena(player);
         if (manager == null) {
-            lines.add(ChatColor.GRAY + date());
+            StatsStore.Record stats = plugin.stats().get(player.getUniqueId());
+            int into = GameRules.xpIntoLevel(stats.xp);
+            String lobbyId = trim(plugin.getConfig().getString("scoreboard.lobby-id", "L1"), 6);
+            lines.add(ChatColor.GRAY + date() + "  " + ChatColor.DARK_GRAY + lobbyId);
             lines.add(" ");
-            lines.add(ChatColor.WHITE + "Lobby");
-            lines.add(ChatColor.GRAY + "Online: " + ChatColor.GREEN + Bukkit.getOnlinePlayers().size());
-            lines.add(ChatColor.AQUA + "Solo " + ChatColor.WHITE + plugin.games().waiting(GameType.SOLO));
-            lines.add(ChatColor.GOLD + "Doubles " + ChatColor.WHITE + plugin.games().waiting(GameType.DOUBLES));
+            lines.add(ChatColor.WHITE + "Level: " + ChatColor.GRAY + stats.level + "*");
+            lines.add(" ");
+            lines.add(ChatColor.WHITE + "Progress: " + ChatColor.AQUA + GameRules.compactXp(into) + "/" + GameRules.compactXp(GameRules.XP_PER_LEVEL));
+            lines.add(xpBar(into));
+            lines.add(" ");
+            lines.add(ChatColor.WHITE + "Tokens: " + ChatColor.GREEN + GameRules.commas(stats.tokens));
+            lines.add(" ");
+            lines.add(ChatColor.WHITE + "Total Kills: " + ChatColor.GREEN + GameRules.commas(stats.kills));
+            lines.add(ChatColor.WHITE + "Total Wins: " + ChatColor.GREEN + GameRules.commas(stats.wins));
         } else {
             Arena arena = manager.arena();
             String instance = trim(arena.settings().id(), 10);
@@ -114,6 +121,17 @@ public final class SidebarService {
     private static String date() {
         java.util.Calendar cal = java.util.Calendar.getInstance();
         return String.format("%02d/%02d/%02d", cal.get(java.util.Calendar.MONTH) + 1, cal.get(java.util.Calendar.DAY_OF_MONTH), cal.get(java.util.Calendar.YEAR) % 100);
+    }
+
+    private static String xpBar(int xpInto) {
+        int filled = GameRules.xpBarFilled(xpInto, GameRules.XP_BAR_SLOTS);
+        StringBuilder bar = new StringBuilder();
+        bar.append(ChatColor.GRAY).append('[').append(ChatColor.AQUA);
+        for (int i = 0; i < filled; i++) bar.append('\u2588');
+        bar.append(ChatColor.GRAY);
+        for (int i = filled; i < GameRules.XP_BAR_SLOTS; i++) bar.append('\u2591');
+        bar.append(ChatColor.GRAY).append(']');
+        return bar.toString();
     }
 
     private static String unique(String line, int salt) {

@@ -55,6 +55,9 @@ public final class ArenaManager {
     private int diamondTier = 1;
     private int emeraldTier = 1;
     private int[] bounds; // minX,minY,minZ,maxX,maxY,maxZ or null
+    private final Map<UUID, Integer> matchTokens = new HashMap<UUID, Integer>();
+    private final Map<UUID, Integer> matchXp = new HashMap<UUID, Integer>();
+    private final Set<UUID> playCredited = new HashSet<UUID>();
 
     public ArenaManager(BedlamCore plugin, ArenaSettings settings) {
         this.plugin = plugin;
@@ -141,6 +144,8 @@ public final class ArenaManager {
         player.setPlayerListName(null);
         sendToNetworkLobby(player);
         if (arena.state() == Arena.State.RUNNING && team != null) {
+            creditPlay(player.getUniqueId());
+            sendRewardsSummary(player);
             // Disconnect / leave clears the team so a leftover bed cannot stall win detection.
             if (arena.aliveCount(team) == 0 && arena.bedAlive(team)) {
                 arena.destroyBed(team);
@@ -205,6 +210,9 @@ public final class ArenaManager {
         }
         waitingStructure.remove();
         arena.resetMatchData();
+        matchTokens.clear();
+        matchXp.clear();
+        playCredited.clear();
         gameSeconds = 0;
         diamondTier = 1;
         emeraldTier = 1;
@@ -294,17 +302,22 @@ public final class ArenaManager {
         return null;
     }
 
-    /** Throw Bridge Egg: wool trail one block under the egg each tick (not on ProjectileHit). */
+    /** Throw Bridge Egg: 3-wide team wool one block under the egg each tick (not on ProjectileHit). */
     public void launchBridgeEgg(final Player player) {
         final TeamColor team = arena.team(player.getUniqueId());
         if (team == null || arena.state() != Arena.State.RUNNING || isSoftSpectating(player)) return;
         final UUID thrower = player.getUniqueId();
         final org.bukkit.entity.Egg egg = player.launchProjectile(org.bukkit.entity.Egg.class);
+        final Location origin = egg.getLocation().clone();
         new BukkitRunnable() {
-            private int placed;
+            private int ticks;
+            private int path;
             private Location prev;
             @Override public void run() {
-                if (!egg.isValid() || egg.isDead() || placed >= GameRules.BRIDGE_EGG_MAX_BLOCKS
+                ticks++;
+                if (!egg.isValid() || egg.isDead() || ticks > GameRules.BRIDGE_EGG_MAX_TICKS
+                    || path >= GameRules.BRIDGE_EGG_MAX_PATH
+                    || origin.distanceSquared(egg.getLocation()) >= GameRules.BRIDGE_EGG_MAX_DISTANCE * GameRules.BRIDGE_EGG_MAX_DISTANCE
                     || arena.state() != Arena.State.RUNNING) {
                     cancel();
                     return;
@@ -315,45 +328,52 @@ public final class ArenaManager {
                     prev = here.clone();
                     return;
                 }
+                org.bukkit.util.Vector vel = egg.getVelocity();
+                double dx = vel.getX();
+                double dz = vel.getZ();
                 if (prev == null) {
-                    placeBridgeUnder(here, team);
+                    placeBridgeSlice(here, team, dx, dz);
                     prev = here.clone();
                     return;
                 }
+                dx = here.getX() - prev.getX();
+                dz = here.getZ() - prev.getZ();
                 double dist = prev.distance(here);
                 int steps = Math.max(1, (int) Math.ceil(dist));
-                for (int i = 1; i <= steps && placed < GameRules.BRIDGE_EGG_MAX_BLOCKS; i++) {
+                for (int i = 1; i <= steps && path < GameRules.BRIDGE_EGG_MAX_PATH; i++) {
                     double t = (double) i / (double) steps;
                     Location point = prev.clone().add(
                         (here.getX() - prev.getX()) * t,
                         (here.getY() - prev.getY()) * t,
                         (here.getZ() - prev.getZ()) * t);
-                    placeBridgeUnder(point, team);
+                    placeBridgeSlice(point, team, dx, dz);
                 }
                 prev = here.clone();
             }
 
-            private void placeBridgeUnder(Location at, TeamColor color) {
-                if (placed >= GameRules.BRIDGE_EGG_MAX_BLOCKS) return;
-                Block block = at.getBlock().getRelative(0, -1, 0);
+            private void placeBridgeSlice(Location at, TeamColor color, double dx, double dz) {
+                if (path >= GameRules.BRIDGE_EGG_MAX_PATH) return;
+                path++;
+                int ox = GameRules.bridgeSideX(dx, dz);
+                int oz = GameRules.bridgeSideZ(dx, dz);
+                Block under = at.getBlock().getRelative(0, -1, 0);
+                int bx = under.getX();
+                int by = under.getY();
+                int bz = under.getZ();
+                placeBridgeCell(under.getWorld().getBlockAt(bx, by, bz), color);
+                placeBridgeCell(under.getWorld().getBlockAt(bx + ox, by, bz + oz), color);
+                placeBridgeCell(under.getWorld().getBlockAt(bx - ox, by, bz - oz), color);
+            }
+
+            private void placeBridgeCell(Block block, TeamColor color) {
                 if (!GameRules.isBridgeReplaceable(block.getType().name())) return;
-                if (bridgePlaceDenied(block.getLocation())) return;
+                if (placeDenyReason(block.getLocation()) != null) return;
                 String key = Locations.blockKey(block.getLocation());
                 if (arena.placedBlocks().contains(key)) return;
                 color.placeAsBlock(block);
                 arena.placedBlocks().add(key);
-                placed++;
             }
         }.runTaskTimer(plugin, 1L, 1L);
-    }
-
-    /** Height + XZ bounds only — Y-min would block void bridging; air-only paste skips map/beds/gens. */
-    private boolean bridgePlaceDenied(Location loc) {
-        Location waiting = arena.settings().waitingSpawn();
-        if (waiting != null && GameRules.tooHigh(loc.getBlockY(), waiting.getBlockY())) return true;
-        if (bounds != null && (loc.getBlockX() < bounds[0] || loc.getBlockX() > bounds[3]
-            || loc.getBlockZ() < bounds[2] || loc.getBlockZ() > bounds[5])) return true;
-        return false;
     }
 
     /** Wool on/against either bed half must not be blocked by nearby forge/shop spheres. */
@@ -385,6 +405,7 @@ public final class ArenaManager {
                 Player online = Bukkit.getPlayer(uuid);
                 if (online != null) Sounds.bedDestroyed(online);
             }
+            grant(player.getUniqueId(), GameRules.TOKENS_BED, GameRules.XP_BED, 0, 1, 0, 0, "Bed");
             // Solo force-start / last enemy bed: empty teams drop out when bed dies → win state.
             checkWinner();
             return true;
@@ -421,20 +442,28 @@ public final class ArenaManager {
         return false;
     }
 
-    public void handleDeath(Player player) {
+    public void handleDeath(Player player, Player killer) {
         if (arena.state() != Arena.State.RUNNING || !arena.contains(player.getUniqueId())) return;
         player.setFallDistance(0F);
         UUID uuid = player.getUniqueId();
         arena.pickaxeTier(uuid, GameRules.toolTierAfterDeath(arena.pickaxeTier(uuid)));
         arena.axeTier(uuid, GameRules.toolTierAfterDeath(arena.axeTier(uuid)));
         TeamColor team = arena.team(uuid);
-        if (!GameRules.canRespawn(arena.bedAlive(team), arena.eliminated().contains(uuid))) {
+        boolean finalKill = !GameRules.canRespawn(arena.bedAlive(team), arena.eliminated().contains(uuid));
+        if (finalKill) {
             arena.eliminated().add(uuid);
             broadcast(team.chatColor() + player.getName() + ChatColor.RED + " was eliminated!");
-            checkWinner();
         } else {
             respawning.add(uuid);
         }
+        if (killer != null && arena.contains(killer.getUniqueId()) && !killer.getUniqueId().equals(uuid)) {
+            TeamColor killerTeam = arena.team(killer.getUniqueId());
+            if (killerTeam != null && killerTeam != team) {
+                if (finalKill) grant(killer.getUniqueId(), GameRules.TOKENS_FINAL_KILL, GameRules.XP_FINAL_KILL, 1, 0, 0, 0, "Final Kill");
+                else grant(killer.getUniqueId(), GameRules.TOKENS_KILL, GameRules.XP_KILL, 1, 0, 0, 0, "Kill");
+            }
+        }
+        if (finalKill) checkWinner();
     }
 
     public boolean isRespawning(UUID uuid) { return respawning.contains(uuid); }
@@ -535,9 +564,50 @@ public final class ArenaManager {
         final TeamColor winner = contending.isEmpty() ? null : contending.iterator().next();
         arena.state(Arena.State.ENDING);
         broadcast(winner == null ? ChatColor.GOLD + "Game over!" : ChatColor.GOLD + "VICTORY! " + winner.coloredName() + ChatColor.GOLD + " wins!");
+        settleMatch(winner);
         Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
             @Override public void run() { reset(); }
         }, plugin.getConfig().getInt("ending-seconds", 8) * 20L);
+    }
+
+    private void settleMatch(TeamColor winner) {
+        for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
+            creditPlay(uuid);
+            if (winner != null && winner.equals(arena.players().get(uuid))) {
+                grant(uuid, GameRules.TOKENS_WIN, GameRules.XP_WIN, 0, 0, 1, 0, "Win");
+                Player player = Bukkit.getPlayer(uuid);
+                if (player != null) title(player, ChatColor.GOLD + "" + ChatColor.BOLD + "VICTORY!", ChatColor.GREEN + "+" + GameRules.TOKENS_WIN + " Tokens");
+            }
+            Player player = Bukkit.getPlayer(uuid);
+            if (player != null) sendRewardsSummary(player);
+        }
+    }
+
+    private void creditPlay(UUID uuid) {
+        if (!playCredited.add(uuid)) return;
+        grant(uuid, GameRules.TOKENS_PLAY, GameRules.XP_PLAY, 0, 0, 0, 1, null);
+    }
+
+    private void grant(UUID uuid, int tokens, int xp, int kills, int beds, int wins, int games, String reason) {
+        plugin.stats().apply(uuid, tokens, xp, kills, beds, wins, games);
+        Integer t = matchTokens.get(uuid);
+        matchTokens.put(uuid, (t == null ? 0 : t) + tokens);
+        Integer x = matchXp.get(uuid);
+        matchXp.put(uuid, (x == null ? 0 : x) + xp);
+        if (reason == null) return;
+        Player player = Bukkit.getPlayer(uuid);
+        if (player != null) {
+            player.sendMessage(ChatColor.GOLD + "+" + tokens + " Tokens " + ChatColor.GRAY + "(" + reason + ") " + ChatColor.AQUA + "+" + xp + " XP");
+        }
+    }
+
+    private void sendRewardsSummary(Player player) {
+        Integer t = matchTokens.get(player.getUniqueId());
+        Integer x = matchXp.get(player.getUniqueId());
+        int tokens = t == null ? 0 : t;
+        int xp = x == null ? 0 : x;
+        player.sendMessage(ChatColor.YELLOW + "Rewards: " + ChatColor.GREEN + "+" + tokens + " Tokens"
+            + ChatColor.GRAY + " • " + ChatColor.AQUA + "+" + xp + " XP");
     }
 
     public void reset() {
@@ -560,6 +630,9 @@ public final class ArenaManager {
         }
         arena.players().clear();
         arena.resetMatchData();
+        matchTokens.clear();
+        matchXp.clear();
+        playCredited.clear();
         respawning.clear();
         World world = Bukkit.getWorld(arena.settings().worldName());
         if (world != null) plugin.worlds().disableAutoSave(world);
@@ -579,6 +652,9 @@ public final class ArenaManager {
         }
         arena.players().clear();
         arena.resetMatchData();
+        matchTokens.clear();
+        matchXp.clear();
+        playCredited.clear();
         waitingStructure.remove();
         clearDisplays();
         // Never save match dirt (builds / broken beds) — discard unload only.

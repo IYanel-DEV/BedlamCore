@@ -2,6 +2,7 @@ package dev.iyanel.bedlamcore.arena;
 
 import dev.iyanel.bedlamcore.BedlamCore;
 import dev.iyanel.bedlamcore.compat.Items;
+import dev.iyanel.bedlamcore.game.GameRules;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
@@ -46,6 +47,10 @@ public final class WaitingTemplateService {
     public boolean isTool(ItemStack item) { return Items.name(item).equals(TOOL_NAME) && Items.hasLore(item, "Left-click point 1"); }
 
     public void select(Player player, Block block, boolean firstPoint) {
+        if (GameRules.isGlassBlock(block.getType().name())) {
+            player.sendMessage(ChatColor.RED + "Click a real map block, not glass.");
+            return;
+        }
         Map<UUID, Location> target = firstPoint ? first : second;
         target.put(player.getUniqueId(), block.getLocation());
         player.sendMessage(ChatColor.GREEN + "Waiting build point " + (firstPoint ? "1" : "2") + " set at " + coordinates(block.getLocation()) + ".");

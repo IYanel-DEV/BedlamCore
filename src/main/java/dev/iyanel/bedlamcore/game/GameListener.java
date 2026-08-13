@@ -484,7 +484,7 @@ public final class GameListener implements Listener {
             Sounds.kill(killer);
             Sounds.levelUp(killer);
         }
-        manager.handleDeath(event.getEntity());
+        manager.handleDeath(event.getEntity(), killer);
         final Player player = event.getEntity();
         // Skip vanilla respawn screen (Spigot API).
         Bukkit.getScheduler().runTask(plugin, new Runnable() {

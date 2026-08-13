@@ -23,6 +23,7 @@ chat:
     yellow: "&e[YELLOW] "
 scoreboard:
   footer: "&eplay.bedlam"
+  lobby-id: "L1"
 void-drop-blocks: 30
 generator-periods:
   iron: 20
