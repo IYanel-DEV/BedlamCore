@@ -3,6 +3,7 @@ package dev.iyanel.bedlamcore.arena;
 import dev.iyanel.bedlamcore.compat.Items;
 import org.bukkit.ChatColor;
 import org.bukkit.Color;
+import org.bukkit.block.Block;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
 
@@ -44,6 +45,14 @@ public enum TeamColor {
 
     public ItemStack wool(int amount) {
         return Items.stack(modernWool, "WOOL", amount, legacyData);
+    }
+
+    /** Place team wool at block (1.8 colored data + modern colored materials). */
+    @SuppressWarnings("deprecation")
+    public void placeAsBlock(Block block) {
+        ItemStack stack = wool(1);
+        block.setType(stack.getType());
+        if (stack.getDurability() != 0) block.setData((byte) stack.getDurability());
     }
 
     public ItemStack leather(String modern, String legacy) {

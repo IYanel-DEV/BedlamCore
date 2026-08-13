@@ -5,6 +5,7 @@ import dev.iyanel.bedlamcore.arena.Arena;
 import dev.iyanel.bedlamcore.arena.ArenaManager;
 import dev.iyanel.bedlamcore.arena.GameType;
 import dev.iyanel.bedlamcore.arena.TeamColor;
+import dev.iyanel.bedlamcore.compat.EntityVisibility;
 import dev.iyanel.bedlamcore.compat.Items;
 import dev.iyanel.bedlamcore.compat.Sounds;
 import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
@@ -17,9 +18,11 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Fireball;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TNTPrimed;
+import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.plugin.EventExecutor;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
@@ -53,7 +56,57 @@ import java.util.Iterator;
 public final class GameListener implements Listener {
     private final BedlamCore plugin;
 
-    public GameListener(BedlamCore plugin) { this.plugin = plugin; }
+    public GameListener(BedlamCore plugin) {
+        this.plugin = plugin;
+        registerNpcSoundMute();
+        registerModernBedPickupCancel();
+    }
+
+    /** Modern API: EntityPickupItemEvent (1.12+); 1.8 uses PlayerPickupItemEvent handler below. */
+    @SuppressWarnings("unchecked")
+    private void registerModernBedPickupCancel() {
+        try {
+            final Class<? extends Event> pickupEvent = (Class<? extends Event>) Class.forName("org.bukkit.event.entity.EntityPickupItemEvent");
+            Bukkit.getPluginManager().registerEvent(pickupEvent, this, EventPriority.HIGH, new EventExecutor() {
+                @Override
+                public void execute(Listener listener, Event event) {
+                    try {
+                        Entity entity = (Entity) pickupEvent.getMethod("getEntity").invoke(event);
+                        if (!(entity instanceof Player)) return;
+                        if (plugin.games().arena((Player) entity) == null) return;
+                        org.bukkit.entity.Item item = (org.bukkit.entity.Item) pickupEvent.getMethod("getItem").invoke(event);
+                        if (item.getItemStack().getType().name().contains("BED")) {
+                            pickupEvent.getMethod("setCancelled", boolean.class).invoke(event, true);
+                            item.remove();
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            }, plugin, true);
+        } catch (ClassNotFoundException ignored) {
+        }
+    }
+
+    /** Modern API: cancel ambient/hurt/death entity sounds for tagged NPCs (1.8 has no EntitySoundEvent). */
+    @SuppressWarnings("unchecked")
+    private void registerNpcSoundMute() {
+        try {
+            final Class<? extends Event> soundEvent = (Class<? extends Event>) Class.forName("org.bukkit.event.entity.EntitySoundEvent");
+            Bukkit.getPluginManager().registerEvent(soundEvent, this, EventPriority.HIGHEST, new EventExecutor() {
+                @Override
+                public void execute(Listener listener, Event event) {
+                    try {
+                        Entity entity = (Entity) soundEvent.getMethod("getEntity").invoke(event);
+                        if (LobbyNpcService.isPluginNpc(entity)) {
+                            soundEvent.getMethod("setCancelled", boolean.class).invoke(event, true);
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            }, plugin, true);
+        } catch (ClassNotFoundException ignored) {
+        }
+    }
 
     @EventHandler
     public void onJoin(final PlayerJoinEvent event) {
@@ -71,6 +124,7 @@ public final class GameListener implements Listener {
     @EventHandler public void onQuit(PlayerQuitEvent event) {
         plugin.gui().disconnect(event.getPlayer());
         plugin.games().leave(event.getPlayer());
+        EntityVisibility.clearViewer(event.getPlayer().getUniqueId());
     }
 
     @EventHandler(priority = EventPriority.HIGH)
@@ -109,6 +163,10 @@ public final class GameListener implements Listener {
         ArenaManager manager = plugin.games().arena(player);
         if (manager == null) return;
         Arena arena = manager.arena();
+        if (manager.isSoftSpectating(player)) {
+            if (event.getClickedBlock() != null) event.setCancelled(true);
+            return;
+        }
         if (arena.state() == Arena.State.RUNNING && item != null && item.getType() == Items.material("FIRE_CHARGE", "FIREBALL")
             && (event.getAction() == Action.RIGHT_CLICK_AIR || event.getAction() == Action.RIGHT_CLICK_BLOCK)) {
             event.setCancelled(true);
@@ -118,8 +176,20 @@ public final class GameListener implements Listener {
             fireball.setYield(2F);
             return;
         }
+        if (arena.state() == Arena.State.RUNNING && item != null && item.getType() == Material.EGG
+            && "Bridge Egg".equals(Items.name(item))
+            && (event.getAction() == Action.RIGHT_CLICK_AIR || event.getAction() == Action.RIGHT_CLICK_BLOCK)) {
+            event.setCancelled(true);
+            takeOne(player, item);
+            manager.launchBridgeEgg(player);
+            return;
+        }
         if (event.getClickedBlock() == null || arena.state() != Arena.State.RUNNING) return;
-        if (event.getClickedBlock().getType().name().contains("BED")) { event.setCancelled(true); return; }
+        // Right-click only: left-click must reach BlockBreakEvent so enemy beds can be broken.
+        if (event.getClickedBlock().getType().name().contains("BED")) {
+            if (event.getAction() == Action.RIGHT_CLICK_BLOCK) event.setCancelled(true);
+            return;
+        }
         Location click = event.getClickedBlock().getLocation();
         TeamColor teamChest = manager.teamChestAt(click);
         if (teamChest != null) {
@@ -160,14 +230,15 @@ public final class GameListener implements Listener {
         String shop = manager == null ? null : manager.shop(event.getRightClicked());
         if (shop == null) return;
         event.setCancelled(true);
+        ArenaManager playerArena = plugin.games().arena(event.getPlayer());
+        if (playerArena != null && playerArena.isSoftSpectating(event.getPlayer())) return;
         if (shop.equals("ITEM")) plugin.gui().openShop(event.getPlayer());
         else plugin.gui().openUpgrades(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onDamage(EntityDamageEvent event) {
-        if (plugin.npcs().mode(event.getEntity()) != null) { event.setCancelled(true); return; }
-        if (event.getEntity().hasMetadata(LobbyNpcService.META_HOLO)) { event.setCancelled(true); return; }
+        if (LobbyNpcService.isPluginNpc(event.getEntity())) { event.setCancelled(true); return; }
         ArenaManager displayArena = plugin.games().arenaInWorld(event.getEntity().getWorld().getName());
         if (displayArena != null && displayArena.isDisplay(event.getEntity())) { event.setCancelled(true); return; }
         if (!(event.getEntity() instanceof Player)) return;
@@ -231,7 +302,10 @@ public final class GameListener implements Listener {
         String title = event.getView().getTitle();
         if (isBedlamTitle(title)) {
             event.setCancelled(true);
-            if (event.getRawSlot() < 0 || event.getRawSlot() >= event.getView().getTopInventory().getSize()) return;
+            int raw = event.getRawSlot();
+            int topSize = event.getView().getTopInventory().getSize();
+            // Ignore player-inv clicks and out-of-range raw slots (never assume 54).
+            if (raw < 0 || raw >= topSize) return;
             plugin.gui().click(player, title, event.getCurrentItem());
             return;
         }
@@ -293,8 +367,61 @@ public final class GameListener implements Listener {
     public void onBreak(BlockBreakEvent event) {
         ArenaManager manager = plugin.games().arena(event.getPlayer());
         if (manager == null) return;
-        boolean bed = manager.isBed(event.getBlock());
-        if (!manager.mayBreak(event.getPlayer(), event.getBlock()) || bed) event.setCancelled(true);
+        // Capture before mayBreak: enemy-bed path removes blocks, so isBed() would then be false and vanilla would drop.
+        boolean bedBlock = event.getBlock().getType().name().contains("BED");
+        boolean allowed = manager.mayBreak(event.getPlayer(), event.getBlock());
+        if (!allowed || bedBlock) event.setCancelled(true);
+        if (!bedBlock) return;
+        suppressBedDrops(event);
+        clearNearbyBedItems(event.getBlock().getLocation());
+        final Player breaker = event.getPlayer();
+        Bukkit.getScheduler().runTask(plugin, new Runnable() {
+            @Override public void run() {
+                clearNearbyBedItems(breaker.getLocation());
+                stripBedItems(breaker);
+            }
+        });
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onPickup(org.bukkit.event.player.PlayerPickupItemEvent event) {
+        if (plugin.games().arena(event.getPlayer()) == null) return;
+        if (event.getItem().getItemStack().getType().name().contains("BED")) {
+            event.setCancelled(true);
+            event.getItem().remove();
+        }
+    }
+
+    private static void suppressBedDrops(BlockBreakEvent event) {
+        try { event.getClass().getMethod("setDropItems", boolean.class).invoke(event, false); } catch (Throwable ignored) { }
+        try {
+            Object drops = event.getClass().getMethod("getDrops").invoke(event);
+            if (drops instanceof java.util.Collection) ((java.util.Collection<?>) drops).clear();
+        } catch (Throwable ignored) { }
+        try { event.setExpToDrop(0); } catch (Throwable ignored) { }
+    }
+
+    private static void clearNearbyBedItems(Location origin) {
+        if (origin == null || origin.getWorld() == null) return;
+        for (Entity entity : origin.getWorld().getEntitiesByClass(org.bukkit.entity.Item.class)) {
+            if (entity.getLocation().distanceSquared(origin) > 16) continue;
+            ItemStack stack = ((org.bukkit.entity.Item) entity).getItemStack();
+            if (stack != null && stack.getType().name().contains("BED")) entity.remove();
+        }
+    }
+
+    private static void stripBedItems(Player player) {
+        if (player == null) return;
+        ItemStack[] contents = player.getInventory().getContents();
+        for (int i = 0; i < contents.length; i++) {
+            ItemStack stack = contents[i];
+            if (stack != null && stack.getType().name().contains("BED")) {
+                String name = Items.name(stack);
+                // Keep lobby/spectator UI beds (named Leave / Return).
+                if (name.equals("Leave Game") || name.equals("Return to Lobby")) continue;
+                player.getInventory().setItem(i, null);
+            }
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)

@@ -2,7 +2,9 @@ package dev.iyanel.bedlamcore.lobby;
 
 import dev.iyanel.bedlamcore.BedlamCore;
 import dev.iyanel.bedlamcore.arena.GameType;
+import dev.iyanel.bedlamcore.compat.EntityVisibility;
 import dev.iyanel.bedlamcore.compat.Skins;
+import dev.iyanel.bedlamcore.game.GameRules;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
@@ -13,13 +15,13 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Zombie;
+import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
 
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -65,8 +67,9 @@ public final class LobbyNpcService {
         Entity entity = spawnCitizen(mode, settings);
         if (entity == null) entity = settings.human() ? spawnHumanStand(location, settings.skin()) : location.getWorld().spawnEntity(location, settings.entityType());
         entity.setMetadata(META_MODE, new FixedMetadataValue(plugin, mode.name()));
-        entity.setCustomName(mode == GameType.SOLO ? ChatColor.AQUA + "" + ChatColor.BOLD + "SOLO" : ChatColor.GOLD + "" + ChatColor.BOLD + "DOUBLES");
-        entity.setCustomNameVisible(true);
+        // Holograms carry the label; hide vanilla nametag (same as shop villagers).
+        entity.setCustomName(" ");
+        entity.setCustomNameVisible(false);
         freeze(entity, settings.baby());
         entities.put(mode, entity.getUniqueId());
         pins.put(entity.getUniqueId(), location.clone());
@@ -78,20 +81,18 @@ public final class LobbyNpcService {
     private void spawnQueueHolograms(GameType mode, Location location) {
         removeHolograms(mode);
         List<UUID> ids = new ArrayList<UUID>();
-        ids.add(hologram(location.clone().add(0, 2.4, 0), mode == GameType.SOLO ? ChatColor.AQUA + "" + ChatColor.BOLD + "SOLO QUEUE" : ChatColor.GOLD + "" + ChatColor.BOLD + "DOUBLES QUEUE").getUniqueId());
-        ids.add(hologram(location.clone().add(0, 2.1, 0), ChatColor.YELLOW + "Click to play!").getUniqueId());
-        ids.add(hologram(location.clone().add(0, 1.8, 0), ChatColor.GRAY + (mode == GameType.SOLO ? "1 per team" : "2 per team")).getUniqueId());
+        ids.add(hologram(location.clone().add(0, GameRules.LOBBY_HOLO_TITLE_Y, 0), mode == GameType.SOLO ? ChatColor.AQUA + "" + ChatColor.BOLD + "SOLO QUEUE" : ChatColor.GOLD + "" + ChatColor.BOLD + "DOUBLES QUEUE").getUniqueId());
+        ids.add(hologram(location.clone().add(0, GameRules.LOBBY_HOLO_SUB_Y, 0), ChatColor.YELLOW + "Click to play!").getUniqueId());
+        ids.add(hologram(location.clone().add(0, GameRules.LOBBY_HOLO_INFO_Y, 0), ChatColor.GRAY + (mode == GameType.SOLO ? "1 per team" : "2 per team")).getUniqueId());
         holograms.put(mode, ids);
     }
 
     private ArmorStand hologram(Location location, String text) {
         ArmorStand stand = (ArmorStand) location.getWorld().spawnEntity(location, EntityType.ARMOR_STAND);
-        stand.setVisible(false);
-        stand.setBasePlate(false);
+        prepareArmorStand(stand, true);
         stand.setCustomName(text);
         stand.setCustomNameVisible(true);
         stand.setMetadata(META_HOLO, new FixedMetadataValue(plugin, true));
-        freeze(stand, false);
         pins.put(stand.getUniqueId(), location.clone());
         return stand;
     }
@@ -106,15 +107,8 @@ public final class LobbyNpcService {
         }
     }
 
-    // ponytail: hideEntity when available; 1.8 toggles name visibility by nearest viewer
     private void updateHologramVisibility() {
-        double limit = 20.0 * 20.0;
-        Method hide = null;
-        Method show = null;
-        try {
-            hide = Player.class.getMethod("hideEntity", org.bukkit.plugin.Plugin.class, Entity.class);
-            show = Player.class.getMethod("showEntity", org.bukkit.plugin.Plugin.class, Entity.class);
-        } catch (Exception ignored) { }
+        double limit = GameRules.DISPLAY_VIEW * GameRules.DISPLAY_VIEW;
         for (List<UUID> ids : holograms.values()) {
             for (UUID uuid : ids) {
                 Entity entity = find(uuid);
@@ -123,15 +117,11 @@ public final class LobbyNpcService {
                 boolean anyNear = false;
                 for (Player player : pin.getWorld().getPlayers()) {
                     boolean near = player.getLocation().distanceSquared(pin) <= limit;
-                    if (near) anyNear = true;
-                    if (hide != null && show != null) {
-                        try {
-                            if (near) show.invoke(player, plugin, entity);
-                            else hide.invoke(player, plugin, entity);
-                        } catch (Exception ignored) { }
-                    }
+                    if (near && !EntityVisibility.isSpectator(player)) anyNear = true;
+                    EntityVisibility.apply(plugin, player, entity, near);
                 }
-                if (hide == null) entity.setCustomNameVisible(anyNear);
+                // 1.8 fallback when packets/hideEntity unavailable: at least drop the nametag
+                if (entity instanceof ArmorStand) entity.setCustomNameVisible(anyNear);
             }
         }
         for (UUID uuid : entities.values()) {
@@ -141,16 +131,19 @@ public final class LobbyNpcService {
             boolean anyNear = false;
             for (Player player : pin.getWorld().getPlayers()) {
                 boolean near = player.getLocation().distanceSquared(pin) <= limit;
-                if (near) anyNear = true;
-                if (hide != null && show != null) {
-                    try {
-                        if (near) show.invoke(player, plugin, entity);
-                        else hide.invoke(player, plugin, entity);
-                    } catch (Exception ignored) { }
-                }
+                if (near && !EntityVisibility.isSpectator(player)) anyNear = true;
+                EntityVisibility.apply(plugin, player, entity, near);
             }
-            if (hide == null) entity.setCustomNameVisible(anyNear);
+            entity.setCustomNameVisible(false);
         }
+    }
+
+    /** Shop / lobby / hologram / gen displays — never play ambient/hurt/death sounds. */
+    public static boolean isPluginNpc(Entity entity) {
+        if (entity == null) return false;
+        return entity.hasMetadata(META_MODE) || entity.hasMetadata(META_HOLO)
+            || entity.hasMetadata("bedlamShop") || entity.hasMetadata("bedlamGeneratorDisplay")
+            || entity.hasMetadata("bedlamHologram");
     }
 
     public GameType mode(Entity entity) {
@@ -237,7 +230,13 @@ public final class LobbyNpcService {
             Location pinned = entry.getValue().clone();
             if (Boolean.TRUE.equals(lookAtPlayers.get(entry.getKey()))) faceNearestPlayer(entity, pinned);
             entity.teleport(pinned);
+            // Citizens / remount can clear silent; keep queue mobs muted every tick.
+            if (entity.hasMetadata(META_MODE)) mute(entity);
         }
+    }
+
+    public static void mute(Entity entity) {
+        invokeBoolean(entity, "setSilent", true);
     }
 
     private static void faceNearestPlayer(Entity entity, Location location) {
@@ -251,6 +250,25 @@ public final class LobbyNpcService {
         Vector direction = nearest.location.toVector().subtract(location.toVector());
         location.setYaw((float) Math.toDegrees(Math.atan2(-direction.getX(), direction.getZ())));
         location.setPitch((float) Math.toDegrees(-Math.atan2(direction.getY(), Math.sqrt(direction.getX() * direction.getX() + direction.getZ() * direction.getZ()))));
+    }
+
+    /** Invisible marker stand: empty gear, no body; spectators still need EntityVisibility.hide. */
+    public static void prepareArmorStand(ArmorStand stand, boolean small) {
+        stand.setVisible(false);
+        stand.setBasePlate(false);
+        stand.setGravity(false);
+        stand.setArms(false);
+        stand.setSmall(small);
+        invokeBoolean(stand, "setMarker", true);
+        EntityEquipment gear = stand.getEquipment();
+        if (gear != null) {
+            gear.setHelmet(null);
+            gear.setChestplate(null);
+            gear.setLeggings(null);
+            gear.setBoots(null);
+            gear.setItemInHand(null);
+        }
+        freeze(stand, false);
     }
 
     public static void freeze(Entity entity, boolean baby) {

@@ -21,10 +21,20 @@ public final class NetworkViewService {
         for (Player viewer : Bukkit.getOnlinePlayers()) {
             for (Player target : Bukkit.getOnlinePlayers()) {
                 if (viewer.equals(target)) continue;
+                // Soft spectators stay invisible to living players (Hypixel-style).
+                if (softSpectating(target) && !softSpectating(viewer)) {
+                    viewer.hidePlayer(target);
+                    continue;
+                }
                 if (!isolate || sameChannel(viewer, target)) viewer.showPlayer(target);
                 else viewer.hidePlayer(target);
             }
         }
+    }
+
+    private boolean softSpectating(Player player) {
+        ArenaManager manager = plugin.games().arena(player);
+        return manager != null && manager.isSoftSpectating(player);
     }
 
     public void formatChat(AsyncPlayerChatEvent event) {

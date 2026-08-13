@@ -136,10 +136,18 @@ public final class ArenaManager {
         if (!arena.contains(player.getUniqueId())) return;
         TeamColor team = arena.players().remove(player.getUniqueId());
         arena.eliminated().remove(player.getUniqueId());
+        arena.clearPlayerState(player.getUniqueId());
         respawning.remove(player.getUniqueId());
         player.setPlayerListName(null);
         sendToNetworkLobby(player);
-        if (arena.state() == Arena.State.RUNNING && team != null) checkWinner();
+        if (arena.state() == Arena.State.RUNNING && team != null) {
+            // Disconnect / leave clears the team so a leftover bed cannot stall win detection.
+            if (arena.aliveCount(team) == 0 && arena.bedAlive(team)) {
+                arena.destroyBed(team);
+                removeBedBlocks(arena.settings().team(team).bed());
+            }
+            checkWinner();
+        }
         if (arena.state() == Arena.State.COUNTDOWN && arena.players().size() < minimumPlayers()) cancelCountdown();
     }
 
@@ -214,7 +222,10 @@ public final class ArenaManager {
         purgeStrayArmorStands();
         for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
             Player player = Bukkit.getPlayer(entry.getKey());
-            if (player != null) spawnPlayer(player, entry.getValue());
+            if (player != null) {
+                clearEnderChest(player);
+                spawnPlayer(player, entry.getValue());
+            }
         }
         startGenerators();
         startMatchEffects();
@@ -263,22 +274,70 @@ public final class ArenaManager {
             player.sendMessage(ChatColor.RED + "Spectators cannot build.");
             return false;
         }
-        Location loc = block.getLocation();
-        Location waiting = arena.settings().waitingSpawn();
-        if (waiting != null && GameRules.tooHigh(loc.getBlockY(), waiting.getBlockY())) {
-            player.sendMessage(ChatColor.RED + "You cannot build that high.");
-            return false;
-        }
-        if (bounds != null && (loc.getBlockX() < bounds[0] || loc.getBlockY() < bounds[1] || loc.getBlockZ() < bounds[2]
-            || loc.getBlockX() > bounds[3] || loc.getBlockY() > bounds[4] || loc.getBlockZ() > bounds[5])) {
-            player.sendMessage(ChatColor.RED + "You cannot build outside the arena.");
-            return false;
-        }
-        if (protectedZone(loc)) {
-            player.sendMessage(ChatColor.RED + "You cannot build here.");
+        String deny = placeDenyReason(block.getLocation());
+        if (deny != null) {
+            player.sendMessage(ChatColor.RED + deny);
             return false;
         }
         return true;
+    }
+
+    /** null if build allowed at location (bounds / height / protected gens-shops). */
+    public String placeDenyReason(Location loc) {
+        Location waiting = arena.settings().waitingSpawn();
+        if (waiting != null && GameRules.tooHigh(loc.getBlockY(), waiting.getBlockY())) return "You cannot build that high.";
+        if (bounds != null && (loc.getBlockX() < bounds[0] || loc.getBlockY() < bounds[1] || loc.getBlockZ() < bounds[2]
+            || loc.getBlockX() > bounds[3] || loc.getBlockY() > bounds[4] || loc.getBlockZ() > bounds[5])) {
+            return "You cannot build outside the arena.";
+        }
+        if (protectedZone(loc)) return "You cannot build here.";
+        return null;
+    }
+
+    /** Throw Bridge Egg: trail of team wool along flight; tracked as match blocks. */
+    public void launchBridgeEgg(Player player) {
+        final TeamColor team = arena.team(player.getUniqueId());
+        if (team == null || arena.state() != Arena.State.RUNNING || isSoftSpectating(player)) return;
+        final org.bukkit.entity.Egg egg = player.launchProjectile(org.bukkit.entity.Egg.class);
+        new BukkitRunnable() {
+            private int placed;
+            private Location prev;
+            @Override public void run() {
+                if (!egg.isValid() || egg.isDead() || placed >= GameRules.BRIDGE_EGG_MAX_BLOCKS
+                    || arena.state() != Arena.State.RUNNING) {
+                    cancel();
+                    return;
+                }
+                Location here = egg.getLocation();
+                if (prev == null) {
+                    placeBridgeAt(here.getBlock(), team);
+                    prev = here.clone();
+                    return;
+                }
+                double dist = prev.distance(here);
+                int steps = Math.max(1, (int) Math.ceil(dist));
+                for (int i = 1; i <= steps && placed < GameRules.BRIDGE_EGG_MAX_BLOCKS; i++) {
+                    double t = (double) i / (double) steps;
+                    Location point = prev.clone().add(
+                        (here.getX() - prev.getX()) * t,
+                        (here.getY() - prev.getY()) * t,
+                        (here.getZ() - prev.getZ()) * t);
+                    placeBridgeAt(point.getBlock(), team);
+                }
+                prev = here.clone();
+            }
+
+            private void placeBridgeAt(Block block, TeamColor color) {
+                if (placed >= GameRules.BRIDGE_EGG_MAX_BLOCKS) return;
+                if (!GameRules.isBridgeReplaceable(block.getType().name())) return;
+                if (placeDenyReason(block.getLocation()) != null) return;
+                String key = Locations.blockKey(block.getLocation());
+                if (arena.placedBlocks().contains(key) && block.getType().name().contains("WOOL")) return;
+                color.placeAsBlock(block);
+                arena.placedBlocks().add(key);
+                placed++;
+            }
+        }.runTaskTimer(plugin, 0L, 1L);
     }
 
     public boolean mayBreak(Player player, Block block) {
@@ -300,6 +359,8 @@ public final class ArenaManager {
                 Player online = Bukkit.getPlayer(uuid);
                 if (online != null) Sounds.bedDestroyed(online);
             }
+            // Solo force-start / last enemy bed: empty teams drop out when bed dies → win state.
+            checkWinner();
             return true;
         }
         // Map beds outside configured points must not be spawn-protected into unbreakable props.
@@ -337,13 +398,16 @@ public final class ArenaManager {
     public void handleDeath(Player player) {
         if (arena.state() != Arena.State.RUNNING || !arena.contains(player.getUniqueId())) return;
         player.setFallDistance(0F);
-        TeamColor team = arena.team(player.getUniqueId());
-        if (!GameRules.canRespawn(arena.bedAlive(team), arena.eliminated().contains(player.getUniqueId()))) {
-            arena.eliminated().add(player.getUniqueId());
+        UUID uuid = player.getUniqueId();
+        arena.pickaxeTier(uuid, GameRules.toolTierAfterDeath(arena.pickaxeTier(uuid)));
+        arena.axeTier(uuid, GameRules.toolTierAfterDeath(arena.axeTier(uuid)));
+        TeamColor team = arena.team(uuid);
+        if (!GameRules.canRespawn(arena.bedAlive(team), arena.eliminated().contains(uuid))) {
+            arena.eliminated().add(uuid);
             broadcast(team.chatColor() + player.getName() + ChatColor.RED + " was eliminated!");
             checkWinner();
         } else {
-            respawning.add(player.getUniqueId());
+            respawning.add(uuid);
         }
     }
 
@@ -433,12 +497,16 @@ public final class ArenaManager {
 
     private void checkWinner() {
         if (arena.state() != Arena.State.RUNNING) return;
-        Set<TeamColor> alive = new HashSet<TeamColor>();
-        for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
-            if (!arena.eliminated().contains(entry.getKey()) && Bukkit.getPlayer(entry.getKey()) != null) alive.add(entry.getValue());
+        Set<TeamColor> contending = new HashSet<TeamColor>();
+        for (TeamColor team : arena.settings().configuredTeams()) {
+            int living = 0;
+            for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
+                if (entry.getValue() == team && !arena.eliminated().contains(entry.getKey()) && Bukkit.getPlayer(entry.getKey()) != null) living++;
+            }
+            if (GameRules.teamContending(arena.bedAlive(team), living)) contending.add(team);
         }
-        if (alive.size() > 1) return;
-        final TeamColor winner = alive.isEmpty() ? null : alive.iterator().next();
+        if (!GameRules.shouldEndMatch(contending.size())) return;
+        final TeamColor winner = contending.isEmpty() ? null : contending.iterator().next();
         arena.state(Arena.State.ENDING);
         broadcast(winner == null ? ChatColor.GOLD + "Game over!" : ChatColor.GOLD + "VICTORY! " + winner.coloredName() + ChatColor.GOLD + " wins!");
         Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
@@ -475,21 +543,19 @@ public final class ArenaManager {
     }
 
     public void shutdown() {
-        if (arena.state() != Arena.State.WAITING || !arena.players().isEmpty()) {
-            cancelAllTasks();
-            for (String key : new HashSet<String>(arena.placedBlocks())) removeBlock(key);
-            for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
-                Player player = Bukkit.getPlayer(uuid);
-                if (player != null) {
-                    player.setPlayerListName(null);
-                    sendToNetworkLobby(player);
-                }
+        cancelAllTasks();
+        for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
+            Player player = Bukkit.getPlayer(uuid);
+            if (player != null) {
+                player.setPlayerListName(null);
+                sendToNetworkLobby(player);
             }
-            arena.players().clear();
-            arena.resetMatchData();
         }
+        arena.players().clear();
+        arena.resetMatchData();
         waitingStructure.remove();
         clearDisplays();
+        // Never save match dirt (builds / broken beds) — discard unload only.
         plugin.worlds().unloadDiscarding(arena.settings());
     }
 
@@ -512,6 +578,7 @@ public final class ArenaManager {
 
     private void prepareLobby(Player player) {
         clearPlayer(player);
+        clearEnderChest(player);
         player.setGameMode(GameMode.ADVENTURE);
         player.teleport(arena.settings().waitingSpawn());
         player.getInventory().setItem(8, Items.named(new ItemStack(Items.material("RED_BED", "BED")), ChatColor.RED + "Leave Game"));
@@ -521,6 +588,7 @@ public final class ArenaManager {
         respawning.remove(player.getUniqueId());
         clearPlayer(player);
         player.setGameMode(GameMode.SURVIVAL);
+        applyDragonHealth(player, team);
         player.setHealth(player.getMaxHealth());
         player.setFoodLevel(20);
         player.setFallDistance(0F);
@@ -530,8 +598,93 @@ public final class ArenaManager {
         if (arena.sharpness(team)) Enchantments.add(sword, 1, "SHARPNESS", "DAMAGE_ALL");
         player.getInventory().setItem(0, sword);
         equipArmor(player, team);
+        giveOwnedTools(player);
         applyHaste(player, team);
         plugin.views().updateAll();
+    }
+
+    /** Give permanent tools at current tiers (replace any existing pick/axe/shears). */
+    public void giveOwnedTools(Player player) {
+        UUID uuid = player.getUniqueId();
+        int pick = arena.pickaxeTier(uuid);
+        if (pick > 0) replaceTool(player, true, toolPickaxe(pick));
+        int axe = arena.axeTier(uuid);
+        if (axe > 0) replaceTool(player, false, toolAxe(axe));
+        if (arena.shearsOwned(uuid)) {
+            removeMatching(player, "SHEARS");
+            player.getInventory().addItem(Items.unbreakable(Items.named(new ItemStack(Items.material("SHEARS")),
+                ChatColor.GREEN + "Permanent Shears", ChatColor.GRAY + "Kept on respawn")));
+        }
+    }
+
+    public static ItemStack toolPickaxe(int tier) {
+        Material mat = pickaxeMaterial(tier);
+        ItemStack item = Items.unbreakable(Items.named(new ItemStack(mat), ChatColor.GREEN + toolTierName(tier) + " Pickaxe",
+            ChatColor.GRAY + "Upgradable", ChatColor.DARK_GRAY + "Loses 1 tier on death"));
+        int eff = GameRules.pickaxeEfficiency(tier);
+        if (eff > 0) Enchantments.add(item, eff, "DIG_SPEED", "EFFICIENCY");
+        return item;
+    }
+
+    public static ItemStack toolAxe(int tier) {
+        Material mat = axeMaterial(tier);
+        return Items.unbreakable(Items.named(new ItemStack(mat), ChatColor.GREEN + toolTierName(tier) + " Axe",
+            ChatColor.GRAY + "Upgradable", ChatColor.DARK_GRAY + "Loses 1 tier on death"));
+    }
+
+    private static String toolTierName(int tier) {
+        switch (tier) {
+            case 2: return "Stone";
+            case 3: return "Iron";
+            case 4: return "Diamond";
+            default: return "Wooden";
+        }
+    }
+
+    private static Material pickaxeMaterial(int tier) {
+        switch (tier) {
+            case 2: return Items.material("STONE_PICKAXE");
+            case 3: return Items.material("IRON_PICKAXE");
+            case 4: return Items.material("DIAMOND_PICKAXE");
+            default: return Items.material("WOODEN_PICKAXE", "WOOD_PICKAXE");
+        }
+    }
+
+    private static Material axeMaterial(int tier) {
+        switch (tier) {
+            case 2: return Items.material("STONE_AXE");
+            case 3: return Items.material("IRON_AXE");
+            case 4: return Items.material("DIAMOND_AXE");
+            default: return Items.material("WOODEN_AXE", "WOOD_AXE");
+        }
+    }
+
+    public void replaceTool(Player player, boolean pickaxe, ItemStack tool) {
+        for (int i = 0; i < player.getInventory().getSize(); i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (stack == null) continue;
+            String name = stack.getType().name();
+            if (pickaxe ? GameRules.isPickaxe(name) : GameRules.isAxe(name)) {
+                player.getInventory().setItem(i, tool);
+                return;
+            }
+        }
+        player.getInventory().addItem(tool);
+    }
+
+    private static void removeMatching(Player player, String needle) {
+        for (int i = 0; i < player.getInventory().getSize(); i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (stack != null && stack.getType().name().contains(needle)) player.getInventory().setItem(i, null);
+        }
+    }
+
+    private void applyDragonHealth(Player player, TeamColor team) {
+        try {
+            double base = 20.0;
+            double max = arena.dragonBuff(team) ? 24.0 : base;
+            player.setMaxHealth(max);
+        } catch (Throwable ignored) { }
     }
 
     public void equipArmor(Player player, TeamColor team) {
@@ -558,6 +711,7 @@ public final class ArenaManager {
             Enchantments.add(chest, protection, "PROTECTION", "PROTECTION_ENVIRONMENTAL");
             Enchantments.add(helmet, protection, "PROTECTION", "PROTECTION_ENVIRONMENTAL");
         }
+        if (arena.cushionedBoots(team)) Enchantments.add(boots, 4, "PROTECTION_FALL", "FEATHER_FALLING");
         inventory.setBoots(boots);
         inventory.setLeggings(leggings);
         inventory.setChestplate(chest);
@@ -588,6 +742,7 @@ public final class ArenaManager {
         player.removePotionEffect(PotionEffectType.FAST_DIGGING);
         player.removePotionEffect(PotionEffectType.REGENERATION);
         player.removePotionEffect(PotionEffectType.INVISIBILITY);
+        try { player.setMaxHealth(20.0); } catch (Throwable ignored) { }
         player.setAllowFlight(false);
         player.setFlying(false);
         try {
@@ -595,9 +750,15 @@ public final class ArenaManager {
         } catch (Throwable ignored) { }
     }
 
+    /** Personal ender only — never persists across matches. Team chest is separate (Arena.teamChest). */
+    private void clearEnderChest(Player player) {
+        if (player != null) player.getEnderChest().clear();
+    }
+
     /** Strip match gear, teleport to network lobby, give lobby items only. */
     public void sendToNetworkLobby(Player player) {
         clearPlayer(player);
+        clearEnderChest(player);
         player.setGameMode(GameMode.ADVENTURE);
         player.setHealth(player.getMaxHealth());
         player.setFoodLevel(20);
@@ -615,6 +776,7 @@ public final class ArenaManager {
                 if (online == null || plugin.games().arena(online) != null) return;
                 if (hasMatchLeftovers(online)) {
                     clearPlayer(online);
+                    clearEnderChest(online);
                     plugin.listener().giveNavigation(online);
                 }
             }
@@ -734,29 +896,62 @@ public final class ArenaManager {
     }
 
     private void tickTraps() {
+        long now = System.currentTimeMillis();
         for (TeamColor team : arena.settings().configuredTeams()) {
             List<Arena.TrapType> queue = arena.traps(team);
-            if (queue == null || queue.isEmpty()) continue;
+            if (queue == null || queue.isEmpty() || !arena.trapReady(team, now)) continue;
             Location spawn = arena.settings().team(team).spawn();
             if (spawn == null) continue;
             for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
                 if (entry.getValue() == team || arena.eliminated().contains(entry.getKey())) continue;
                 Player enemy = Bukkit.getPlayer(entry.getKey());
-                if (enemy == null || !Locations.near(enemy.getLocation(), spawn, GameRules.TRAP_TRIGGER_RADIUS)) continue;
+                if (enemy == null || arena.eliminated().contains(enemy.getUniqueId()) || isRespawning(enemy.getUniqueId())) continue;
+                if (!Locations.near(enemy.getLocation(), spawn, GameRules.TRAP_TRIGGER_RADIUS)) continue;
                 Arena.TrapType trap = arena.popTrap(team);
                 if (trap == null) break;
-                if (trap == Arena.TrapType.ALARM) {
-                    for (Map.Entry<UUID, TeamColor> member : arena.players().entrySet()) {
-                        if (member.getValue() != team) continue;
-                        Player online = Bukkit.getPlayer(member.getKey());
-                        if (online == null) continue;
-                        title(online, ChatColor.RED + "TRAP TRIGGERED!", ChatColor.WHITE + "Alarm: " + enemy.getName());
-                        Sounds.levelUp(online);
-                    }
-                    enemy.sendMessage(ChatColor.RED + "You triggered an Alarm Trap!");
-                }
+                arena.armTrapCooldown(team, now + GameRules.TRAP_COOLDOWN_TICKS * 50L);
+                fireTrap(team, trap, enemy, spawn);
                 break;
             }
+        }
+    }
+
+    private void fireTrap(TeamColor team, Arena.TrapType trap, Player enemy, Location spawn) {
+        announceTrap(team, trap.displayName() + " — " + enemy.getName());
+        enemy.sendMessage(ChatColor.RED + "You triggered " + trap.displayName() + "!");
+        switch (trap) {
+            case BLINDNESS:
+                enemy.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 8 * 20, 0), true);
+                break;
+            case MINER_FATIGUE:
+                enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_DIGGING, 10 * 20, 1), true);
+                break;
+            case REVEAL:
+                enemy.removePotionEffect(PotionEffectType.INVISIBILITY);
+                enemy.sendMessage(ChatColor.YELLOW + "Your invisibility was stripped!");
+                break;
+            case COUNTER_OFFENSIVE:
+                for (Map.Entry<UUID, TeamColor> member : arena.players().entrySet()) {
+                    if (member.getValue() != team || arena.eliminated().contains(member.getKey())) continue;
+                    Player ally = Bukkit.getPlayer(member.getKey());
+                    if (ally == null || !Locations.near(ally.getLocation(), spawn, GameRules.TRAP_TRIGGER_RADIUS + 6)) continue;
+                    ally.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 15 * 20, 1), true);
+                    ally.addPotionEffect(new PotionEffect(PotionEffectType.JUMP, 15 * 20, 1), true);
+                }
+                break;
+            case ALARM:
+            default:
+                break;
+        }
+    }
+
+    private void announceTrap(TeamColor team, String detail) {
+        for (Map.Entry<UUID, TeamColor> member : arena.players().entrySet()) {
+            if (member.getValue() != team) continue;
+            Player online = Bukkit.getPlayer(member.getKey());
+            if (online == null) continue;
+            title(online, ChatColor.RED + "TRAP TRIGGERED!", ChatColor.WHITE + detail);
+            Sounds.levelUp(online);
         }
     }
 
@@ -910,7 +1105,8 @@ public final class ArenaManager {
         Location base = location.getBlock().getLocation().add(0.5, 0.0, 0.5);
         Location standPin = base.clone().add(0, GameRules.GEN_STAND_Y, 0);
         ArmorStand stand = (ArmorStand) location.getWorld().spawnEntity(standPin, EntityType.ARMOR_STAND);
-        LobbyNpcService.prepareArmorStand(stand, true);
+        // Full-size pin (not miniature); shop/chest holograms stay small via spawnHologram.
+        LobbyNpcService.prepareArmorStand(stand, false);
         stand.setVisible(false);
         stand.getEquipment().setHelmet(new ItemStack(block));
         stand.setMetadata("bedlamGeneratorDisplay", new FixedMetadataValue(plugin, kind));
@@ -955,10 +1151,10 @@ public final class ArenaManager {
     private boolean nearAnyGenerator(Location loc) {
         if (loc == null) return false;
         for (Location gen : arena.settings().diamondGenerators()) {
-            if (Locations.near(loc, gen.clone().add(0.5, GameRules.GEN_HOLO_TITLE_Y, 0.5), 2.0)) return true;
+            if (Locations.near(loc, gen.getBlock().getLocation().add(0.5, GameRules.GEN_HOLO_TITLE_Y, 0.5), 2.0)) return true;
         }
         for (Location gen : arena.settings().emeraldGenerators()) {
-            if (Locations.near(loc, gen.clone().add(0.5, GameRules.GEN_HOLO_TITLE_Y, 0.5), 2.0)) return true;
+            if (Locations.near(loc, gen.getBlock().getLocation().add(0.5, GameRules.GEN_HOLO_TITLE_Y, 0.5), 2.0)) return true;
         }
         return false;
     }
@@ -997,6 +1193,7 @@ public final class ArenaManager {
     private void forgeGenerator(final Location location, final ItemStack stack, final String kind, final int fallbackTicks, final TeamColor team) {
         int id = new BukkitRunnable() {
             private int waited;
+            private final java.util.Random random = new java.util.Random();
             @Override public void run() {
                 if (arena.state() != Arena.State.RUNNING) return;
                 waited++;
@@ -1005,11 +1202,61 @@ public final class ArenaManager {
                 if (forge > 0) period = Math.max(1, period - forge);
                 if (waited < period) return;
                 waited = 0;
-                Item item = location.getWorld().dropItemNaturally(location, stack.clone());
-                arena.generatedItems().add(item.getUniqueId());
+                deliverForge(location, stack, team);
+                if (GameRules.forgeBonusHits(GameRules.forgeDiamondChance(forge), random.nextDouble())) {
+                    deliverForge(location, new ItemStack(Material.DIAMOND), team);
+                }
+                if (GameRules.forgeBonusHits(GameRules.forgeEmeraldChance(forge), random.nextDouble())) {
+                    deliverForge(location, new ItemStack(Material.EMERALD), team);
+                }
             }
         }.runTaskTimer(plugin, 20L, 20L).getTaskId();
         arena.tasks().add(id);
+    }
+
+    /** Teammates in share range each get a copy; else low ground drop. Enemies never share. */
+    private void deliverForge(Location location, ItemStack stack, TeamColor team) {
+        if (location == null || location.getWorld() == null || stack == null) return;
+        List<Player> recipients = forgeRecipients(location, team);
+        if (recipients.isEmpty()) {
+            spawnForgeDrop(location, stack);
+            return;
+        }
+        for (Player player : recipients) {
+            giveForgeItem(player, stack.clone(), location);
+        }
+    }
+
+    private List<Player> forgeRecipients(Location forge, TeamColor team) {
+        List<Player> recipients = new ArrayList<Player>();
+        double cx = forge.getBlockX() + 0.5;
+        double cy = forge.getBlockY() + 0.5;
+        double cz = forge.getBlockZ() + 0.5;
+        for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
+            if (entry.getValue() != team || arena.eliminated().contains(entry.getKey())) continue;
+            Player player = Bukkit.getPlayer(entry.getKey());
+            if (player == null || !player.getWorld().equals(forge.getWorld())) continue;
+            Location at = player.getLocation();
+            if (GameRules.forgeShareInRange(at.getX() - cx, at.getY() - cy, at.getZ() - cz)) recipients.add(player);
+        }
+        return recipients;
+    }
+
+    private void giveForgeItem(Player player, ItemStack stack, Location forge) {
+        Map<Integer, ItemStack> leftover = player.getInventory().addItem(stack);
+        if (!leftover.isEmpty()) {
+            for (ItemStack remain : leftover.values()) {
+                Item drop = player.getWorld().dropItem(player.getLocation().add(0, 0.2, 0), remain);
+                drop.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
+                drop.setPickupDelay(0);
+                arena.generatedItems().add(drop.getUniqueId());
+            }
+        }
+        double cx = forge.getBlockX() + 0.5;
+        double cz = forge.getBlockZ() + 0.5;
+        Location at = player.getLocation();
+        if (GameRules.forgeStandingInRange(at.getX() - cx, at.getZ() - cz)) Sounds.forgeCollect(player);
+        else Sounds.forgeShare(player);
     }
 
     private void generator(final Location location, final ItemStack stack, final String kind, final int fallbackTicks) {
@@ -1021,11 +1268,39 @@ public final class ArenaManager {
                 int seconds = Math.max(1, (generatorPeriod(kind, fallbackTicks) + 19) / 20);
                 if (waited < seconds) return;
                 waited = 0;
-                Item item = location.getWorld().dropItemNaturally(location, stack.clone());
-                arena.generatedItems().add(item.getUniqueId());
+                spawnGenDrop(location, stack);
             }
         }.runTaskTimer(plugin, 20L, 20L).getTaskId();
         arena.tasks().add(id);
+    }
+
+    /** Hypixel-like: stack drops at configured gen block center with zero velocity. */
+    private void spawnGenDrop(Location location, ItemStack stack) {
+        spawnPinnedDrop(Locations.genDropPoint(location), stack);
+    }
+
+    private void spawnForgeDrop(Location location, ItemStack stack) {
+        spawnPinnedDrop(Locations.forgeDropPoint(location), stack);
+    }
+
+    private void spawnPinnedDrop(Location at, ItemStack stack) {
+        if (at == null || at.getWorld() == null || stack == null) return;
+        Item item = at.getWorld().dropItem(at, stack.clone());
+        item.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
+        item.setPickupDelay(10);
+        try { item.getClass().getMethod("setInvulnerable", boolean.class).invoke(item, true); } catch (Throwable ignored) { }
+        arena.generatedItems().add(item.getUniqueId());
+        final UUID id = item.getUniqueId();
+        final Location pin = at.clone();
+        Bukkit.getScheduler().runTask(plugin, new Runnable() {
+            @Override public void run() {
+                Entity e = findEntity(id);
+                if (e instanceof Item) {
+                    e.teleport(pin);
+                    e.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
+                }
+            }
+        });
     }
 
     private int generatorPeriod(String kind, int fallback) {
