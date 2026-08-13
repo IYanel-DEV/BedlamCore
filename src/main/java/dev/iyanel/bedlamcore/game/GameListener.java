@@ -185,9 +185,14 @@ public final class GameListener implements Listener {
             return;
         }
         if (event.getClickedBlock() == null || arena.state() != Arena.State.RUNNING) return;
-        // Right-click only: left-click must reach BlockBreakEvent so enemy beds can be broken.
+        // Deny sleeping in beds; still allow placing blocks against/on top of beds (bed defense).
         if (event.getClickedBlock().getType().name().contains("BED")) {
-            if (event.getAction() == Action.RIGHT_CLICK_BLOCK) event.setCancelled(true);
+            if (event.getAction() == Action.RIGHT_CLICK_BLOCK) {
+                event.setUseInteractedBlock(Event.Result.DENY);
+                if (item == null || item.getType() == Material.AIR || !item.getType().isBlock()) {
+                    event.setCancelled(true);
+                }
+            }
             return;
         }
         Location click = event.getClickedBlock().getLocation();

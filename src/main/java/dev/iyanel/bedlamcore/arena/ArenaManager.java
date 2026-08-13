@@ -385,7 +385,7 @@ public final class ArenaManager {
         for (Location gen : arena.settings().emeraldGenerators()) if (Locations.near(loc, gen, GameRules.GEN_PROTECT)) return true;
         for (TeamColor team : arena.settings().configuredTeams()) {
             ArenaSettings.TeamSettings settings = arena.settings().team(team);
-            if (Locations.near(loc, settings.spawn(), GameRules.SPAWN_PROTECT)) return true;
+            // No spawn bubble: Hypixel-like bed defense needs builds on/beside beds (spawn is usually next to bed).
             if (Locations.near(loc, settings.forge(), GameRules.FORGE_PROTECT)) return true;
             if (Locations.near(loc, settings.itemShop(), GameRules.SHOP_PROTECT)) return true;
             if (Locations.near(loc, settings.upgradeShop(), GameRules.SHOP_PROTECT)) return true;

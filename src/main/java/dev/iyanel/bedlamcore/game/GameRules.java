@@ -7,7 +7,6 @@ import java.util.Map;
 
 public final class GameRules {
     public static final double GEN_PROTECT = 3.0;
-    public static final double SPAWN_PROTECT = 4.0;
     public static final double FORGE_PROTECT = 3.0;
     /** Horizontal share radius (Hypixel-like: at forge or blocked/half away). */
     public static final double FORGE_SHARE_RADIUS = 2.5;
