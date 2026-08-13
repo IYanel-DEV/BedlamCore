@@ -7,9 +7,12 @@ import dev.iyanel.bedlamcore.arena.TeamColor;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scoreboard.DisplaySlot;
+import org.bukkit.scoreboard.NameTagVisibility;
 import org.bukkit.scoreboard.Objective;
 import org.bukkit.scoreboard.Scoreboard;
+import org.bukkit.scoreboard.Team;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayList;
@@ -44,7 +47,7 @@ public final class SidebarService {
         player.setScoreboard(board);
     }
 
-    /** Tab list + nametag colors from match teams. */
+    /** Tab list + nametag colors from match teams. Invis players: nametag NEVER (armor hide is InvisArmor). */
     @SuppressWarnings("deprecation")
     private void applyTeamColors(Scoreboard board, Player viewer) {
         ArenaManager manager = plugin.games().arena(viewer);
@@ -54,19 +57,27 @@ public final class SidebarService {
         }
         Arena arena = manager.arena();
         for (TeamColor color : arena.settings().configuredTeams()) {
-            org.bukkit.scoreboard.Team team = board.registerNewTeam(color.name());
-            team.setPrefix(color.chatColor().toString());
-            try {
-                team.getClass().getMethod("setColor", ChatColor.class).invoke(team, color.chatColor());
-            } catch (Throwable ignored) { }
+            Team team = styleTeam(board.registerNewTeam(color.name()), color);
+            Team invis = styleTeam(board.registerNewTeam("I" + color.name()), color);
+            invis.setNameTagVisibility(NameTagVisibility.NEVER);
         }
         for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
             Player member = Bukkit.getPlayer(entry.getKey());
             if (member == null || entry.getValue() == null) continue;
-            org.bukkit.scoreboard.Team team = board.getTeam(entry.getValue().name());
+            // Soft-specs are hidePlayer'd; keep their tab/team colors for other soft-specs.
+            boolean hideTag = member.hasPotionEffect(PotionEffectType.INVISIBILITY) && !manager.isSoftSpectating(member);
+            Team team = board.getTeam((hideTag ? "I" : "") + entry.getValue().name());
             if (team != null) team.addEntry(member.getName());
             member.setPlayerListName(entry.getValue().chatColor() + member.getName());
         }
+    }
+
+    private static Team styleTeam(Team team, TeamColor color) {
+        team.setPrefix(color.chatColor().toString());
+        try {
+            team.getClass().getMethod("setColor", ChatColor.class).invoke(team, color.chatColor());
+        } catch (Throwable ignored) { }
+        return team;
     }
 
     private List<String> lines(Player player) {

@@ -7,6 +7,7 @@ import org.bukkit.inventory.Inventory;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -40,6 +41,8 @@ public final class Arena {
     private final Map<UUID, Integer> axeTier = new HashMap<UUID, Integer>();
     private final Set<UUID> shearsOwned = new HashSet<UUID>();
     private final Map<TeamColor, Boolean> beds = new EnumMap<TeamColor, Boolean>(TeamColor.class);
+    /** Teams that received ≥1 player assignment at match start (empty filler teams stay out). */
+    private final Set<TeamColor> occupiedThisMatch = EnumSet.noneOf(TeamColor.class);
     private final Map<TeamColor, Integer> protection = new EnumMap<TeamColor, Integer>(TeamColor.class);
     private final Map<TeamColor, Integer> forgeLevel = new EnumMap<TeamColor, Integer>(TeamColor.class);
     private final Map<TeamColor, Integer> hasteLevel = new EnumMap<TeamColor, Integer>(TeamColor.class);
@@ -80,6 +83,8 @@ public final class Arena {
     }
     public boolean bedAlive(TeamColor team) { return Boolean.TRUE.equals(beds.get(team)); }
     public void destroyBed(TeamColor team) { beds.put(team, false); }
+    public boolean wasOccupiedThisMatch(TeamColor team) { return occupiedThisMatch.contains(team); }
+    public void markOccupied(TeamColor team) { if (team != null) occupiedThisMatch.add(team); }
     public int protection(TeamColor team) { return protection.containsKey(team) ? protection.get(team) : 0; }
     public void protection(TeamColor team, int level) { protection.put(team, level); }
     public int forgeLevel(TeamColor team) { return forgeLevel.containsKey(team) ? forgeLevel.get(team) : 0; }
@@ -155,6 +160,7 @@ public final class Arena {
         forgeLevel.clear();
         hasteLevel.clear();
         beds.clear();
+        occupiedThisMatch.clear();
         traps.clear();
         trapCooldownUntil.clear();
         teamChests.clear();

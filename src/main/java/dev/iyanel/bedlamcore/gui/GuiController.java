@@ -22,6 +22,7 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Vector;
 
 import java.util.ArrayList;
@@ -85,10 +86,28 @@ public final class GuiController {
 
     public void openContextSetup(Player player) {
         if (!admin(player)) return;
-        if (arenaDrafts.containsKey(player.getUniqueId())) { openArenaSetup(player); return; }
+        ArenaDraft session = arenaDrafts.get(player.getUniqueId());
+        // Lobby (or any non-draft world) must not reopen leftover game-setup for a map the operator left.
+        if (session != null && player.getWorld().getName().equals(session.settings.worldName())) {
+            openArenaSetup(player);
+            return;
+        }
         ArenaManager manager = plugin.games().arenaInWorld(player.getWorld().getName());
         if (manager != null) beginArenaSetup(player, manager.arena().settings(), false);
         else openAdmin(player);
+    }
+
+    /** Drop this operator's arena draft only (leave / match end → lobby). Other operators untouched. */
+    public void clearArenaDraft(Player player) {
+        if (player == null) return;
+        final ArenaDraft session = arenaDrafts.remove(player.getUniqueId());
+        if (session == null) return;
+        if (session.newWorld) {
+            Bukkit.getScheduler().runTask(plugin, new Runnable() {
+                @Override public void run() { plugin.worlds().delete(session.settings, player); }
+            });
+        }
+        player.sendMessage(ChatColor.YELLOW + "Unsaved game setup for " + session.settings.id() + " was discarded.");
     }
 
     private void openLobbySetup(Player player) {
@@ -588,7 +607,8 @@ public final class GuiController {
         inventory.setItem(3, categoryTab(Items.material("CHAINMAIL_BOOTS"), "Armor", category));
         inventory.setItem(4, categoryTab(Items.material("STONE_PICKAXE"), "Tools", category));
         inventory.setItem(5, categoryTab(Material.BOW, "Ranged", category));
-        inventory.setItem(6, categoryTab(Items.material("BREWING_STAND", "BREWING_STAND_ITEM"), "Potions", category));
+        // 1.8: BREWING_STAND is the block (id 117) — invisible in GUIs. Item is BREWING_STAND_ITEM.
+        inventory.setItem(6, categoryTab(Items.material(Items.POTIONS_TAB_MATERIALS), "Potions", category));
         inventory.setItem(7, categoryTab(Material.TNT, "Utility", category));
         ItemStack gray = Items.named(Items.stack("GRAY_STAINED_GLASS_PANE", "STAINED_GLASS_PANE", 1, (short) 7), " ");
         ItemStack lime = Items.named(Items.stack("LIME_STAINED_GLASS_PANE", "STAINED_GLASS_PANE", 1, (short) 5), " ");
@@ -664,12 +684,22 @@ public final class GuiController {
             }
         }
         if (category.equals("Potions")) {
-            inventory.setItem(19, shopOffer(player, new ItemStack(Items.material("POTION")), "Speed II Potion (45 seconds)", "Speed Potion", 1, Material.EMERALD,
-                ChatColor.GRAY + "Speed II for 45s"));
-            inventory.setItem(20, shopOffer(player, new ItemStack(Items.material("POTION")), "Jump Boost V (45 seconds)", "Jump Potion", 1, Material.EMERALD,
-                ChatColor.GRAY + "Jump Boost for 45s"));
-            inventory.setItem(21, shopOffer(player, new ItemStack(Items.material("POTION")), "Invisibility Potion (30 seconds)", "Invisibility Potion", 2, Material.EMERALD,
-                ChatColor.GRAY + "Complete invisibility for 30s"));
+            PotionEffectType speed = Items.potionType("SPEED");
+            PotionEffectType jump = Items.potionType("JUMP", "JUMP_BOOST");
+            PotionEffectType invis = Items.potionType("INVISIBILITY");
+            inventory.setItem(19, shopOffer(player,
+                Items.drinkPotion(speed, GameRules.POTION_SPEED_TICKS, GameRules.POTION_SPEED_AMPLIFIER, (short) 8226),
+                "Speed II Potion (45 seconds)", "Speed II Potion (45 seconds)", GameRules.POTION_SPEED_COST_EMERALD, Material.EMERALD,
+                ChatColor.GRAY + "Speed II for 45 seconds"));
+            inventory.setItem(20, shopOffer(player,
+                Items.drinkPotion(jump, GameRules.POTION_JUMP_TICKS, GameRules.POTION_JUMP_AMPLIFIER, (short) 8235),
+                "Jump V Potion (45 seconds)", "Jump V Potion (45 seconds)", GameRules.POTION_JUMP_COST_EMERALD, Material.EMERALD,
+                ChatColor.GRAY + "Jump Boost V for 45 seconds"));
+            inventory.setItem(21, shopOffer(player,
+                Items.drinkPotion(invis, GameRules.POTION_INVIS_TICKS, 0, (short) 8206),
+                "Invisibility Potion (30 seconds)", "Invisibility Potion (30 seconds)", GameRules.POTION_INVIS_COST_EMERALD, Material.EMERALD,
+                ChatColor.GRAY + "Full invisibility for 30 seconds",
+                ChatColor.DARK_GRAY + "Armor hidden from enemies"));
         }
         if (category.equals("Utility") || category.equals("Quick Buy")) {
             if (category.equals("Utility")) {
@@ -903,9 +933,33 @@ public final class GuiController {
             give(player, Items.named(new ItemStack(Material.EGG), ChatColor.GREEN + "Bridge Egg",
                 ChatColor.GRAY + "Throws a team-wool bridge", ChatColor.GRAY + "along its flight path"));
         }
-        else if (name.equals("Speed Potion") && pay(player, Material.EMERALD, 1)) give(player, potion(8194));
-        else if (name.equals("Jump Potion") && pay(player, Material.EMERALD, 1)) give(player, potion(8203));
-        else if (name.equals("Invisibility Potion") && pay(player, Material.EMERALD, 2)) give(player, potion(8206));
+        else if (name.equals("Speed II Potion (45 seconds)") && pay(player, Material.EMERALD, GameRules.POTION_SPEED_COST_EMERALD)) {
+            give(player, Items.named(
+                Items.drinkPotion(Items.potionType("SPEED"), GameRules.POTION_SPEED_TICKS, GameRules.POTION_SPEED_AMPLIFIER, (short) 8226),
+                ChatColor.AQUA + "Speed II Potion (45 seconds)"));
+        } else if (name.equals("Jump V Potion (45 seconds)") && pay(player, Material.EMERALD, GameRules.POTION_JUMP_COST_EMERALD)) {
+            give(player, Items.named(
+                Items.drinkPotion(Items.potionType("JUMP", "JUMP_BOOST"), GameRules.POTION_JUMP_TICKS, GameRules.POTION_JUMP_AMPLIFIER, (short) 8235),
+                ChatColor.GREEN + "Jump V Potion (45 seconds)"));
+        } else if (name.equals("Invisibility Potion (30 seconds)") && pay(player, Material.EMERALD, GameRules.POTION_INVIS_COST_EMERALD)) {
+            give(player, Items.named(
+                Items.drinkPotion(Items.potionType("INVISIBILITY"), GameRules.POTION_INVIS_TICKS, 0, (short) 8206),
+                ChatColor.GRAY + "Invisibility Potion (30 seconds)"));
+        }
+        // legacy short names from older shop lore clicks
+        else if (name.equals("Speed Potion") && pay(player, Material.EMERALD, GameRules.POTION_SPEED_COST_EMERALD)) {
+            give(player, Items.named(
+                Items.drinkPotion(Items.potionType("SPEED"), GameRules.POTION_SPEED_TICKS, GameRules.POTION_SPEED_AMPLIFIER, (short) 8226),
+                ChatColor.AQUA + "Speed II Potion (45 seconds)"));
+        } else if (name.equals("Jump Potion") && pay(player, Material.EMERALD, GameRules.POTION_JUMP_COST_EMERALD)) {
+            give(player, Items.named(
+                Items.drinkPotion(Items.potionType("JUMP", "JUMP_BOOST"), GameRules.POTION_JUMP_TICKS, GameRules.POTION_JUMP_AMPLIFIER, (short) 8235),
+                ChatColor.GREEN + "Jump V Potion (45 seconds)"));
+        } else if (name.equals("Invisibility Potion") && pay(player, Material.EMERALD, GameRules.POTION_INVIS_COST_EMERALD)) {
+            give(player, Items.named(
+                Items.drinkPotion(Items.potionType("INVISIBILITY"), GameRules.POTION_INVIS_TICKS, 0, (short) 8206),
+                ChatColor.GRAY + "Invisibility Potion (30 seconds)"));
+        }
         openShopCategory(player, shopCategory.containsKey(player.getUniqueId()) ? shopCategory.get(player.getUniqueId()) : "Quick Buy");
     }
 
@@ -932,12 +986,6 @@ public final class GuiController {
         if (name.startsWith("Iron ")) return 3;
         if (name.startsWith("Diamond ")) return 4;
         return -1;
-    }
-
-    @SuppressWarnings("deprecation")
-    private static ItemStack potion(int legacyData) {
-        ItemStack item = new ItemStack(Items.material("POTION"), 1, (short) legacyData);
-        return item;
     }
 
     private void upgrade(Player player, String name) {

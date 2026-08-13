@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "dev.iyanel"
-version = "0.9.0"
+version = "0.10.1"
 
 repositories {
     mavenCentral()

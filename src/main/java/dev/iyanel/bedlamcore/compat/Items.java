@@ -4,12 +4,18 @@ import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.PotionMeta;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
 public final class Items {
+    /** 1.8-safe Potions category icon: item id first, then modern name, then potion bottle. */
+    public static final String[] POTIONS_TAB_MATERIALS = {"BREWING_STAND_ITEM", "BREWING_STAND", "POTION"};
+
     private Items() {
     }
 
@@ -80,5 +86,35 @@ public final class Items {
             }
         }
         return false;
+    }
+
+    /** Drinkable potion with custom effect — works on 1.8.8 (legacy data for bottle color) and modern Paper. */
+    @SuppressWarnings("deprecation")
+    public static ItemStack drinkPotion(PotionEffectType type, int durationTicks, int amplifier, short legacyData) {
+        Material potionMat = material("POTION");
+        ItemStack item = new ItemStack(potionMat, 1, legacyData);
+        if (type == null) return item;
+        try {
+            ItemMeta meta = item.getItemMeta();
+            if (!(meta instanceof PotionMeta)) return item;
+            PotionMeta potion = (PotionMeta) meta;
+            try {
+                potion.setMainEffect(type);
+            } catch (Throwable ignored) {
+            }
+            potion.addCustomEffect(new PotionEffect(type, durationTicks, amplifier), true);
+            item.setItemMeta(potion);
+        } catch (Throwable ignored) {
+            // 1.8 edge: keep colored bottle even if PotionMeta path fails
+        }
+        return item;
+    }
+
+    public static PotionEffectType potionType(String... names) {
+        for (String name : names) {
+            PotionEffectType type = PotionEffectType.getByName(name);
+            if (type != null) return type;
+        }
+        return null;
     }
 }

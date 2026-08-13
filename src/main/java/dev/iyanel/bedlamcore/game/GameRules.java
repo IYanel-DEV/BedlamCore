@@ -50,6 +50,8 @@ public final class GameRules {
     public static final int TOOL_TIER_MAX = 4;
     /** Path cells (center of the 3-wide slice) one Bridge Egg may paint. */
     public static final int BRIDGE_EGG_MAX_PATH = 20;
+    /** Fraction of max path that stays flat; after this the trail steps down. */
+    public static final double BRIDGE_EGG_DIP_START = 0.6;
     /** Flight ticks before the egg trail stops (~2s). */
     public static final int BRIDGE_EGG_MAX_TICKS = 40;
     /** Straight-line flight cap in blocks (Hypixel-ish 15–25). */
@@ -69,6 +71,25 @@ public final class GameRules {
     public static final int XP_BAR_SLOTS = 10;
     /** 1.8 client silently fails to open a chest if the title is longer than this (including color codes). */
     public static final int INVENTORY_TITLE_MAX = 32;
+    /** Shop drinkables (Hypixel-like durations). */
+    public static final int POTION_SPEED_TICKS = 45 * 20;
+    public static final int POTION_JUMP_TICKS = 45 * 20;
+    public static final int POTION_INVIS_TICKS = 30 * 20;
+    /** Amplifier 1 = Speed II; 4 = Jump Boost V. */
+    public static final int POTION_SPEED_AMPLIFIER = 1;
+    public static final int POTION_JUMP_AMPLIFIER = 4;
+    public static final int POTION_SPEED_COST_EMERALD = 1;
+    public static final int POTION_JUMP_COST_EMERALD = 1;
+    public static final int POTION_INVIS_COST_EMERALD = 2;
+    /** 1.8 PacketPlayOutEntityEquipment armor slots (0 = hand — never clear). */
+    public static final int LEGACY_EQUIP_BOOTS = 1;
+    public static final int LEGACY_EQUIP_LEGS = 2;
+    public static final int LEGACY_EQUIP_CHEST = 3;
+    public static final int LEGACY_EQUIP_HELMET = 4;
+    public static final int RES_IRON = 0;
+    public static final int RES_GOLD = 1;
+    public static final int RES_DIAMOND = 2;
+    public static final int RES_EMERALD = 3;
 
     /** Air-only so bridge eggs never overwrite map/beds/gens. */
     public static boolean isBridgeReplaceable(String materialName) {
@@ -99,6 +120,66 @@ public final class GameRules {
         return true;
     }
 
+    /** Match ores transferred on kill / void forge keep-roll (not wool/tools). */
+    public static boolean isMatchOre(String materialName) {
+        return materialName != null && (materialName.equals("IRON_INGOT") || materialName.equals("GOLD_INGOT")
+            || materialName.equals("DIAMOND") || materialName.equals("EMERALD"));
+    }
+
+    public static int[] countMatchOres(ItemStack[] contents) {
+        int[] counts = new int[4];
+        if (contents == null) return counts;
+        for (ItemStack stack : contents) {
+            if (stack == null) continue;
+            String name = stack.getType().name();
+            if (name.equals("IRON_INGOT")) counts[RES_IRON] += stack.getAmount();
+            else if (name.equals("GOLD_INGOT")) counts[RES_GOLD] += stack.getAmount();
+            else if (name.equals("DIAMOND")) counts[RES_DIAMOND] += stack.getAmount();
+            else if (name.equals("EMERALD")) counts[RES_EMERALD] += stack.getAmount();
+        }
+        return counts;
+    }
+
+    public static boolean hasMatchOres(int[] counts) {
+        return counts != null && (counts[RES_IRON] > 0 || counts[RES_GOLD] > 0
+            || counts[RES_DIAMOND] > 0 || counts[RES_EMERALD] > 0);
+    }
+
+    /** Killer share: iron 100%, gold/diamond/emerald floor 50%. */
+    public static int[] killLootShares(int[] totals) {
+        int[] shares = new int[4];
+        if (totals == null) return shares;
+        shares[RES_IRON] = Math.max(0, totals[RES_IRON]);
+        shares[RES_GOLD] = Math.max(0, totals[RES_GOLD] / 2);
+        shares[RES_DIAMOND] = Math.max(0, totals[RES_DIAMOND] / 2);
+        shares[RES_EMERALD] = Math.max(0, totals[RES_EMERALD] / 2);
+        return shares;
+    }
+
+    /** Hypixel-style: "+64 Iron! +4 Gold! +1 Diamond! +1 Emerald!" */
+    public static String killLootKillerMessage(int[] shares) {
+        if (!hasMatchOres(shares)) return null;
+        StringBuilder sb = new StringBuilder();
+        if (shares[RES_IRON] > 0) sb.append("\u00A7a+").append(shares[RES_IRON]).append(" Iron!");
+        if (shares[RES_GOLD] > 0) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append("\u00A76+").append(shares[RES_GOLD]).append(" Gold!");
+        }
+        if (shares[RES_DIAMOND] > 0) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append("\u00A7b+").append(shares[RES_DIAMOND]).append(" Diamond!");
+        }
+        if (shares[RES_EMERALD] > 0) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append("\u00A72+").append(shares[RES_EMERALD]).append(" Emerald!");
+        }
+        return sb.toString();
+    }
+
+    public static String killLootVictimMessage(String killerName) {
+        return "\u00A7c" + killerName + " killed you and stole your resources!";
+    }
+
     public static <T> T leastPopulated(List<T> orderedTeams, Map<T, Integer> sizes) {
         T best = null;
         int bestSize = Integer.MAX_VALUE;
@@ -116,12 +197,15 @@ public final class GameRules {
         return bedAlive && !alreadyEliminated;
     }
 
-    /** Team still in the match while bed is up or any living player remains (empty force-start teams count via bed). */
-    public static boolean teamContending(boolean bedAlive, int livingPlayers) {
-        return bedAlive || livingPlayers > 0;
+    /**
+     * Team blocks victory only if it has living players, or a bed and was assigned at least one
+     * player this match. Empty force-start filler teams (bed up, never occupied) do not contend.
+     */
+    public static boolean teamContending(boolean bedAlive, int livingPlayers, boolean wasOccupiedThisMatch) {
+        return livingPlayers > 0 || (bedAlive && wasOccupiedThisMatch);
     }
 
-    /** Win / end when at most one contending team remains. */
+    /** Win / end when at most one contending team remains. Do not call at match start (solo force-start). */
     public static boolean shouldEndMatch(int contendingTeams) {
         return contendingTeams <= 1;
     }
@@ -263,6 +347,17 @@ public final class GameRules {
         return Math.abs(dx) >= Math.abs(dz) ? 1 : 0;
     }
 
+    /**
+     * Extra blocks below egg y-1. 0 until 60% of max path, then +1 every 2 placements
+     * so only the last ~5–8 columns ramp down (not a diagonal from the start).
+     */
+    public static int bridgeEggEndDip(int pathIndex, int maxPath) {
+        if (pathIndex < 1 || maxPath < 1) return 0;
+        int start = (int) Math.ceil(maxPath * BRIDGE_EGG_DIP_START);
+        if (pathIndex <= start) return 0;
+        return (pathIndex - start + 1) / 2;
+    }
+
     /** Level 1 at 0 XP; +1 per XP_PER_LEVEL. */
     public static int levelFromXp(int xp) {
         if (xp < 0) xp = 0;
@@ -291,5 +386,31 @@ public final class GameRules {
 
     public static String commas(int n) {
         return String.format(java.util.Locale.US, "%,d", n);
+    }
+
+    /**
+     * Hypixel-layout kill line. Colored names are pre-formatted; gray verbs use §7.
+     * modes: void / void_kill / shot / kill / die
+     */
+    public static String killMessage(String victimColored, String killerColored, String mode, boolean finalKill) {
+        String msg;
+        if ("void_kill".equals(mode) && killerColored != null) {
+            msg = victimColored + "\u00A77 was knocked into the void by " + killerColored + "\u00A77.";
+        } else if ("void".equals(mode) || "void_kill".equals(mode)) {
+            msg = victimColored + "\u00A77 fell into the void.";
+        } else if (killerColored == null || "die".equals(mode)) {
+            msg = victimColored + "\u00A77 died.";
+        } else if ("shot".equals(mode)) {
+            msg = victimColored + "\u00A77 was shot by " + killerColored + "\u00A77.";
+        } else {
+            msg = victimColored + "\u00A77 was killed by " + killerColored + "\u00A77.";
+        }
+        if (finalKill) msg += " \u00A7c\u00A7lFINAL KILL!";
+        return msg;
+    }
+
+    /** Hypixel-layout bed break: BED DESTRUCTION > Team's Bed > Destroyed by Player */
+    public static String bedBreakMessage(String teamColoredName, String breakerColored) {
+        return "\u00A7f\u00A7lBED DESTRUCTION > " + teamColoredName + "\u00A7f\u00A7l's Bed\u00A77 > Destroyed by " + breakerColored;
     }
 }

@@ -115,6 +115,7 @@ public final class GameWorlds {
         if (world == null) return;
         LocationFallback teleport = new LocationFallback(plugin);
         for (Player player : new java.util.ArrayList<Player>(world.getPlayers())) teleport.toLobby(player);
+        for (org.bukkit.entity.Item item : world.getEntitiesByClass(org.bukkit.entity.Item.class)) item.remove();
         world.setAutoSave(false);
         Bukkit.unloadWorld(world, false);
     }

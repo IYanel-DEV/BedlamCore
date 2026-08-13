@@ -2,6 +2,7 @@ package dev.iyanel.bedlamcore.compat;
 
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
+import org.bukkit.Material;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -137,6 +138,18 @@ public final class EntityVisibility {
         if (eq == null) return;
         sendEquipSlot(viewer, entity.getEntityId(), 4, eq.getHelmet());
         sendEquipSlot(viewer, entity.getEntityId(), 0, eq.getItemInHand());
+    }
+
+    /** 1.8 PacketPlayOutEntityEquipment: 0 hand, 1 boots, 2 legs, 3 chest, 4 helm. */
+    public static void sendLegacyEquipment(Player viewer, int entityId, int slot, ItemStack stack) {
+        if (!resolvePackets() || equipCtor == null || asNmsCopy == null) return;
+        ItemStack send = stack == null || stack.getType() == Material.AIR
+            ? new ItemStack(Material.AIR) : stack;
+        try {
+            Object nms = asNmsCopy.invoke(null, send);
+            send(viewer, equipCtor.newInstance(entityId, slot, nms));
+        } catch (Exception ignored) {
+        }
     }
 
     private static void sendEquipSlot(Player viewer, int entityId, int slot, ItemStack stack) {

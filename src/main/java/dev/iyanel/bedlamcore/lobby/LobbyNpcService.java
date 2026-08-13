@@ -5,6 +5,7 @@ import dev.iyanel.bedlamcore.arena.GameType;
 import dev.iyanel.bedlamcore.compat.EntityVisibility;
 import dev.iyanel.bedlamcore.compat.Skins;
 import dev.iyanel.bedlamcore.game.GameRules;
+import dev.iyanel.bedlamcore.game.NpcSoundListener;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
@@ -22,6 +23,7 @@ import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
 
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -34,6 +36,7 @@ import java.util.UUID;
 public final class LobbyNpcService {
     public static final String META_MODE = "bedlamNpcMode";
     public static final String META_HOLO = "bedlamLobbyHolo";
+    public static final String META_SILENT = "bedlamSilent";
     private static final EntityType[] TYPES = {
         EntityType.VILLAGER, EntityType.ZOMBIE, EntityType.SKELETON,
         EntityType.CREEPER, EntityType.BLAZE, EntityType.IRON_GOLEM
@@ -141,7 +144,7 @@ public final class LobbyNpcService {
     /** Shop / lobby / hologram / gen displays — never play ambient/hurt/death sounds. */
     public static boolean isPluginNpc(Entity entity) {
         if (entity == null) return false;
-        return entity.hasMetadata(META_MODE) || entity.hasMetadata(META_HOLO)
+        return entity.hasMetadata(META_MODE) || entity.hasMetadata(META_HOLO) || entity.hasMetadata(META_SILENT)
             || entity.hasMetadata("bedlamShop") || entity.hasMetadata("bedlamGeneratorDisplay")
             || entity.hasMetadata("bedlamHologram");
     }
@@ -203,8 +206,10 @@ public final class LobbyNpcService {
             Object look = npc.getClass().getMethod("getOrAddTrait", Class.class).invoke(npc, lookClose);
             look.getClass().getMethod("lookClose", boolean.class).invoke(look, settings.lookAtPlayers());
             invokeBoolean(npc, "setProtected", true);
+            citizensSilent(npc);
             npc.getClass().getMethod("spawn", Location.class).invoke(npc, settings.location());
             Entity entity = (Entity) npc.getClass().getMethod("getEntity").invoke(npc);
+            mute(entity);
             citizens.put(mode, npc);
             return entity;
         } catch (Exception exception) {
@@ -235,8 +240,29 @@ public final class LobbyNpcService {
         }
     }
 
+    public static void tagSilent(Entity entity) {
+        if (entity == null || entity.hasMetadata(META_SILENT)) return;
+        org.bukkit.plugin.Plugin owner = Bukkit.getPluginManager().getPlugin("BedlamCore");
+        if (owner != null) entity.setMetadata(META_SILENT, new FixedMetadataValue(owner, true));
+    }
+
     public static void mute(Entity entity) {
-        invokeBoolean(entity, "setSilent", true);
+        tagSilent(entity);
+        NpcSoundListener.silence(entity);
+    }
+
+    /** Citizens soft-dep: NPC.SILENT_METADATA so the registry keeps the entity muted across remounts. */
+    private static void citizensSilent(Object npc) {
+        try {
+            Class<?> npcClass = Class.forName("net.citizensnpcs.api.npc.NPC");
+            Object key = npcClass.getField("SILENT_METADATA").get(null);
+            Object data = npc.getClass().getMethod("data").invoke(npc);
+            for (Method method : data.getClass().getMethods()) {
+                if (!method.getName().equals("set") || method.getParameterTypes().length != 2) continue;
+                method.invoke(data, key, Boolean.TRUE);
+                return;
+            }
+        } catch (Throwable ignored) { }
     }
 
     private static void faceNearestPlayer(Entity entity, Location location) {
@@ -278,7 +304,7 @@ public final class LobbyNpcService {
         living.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, Integer.MAX_VALUE, 255), true);
         invokeBoolean(living, "setAI", false);
         invokeBoolean(living, "setGravity", false);
-        invokeBoolean(living, "setSilent", true);
+        mute(living);
         invokeBoolean(living, "setInvulnerable", true);
         invokeBoolean(living, "setCollidable", false);
         if (living instanceof Ageable) { if (baby) ((Ageable) living).setBaby(); else ((Ageable) living).setAdult(); }

@@ -6,6 +6,7 @@ import dev.iyanel.bedlamcore.arena.ArenaManager;
 import dev.iyanel.bedlamcore.arena.GameType;
 import dev.iyanel.bedlamcore.arena.TeamColor;
 import dev.iyanel.bedlamcore.compat.EntityVisibility;
+import dev.iyanel.bedlamcore.compat.InvisArmor;
 import dev.iyanel.bedlamcore.compat.Items;
 import dev.iyanel.bedlamcore.compat.Sounds;
 import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
@@ -32,6 +33,7 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
+import org.bukkit.event.entity.ItemSpawnEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -43,6 +45,7 @@ import org.bukkit.event.player.PlayerBedEnterEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -50,16 +53,71 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.metadata.FixedMetadataValue;
+import org.bukkit.potion.PotionEffectType;
 
 import java.util.Iterator;
+import java.util.UUID;
 
 public final class GameListener implements Listener {
+    private static final String META_TNT_OWNER = "bedlamTntOwner";
     private final BedlamCore plugin;
 
     public GameListener(BedlamCore plugin) {
         this.plugin = plugin;
-        registerNpcSoundMute();
         registerModernBedPickupCancel();
+        registerProgressCancel();
+        // ponytail: 5-tick rebroadcast; per-viewer protocol lib if packet spam matters
+        Bukkit.getScheduler().runTaskTimer(plugin, new Runnable() {
+            @Override public void run() { InvisArmor.tick(plugin); }
+        }, 5L, 5L);
+    }
+
+    /**
+     * Cancel 1.8 achievements + modern advancement grants for Bedlam players (lobby / arena worlds).
+     * One executor; reflects event class so 1.8 jar still compiles and modern Paper works without NMS.
+     */
+    @SuppressWarnings("unchecked")
+    private void registerProgressCancel() {
+        String[] names = {
+            "org.bukkit.event.player.PlayerAchievementAwardedEvent",
+            "org.bukkit.event.player.PlayerAdvancementDoneEvent",
+            "com.destroystokyo.paper.event.player.PlayerAdvancementCriterionGrantEvent",
+            "io.papermc.paper.event.player.PlayerAdvancementCriterionGrantEvent"
+        };
+        EventExecutor cancel = new EventExecutor() {
+            @Override
+            public void execute(Listener listener, Event event) {
+                try {
+                    Object playerObj = event.getClass().getMethod("getPlayer").invoke(event);
+                    if (!(playerObj instanceof Player)) return;
+                    if (!isBedlamManaged((Player) playerObj)) return;
+                    if (event instanceof org.bukkit.event.Cancellable) {
+                        ((org.bukkit.event.Cancellable) event).setCancelled(true);
+                    } else {
+                        try {
+                            event.getClass().getMethod("setCancelled", boolean.class).invoke(event, true);
+                        } catch (NoSuchMethodException ignored) {
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        };
+        for (String name : names) {
+            try {
+                Class<? extends Event> type = (Class<? extends Event>) Class.forName(name);
+                Bukkit.getPluginManager().registerEvent(type, this, EventPriority.HIGH, cancel, plugin, true);
+            } catch (ClassNotFoundException ignored) {
+            }
+        }
+    }
+
+    private boolean isBedlamManaged(Player player) {
+        if (plugin.games().arena(player) != null) return true;
+        if (plugin.games().arenaInWorld(player.getWorld().getName()) != null) return true;
+        Location lobby = plugin.lobby().spawn();
+        return lobby != null && lobby.getWorld() != null && lobby.getWorld().equals(player.getWorld());
     }
 
     /** Modern API: EntityPickupItemEvent (1.12+); 1.8 uses PlayerPickupItemEvent handler below. */
@@ -73,32 +131,17 @@ public final class GameListener implements Listener {
                     try {
                         Entity entity = (Entity) pickupEvent.getMethod("getEntity").invoke(event);
                         if (!(entity instanceof Player)) return;
-                        if (plugin.games().arena((Player) entity) == null) return;
+                        Player player = (Player) entity;
+                        ArenaManager manager = plugin.games().arena(player);
+                        if (manager == null) return;
+                        if (manager.isSoftSpectating(player)) {
+                            pickupEvent.getMethod("setCancelled", boolean.class).invoke(event, true);
+                            return;
+                        }
                         org.bukkit.entity.Item item = (org.bukkit.entity.Item) pickupEvent.getMethod("getItem").invoke(event);
                         if (item.getItemStack().getType().name().contains("BED")) {
                             pickupEvent.getMethod("setCancelled", boolean.class).invoke(event, true);
                             item.remove();
-                        }
-                    } catch (Exception ignored) {
-                    }
-                }
-            }, plugin, true);
-        } catch (ClassNotFoundException ignored) {
-        }
-    }
-
-    /** Modern API: cancel ambient/hurt/death entity sounds for tagged NPCs (1.8 has no EntitySoundEvent). */
-    @SuppressWarnings("unchecked")
-    private void registerNpcSoundMute() {
-        try {
-            final Class<? extends Event> soundEvent = (Class<? extends Event>) Class.forName("org.bukkit.event.entity.EntitySoundEvent");
-            Bukkit.getPluginManager().registerEvent(soundEvent, this, EventPriority.HIGHEST, new EventExecutor() {
-                @Override
-                public void execute(Listener listener, Event event) {
-                    try {
-                        Entity entity = (Entity) soundEvent.getMethod("getEntity").invoke(event);
-                        if (LobbyNpcService.isPluginNpc(entity)) {
-                            soundEvent.getMethod("setCancelled", boolean.class).invoke(event, true);
                         }
                     } catch (Exception ignored) {
                     }
@@ -122,9 +165,23 @@ public final class GameListener implements Listener {
     }
 
     @EventHandler public void onQuit(PlayerQuitEvent event) {
+        InvisArmor.clear(event.getPlayer());
         plugin.gui().disconnect(event.getPlayer());
         plugin.games().leave(event.getPlayer());
         EntityVisibility.clearViewer(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler
+    public void onConsume(PlayerItemConsumeEvent event) {
+        ItemStack item = event.getItem();
+        if (item == null) return;
+        String type = item.getType().name();
+        if (!type.equals("MILK_BUCKET") && !type.equals("POTION")) return;
+        final Player player = event.getPlayer();
+        if (plugin.games().arena(player) == null) return;
+        Bukkit.getScheduler().runTask(plugin, new Runnable() {
+            @Override public void run() { InvisArmor.tick(plugin); }
+        });
     }
 
     @EventHandler(priority = EventPriority.HIGH)
@@ -164,7 +221,7 @@ public final class GameListener implements Listener {
         if (manager == null) return;
         Arena arena = manager.arena();
         if (manager.isSoftSpectating(player)) {
-            if (event.getClickedBlock() != null) event.setCancelled(true);
+            event.setCancelled(true);
             return;
         }
         if (arena.state() == Arena.State.RUNNING && item != null && item.getType() == Items.material("FIRE_CHARGE", "FIREBALL")
@@ -272,6 +329,15 @@ public final class GameListener implements Listener {
         }
     }
 
+    /** Soft-spec (respawn countdown + final): no punches / projectiles / explosion credit from them. */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onSoftSpecAttack(EntityDamageByEntityEvent event) {
+        Player attacker = combatPlayer(event.getDamager());
+        if (attacker == null) return;
+        ArenaManager manager = plugin.games().arena(attacker);
+        if (manager != null && manager.isSoftSpectating(attacker)) event.setCancelled(true);
+    }
+
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onNpcHit(EntityDamageByEntityEvent event) {
         GameType mode = plugin.npcs().mode(event.getEntity());
@@ -304,6 +370,14 @@ public final class GameListener implements Listener {
         // Plugin shopkeepers / holograms / generators use CUSTOM; cancel natural/chunk mobs.
         if (reason == CreatureSpawnEvent.SpawnReason.CUSTOM) return;
         event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onItemSpawn(ItemSpawnEvent event) {
+        ArenaManager manager = plugin.games().arenaInWorld(event.getLocation().getWorld().getName());
+        if (manager == null) return;
+        Arena.State state = manager.arena().state();
+        if (state == Arena.State.WAITING || state == Arena.State.COUNTDOWN) event.setCancelled(true);
     }
 
     @EventHandler
@@ -377,11 +451,16 @@ public final class GameListener implements Listener {
         }
         if (event.getBlockPlaced().getType() == Material.TNT) {
             final org.bukkit.Location location = event.getBlockPlaced().getLocation().add(0.5, 0, 0.5);
+            final UUID owner = player.getUniqueId();
             Bukkit.getScheduler().runTask(plugin, new Runnable() {
                 @Override public void run() {
                     event.getBlockPlaced().setType(Material.AIR);
                     TNTPrimed tnt = event.getBlockPlaced().getWorld().spawn(location, TNTPrimed.class);
                     tnt.setFuseTicks(40);
+                    tnt.setMetadata(META_TNT_OWNER, new FixedMetadataValue(plugin, owner.toString()));
+                    try {
+                        tnt.getClass().getMethod("setSource", Entity.class).invoke(tnt, player);
+                    } catch (Throwable ignored) { }
                 }
             });
         }
@@ -409,7 +488,12 @@ public final class GameListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPickup(org.bukkit.event.player.PlayerPickupItemEvent event) {
-        if (plugin.games().arena(event.getPlayer()) == null) return;
+        ArenaManager manager = plugin.games().arena(event.getPlayer());
+        if (manager == null) return;
+        if (manager.isSoftSpectating(event.getPlayer())) {
+            event.setCancelled(true);
+            return;
+        }
         if (event.getItem().getItemStack().getType().name().contains("BED")) {
             event.setCancelled(true);
             event.getItem().remove();
@@ -471,6 +555,52 @@ public final class GameListener implements Listener {
         if (waiting != null && event.getTo().getY() <= GameRules.voidKillY(waiting.getY())) player.setHealth(0);
     }
 
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onCombat(EntityDamageByEntityEvent event) {
+        if (!(event.getEntity() instanceof Player)) return;
+        Player victim = (Player) event.getEntity();
+        ArenaManager manager = plugin.games().arena(victim);
+        if (manager == null || manager.arena().state() != Arena.State.RUNNING) return;
+        if (manager.isSoftSpectating(victim)) return;
+        Player attacker = combatPlayer(event.getDamager());
+        if (attacker == null || plugin.games().arena(attacker) != manager) return;
+        if (manager.isSoftSpectating(attacker)) return;
+        TeamColor vt = manager.arena().team(victim.getUniqueId());
+        TeamColor at = manager.arena().team(attacker.getUniqueId());
+        if (vt == null || at == null || vt == at) return;
+        manager.noteCombat(victim.getUniqueId(), attacker.getUniqueId());
+        if (victim.hasPotionEffect(PotionEffectType.INVISIBILITY)) {
+            victim.removePotionEffect(PotionEffectType.INVISIBILITY);
+            InvisArmor.clear(victim);
+        }
+    }
+
+    private static Player combatPlayer(Entity damager) {
+        if (damager instanceof Player) return (Player) damager;
+        if (damager instanceof org.bukkit.entity.Projectile) {
+            Object shooter = ((org.bukkit.entity.Projectile) damager).getShooter();
+            if (shooter instanceof Player) return (Player) shooter;
+        }
+        if (damager instanceof TNTPrimed) {
+            Player tagged = tntOwner(damager);
+            if (tagged != null) return tagged;
+            try {
+                Object source = damager.getClass().getMethod("getSource").invoke(damager);
+                if (source instanceof Player) return (Player) source;
+            } catch (Throwable ignored) { }
+        }
+        return null;
+    }
+
+    private static Player tntOwner(Entity tnt) {
+        if (!tnt.hasMetadata(META_TNT_OWNER) || tnt.getMetadata(META_TNT_OWNER).isEmpty()) return null;
+        try {
+            return Bukkit.getPlayer(UUID.fromString(tnt.getMetadata(META_TNT_OWNER).get(0).asString()));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     @EventHandler
     public void onDeath(PlayerDeathEvent event) {
         ArenaManager manager = plugin.games().arena(event.getEntity());
@@ -478,13 +608,22 @@ public final class GameListener implements Listener {
         event.getDrops().clear();
         event.setDroppedExp(0);
         event.setDeathMessage(null);
-        Sounds.death(event.getEntity());
-        Player killer = event.getEntity().getKiller();
-        if (killer != null && plugin.games().arena(killer) == manager) {
-            Sounds.kill(killer);
-            Sounds.levelUp(killer);
+        try {
+            // Paper adventure: deathMessage(Component)
+            event.getClass().getMethod("deathMessage", Class.forName("net.kyori.adventure.text.Component"))
+                .invoke(event, new Object[]{null});
+        } catch (Throwable ignored) {
         }
-        manager.handleDeath(event.getEntity(), killer);
+        Sounds.death(event.getEntity());
+        InvisArmor.clear(event.getEntity());
+        Player killer = event.getEntity().getKiller();
+        EntityDamageEvent last = event.getEntity().getLastDamageCause();
+        EntityDamageEvent.DamageCause cause = last == null ? null : last.getCause();
+        Location waiting = manager.arena().settings().waitingSpawn();
+        boolean voidDeath = cause == EntityDamageEvent.DamageCause.VOID
+            || (waiting != null && event.getEntity().getLocation().getY() <= GameRules.voidKillY(waiting.getY()));
+        boolean projectile = cause == EntityDamageEvent.DamageCause.PROJECTILE;
+        manager.handleDeath(event.getEntity(), killer, voidDeath, projectile);
         final Player player = event.getEntity();
         // Skip vanilla respawn screen (Spigot API).
         Bukkit.getScheduler().runTask(plugin, new Runnable() {
@@ -547,7 +686,8 @@ public final class GameListener implements Listener {
         if (plugin.games().arena(player) != null) return;
         if (Items.name(player.getInventory().getItem(7)).equals("Bedlam Menu")) player.getInventory().setItem(7, null);
         if (plugin.isAdmin(player)) {
-            boolean gameSetup = plugin.games().arenaInWorld(player.getWorld().getName()) != null || plugin.gui().hasArenaDraft(player);
+            // Lore follows the world the player is in, not a stale draft from a map they already left.
+            boolean gameSetup = plugin.games().arenaInWorld(player.getWorld().getName()) != null;
             player.getInventory().setItem(8, Items.named(new ItemStack(Material.COMPASS), ChatColor.GOLD + "Bedlam Setup",
                 ChatColor.GRAY + (gameSetup ? "Open this world's game setup" : "Open lobby and world setup")));
         } else if (Items.name(player.getInventory().getItem(8)).equals("Bedlam Setup")) player.getInventory().setItem(8, null);

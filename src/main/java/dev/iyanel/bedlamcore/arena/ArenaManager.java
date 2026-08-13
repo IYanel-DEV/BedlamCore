@@ -3,6 +3,7 @@ package dev.iyanel.bedlamcore.arena;
 import dev.iyanel.bedlamcore.BedlamCore;
 import dev.iyanel.bedlamcore.compat.Enchantments;
 import dev.iyanel.bedlamcore.compat.EntityVisibility;
+import dev.iyanel.bedlamcore.compat.InvisArmor;
 import dev.iyanel.bedlamcore.compat.Items;
 import dev.iyanel.bedlamcore.compat.Sounds;
 import dev.iyanel.bedlamcore.game.GameRules;
@@ -58,6 +59,9 @@ public final class ArenaManager {
     private final Map<UUID, Integer> matchTokens = new HashMap<UUID, Integer>();
     private final Map<UUID, Integer> matchXp = new HashMap<UUID, Integer>();
     private final Set<UUID> playCredited = new HashSet<UUID>();
+    /** Last enemy who damaged this player (void / fall credit when getKiller is null). */
+    private final Map<UUID, UUID> lastDamager = new HashMap<UUID, UUID>();
+    private final java.util.Random deathRandom = new java.util.Random();
 
     public ArenaManager(BedlamCore plugin, ArenaSettings settings) {
         this.plugin = plugin;
@@ -141,12 +145,13 @@ public final class ArenaManager {
         arena.eliminated().remove(player.getUniqueId());
         arena.clearPlayerState(player.getUniqueId());
         respawning.remove(player.getUniqueId());
+        lastDamager.remove(player.getUniqueId());
         player.setPlayerListName(null);
         sendToNetworkLobby(player);
         if (arena.state() == Arena.State.RUNNING && team != null) {
             creditPlay(player.getUniqueId());
             sendRewardsSummary(player);
-            // Disconnect / leave clears the team so a leftover bed cannot stall win detection.
+            // Disconnect / leave: clear bed so a ghost island cannot stall; empty never-occupied teams already ignored.
             if (arena.aliveCount(team) == 0 && arena.bedAlive(team)) {
                 arena.destroyBed(team);
                 removeBedBlocks(arena.settings().team(team).bed());
@@ -222,10 +227,12 @@ public final class ArenaManager {
         for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
             TeamColor team = GameRules.leastPopulated(teams, sizes);
             arena.players().put(uuid, team);
+            arena.markOccupied(team);
             sizes.put(team, sizes.get(team) + 1);
         }
         snapshotBeds();
         arena.state(Arena.State.RUNNING);
+        clearArenaItems();
         clearWildMobs();
         purgeStrayArmorStands();
         for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
@@ -240,6 +247,7 @@ public final class ArenaManager {
         ensureTeamChests();
         refreshGeneratorLabels();
         sendStartMessage();
+        // ponytail: no checkWinner here — solo force-start must not auto-win with one occupied team
     }
 
     private void sendStartMessage() {
@@ -356,7 +364,8 @@ public final class ArenaManager {
                 path++;
                 int ox = GameRules.bridgeSideX(dx, dz);
                 int oz = GameRules.bridgeSideZ(dx, dz);
-                Block under = at.getBlock().getRelative(0, -1, 0);
+                int dip = GameRules.bridgeEggEndDip(path, GameRules.BRIDGE_EGG_MAX_PATH);
+                Block under = at.getBlock().getRelative(0, -1 - dip, 0);
                 int bx = under.getX();
                 int by = under.getY();
                 int bz = under.getZ();
@@ -400,13 +409,13 @@ public final class ArenaManager {
             if (!arena.bedAlive(brokenBed)) return false;
             arena.destroyBed(brokenBed);
             removeBedBlocks(arena.settings().team(brokenBed).bed());
-            broadcast(ChatColor.RED + "BED DESTROYED! " + brokenBed.coloredName() + ChatColor.GRAY + " was broken by " + playerTeam.chatColor() + player.getName());
+            announce(GameRules.bedBreakMessage(brokenBed.coloredName(), playerTeam.chatColor() + player.getName()));
             for (UUID uuid : arena.players().keySet()) {
                 Player online = Bukkit.getPlayer(uuid);
                 if (online != null) Sounds.bedDestroyed(online);
             }
             grant(player.getUniqueId(), GameRules.TOKENS_BED, GameRules.XP_BED, 0, 1, 0, 0, "Bed");
-            // Solo force-start / last enemy bed: empty teams drop out when bed dies → win state.
+            // Solo force-start / last enemy bed: never-occupied empty teams ignored via teamContending.
             checkWinner();
             return true;
         }
@@ -442,7 +451,18 @@ public final class ArenaManager {
         return false;
     }
 
-    public void handleDeath(Player player, Player killer) {
+    /** Record last hostile damager for void / fall kill credit when getKiller() is null. */
+    public void noteCombat(UUID victim, UUID attacker) {
+        if (victim == null || attacker == null || victim.equals(attacker)) return;
+        lastDamager.put(victim, attacker);
+    }
+
+    /**
+     * @param killer Bukkit getKiller(), may be null (void); lastDamager fills the gap
+     * @param voidDeath true when VOID cause or below void-kill Y
+     * @param projectile true when death cause is PROJECTILE
+     */
+    public void handleDeath(Player player, Player killer, boolean voidDeath, boolean projectile) {
         if (arena.state() != Arena.State.RUNNING || !arena.contains(player.getUniqueId())) return;
         player.setFallDistance(0F);
         UUID uuid = player.getUniqueId();
@@ -450,20 +470,98 @@ public final class ArenaManager {
         arena.axeTier(uuid, GameRules.toolTierAfterDeath(arena.axeTier(uuid)));
         TeamColor team = arena.team(uuid);
         boolean finalKill = !GameRules.canRespawn(arena.bedAlive(team), arena.eliminated().contains(uuid));
-        if (finalKill) {
-            arena.eliminated().add(uuid);
-            broadcast(team.chatColor() + player.getName() + ChatColor.RED + " was eliminated!");
-        } else {
-            respawning.add(uuid);
+        if (finalKill) arena.eliminated().add(uuid);
+        else respawning.add(uuid);
+
+        Player credited = resolveKiller(player, killer, team);
+        handleDeathResources(player, credited, finalKill);
+        String victimColored = (team == null ? ChatColor.GRAY : team.chatColor()) + player.getName();
+        String killerColored = null;
+        if (credited != null) {
+            TeamColor killerTeam = arena.team(credited.getUniqueId());
+            killerColored = (killerTeam == null ? ChatColor.GRAY : killerTeam.chatColor()) + credited.getName();
         }
-        if (killer != null && arena.contains(killer.getUniqueId()) && !killer.getUniqueId().equals(uuid)) {
-            TeamColor killerTeam = arena.team(killer.getUniqueId());
-            if (killerTeam != null && killerTeam != team) {
-                if (finalKill) grant(killer.getUniqueId(), GameRules.TOKENS_FINAL_KILL, GameRules.XP_FINAL_KILL, 1, 0, 0, 0, "Final Kill");
-                else grant(killer.getUniqueId(), GameRules.TOKENS_KILL, GameRules.XP_KILL, 1, 0, 0, 0, "Kill");
+        String mode;
+        if (voidDeath) mode = credited != null ? "void_kill" : "void";
+        else if (credited == null) mode = "die";
+        else if (projectile) mode = "shot";
+        else mode = "kill";
+        announce(GameRules.killMessage(victimColored, killerColored, mode, finalKill));
+
+        if (credited != null) {
+            Sounds.kill(credited);
+            Sounds.levelUp(credited);
+            if (finalKill) grant(credited.getUniqueId(), GameRules.TOKENS_FINAL_KILL, GameRules.XP_FINAL_KILL, 1, 0, 0, 0, "Final Kill");
+            else grant(credited.getUniqueId(), GameRules.TOKENS_KILL, GameRules.XP_KILL, 1, 0, 0, 0, "Kill");
+        }
+        lastDamager.remove(uuid);
+        if (finalKill) checkWinner();
+    }
+
+    /** Kill loot transfer, or 50/50 forge-drop for bed-up deaths with no killer. */
+    private void handleDeathResources(Player victim, Player credited, boolean finalKill) {
+        int[] totals = GameRules.countMatchOres(victim.getInventory().getContents());
+        stripMatchOres(victim);
+        if (!GameRules.hasMatchOres(totals)) return;
+        if (credited != null) {
+            int[] shares = GameRules.killLootShares(totals);
+            giveMatchOres(credited, shares);
+            String lootMsg = GameRules.killLootKillerMessage(shares);
+            if (lootMsg != null) credited.sendMessage(lootMsg);
+            victim.sendMessage(GameRules.killLootVictimMessage(credited.getName()));
+            return;
+        }
+        if (finalKill) return;
+        if (deathRandom.nextBoolean()) {
+            dropMatchOresAtForge(arena.team(victim.getUniqueId()), totals);
+            victim.sendMessage(ChatColor.GREEN + "Your resources were returned to your forge!");
+        } else {
+            victim.sendMessage(ChatColor.RED + "You lost your resources!");
+        }
+    }
+
+    /** Ground pile at team forge (soft-specs cannot pick until living again). */
+    private void dropMatchOresAtForge(TeamColor team, int[] counts) {
+        if (team == null || !GameRules.hasMatchOres(counts)) return;
+        Location forge = arena.settings().team(team).forge();
+        if (forge == null) return;
+        World world = Bukkit.getWorld(arena.settings().worldName());
+        if (world != null) forge.setWorld(world);
+        if (counts[GameRules.RES_IRON] > 0) spawnForgeDrop(forge, new ItemStack(Material.IRON_INGOT, counts[GameRules.RES_IRON]));
+        if (counts[GameRules.RES_GOLD] > 0) spawnForgeDrop(forge, new ItemStack(Material.GOLD_INGOT, counts[GameRules.RES_GOLD]));
+        if (counts[GameRules.RES_DIAMOND] > 0) spawnForgeDrop(forge, new ItemStack(Material.DIAMOND, counts[GameRules.RES_DIAMOND]));
+        if (counts[GameRules.RES_EMERALD] > 0) spawnForgeDrop(forge, new ItemStack(Material.EMERALD, counts[GameRules.RES_EMERALD]));
+    }
+
+    private static void stripMatchOres(Player player) {
+        ItemStack[] contents = player.getInventory().getContents();
+        for (int i = 0; i < contents.length; i++) {
+            ItemStack stack = contents[i];
+            if (stack != null && GameRules.isMatchOre(stack.getType().name())) {
+                player.getInventory().setItem(i, null);
             }
         }
-        if (finalKill) checkWinner();
+    }
+
+    private static void giveMatchOres(Player player, int[] counts) {
+        if (!GameRules.hasMatchOres(counts)) return;
+        if (counts[GameRules.RES_IRON] > 0) player.getInventory().addItem(new ItemStack(Material.IRON_INGOT, counts[GameRules.RES_IRON]));
+        if (counts[GameRules.RES_GOLD] > 0) player.getInventory().addItem(new ItemStack(Material.GOLD_INGOT, counts[GameRules.RES_GOLD]));
+        if (counts[GameRules.RES_DIAMOND] > 0) player.getInventory().addItem(new ItemStack(Material.DIAMOND, counts[GameRules.RES_DIAMOND]));
+        if (counts[GameRules.RES_EMERALD] > 0) player.getInventory().addItem(new ItemStack(Material.EMERALD, counts[GameRules.RES_EMERALD]));
+    }
+
+    private Player resolveKiller(Player victim, Player killer, TeamColor victimTeam) {
+        Player candidate = killer;
+        if (candidate == null) {
+            UUID id = lastDamager.get(victim.getUniqueId());
+            if (id != null) candidate = Bukkit.getPlayer(id);
+        }
+        if (candidate == null || !candidate.isOnline()) return null;
+        if (!arena.contains(candidate.getUniqueId()) || candidate.getUniqueId().equals(victim.getUniqueId())) return null;
+        TeamColor killerTeam = arena.team(candidate.getUniqueId());
+        if (killerTeam == null || killerTeam == victimTeam) return null;
+        return candidate;
     }
 
     public boolean isRespawning(UUID uuid) { return respawning.contains(uuid); }
@@ -558,11 +656,12 @@ public final class ArenaManager {
             for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
                 if (entry.getValue() == team && !arena.eliminated().contains(entry.getKey()) && Bukkit.getPlayer(entry.getKey()) != null) living++;
             }
-            if (GameRules.teamContending(arena.bedAlive(team), living)) contending.add(team);
+            if (GameRules.teamContending(arena.bedAlive(team), living, arena.wasOccupiedThisMatch(team))) contending.add(team);
         }
         if (!GameRules.shouldEndMatch(contending.size())) return;
         final TeamColor winner = contending.isEmpty() ? null : contending.iterator().next();
         arena.state(Arena.State.ENDING);
+        clearArenaItems();
         broadcast(winner == null ? ChatColor.GOLD + "Game over!" : ChatColor.GOLD + "VICTORY! " + winner.coloredName() + ChatColor.GOLD + " wins!");
         settleMatch(winner);
         Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
@@ -617,10 +716,7 @@ public final class ArenaManager {
         for (List<BlockState> snapshots : arena.bedSnapshots().values()) {
             for (BlockState snapshot : snapshots) snapshot.update(true, false);
         }
-        for (UUID uuid : new HashSet<UUID>(arena.generatedItems())) {
-            Entity entity = findEntity(uuid);
-            if (entity != null) entity.remove();
-        }
+        clearArenaItems();
         for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
             Player player = Bukkit.getPlayer(uuid);
             if (player != null) {
@@ -634,11 +730,23 @@ public final class ArenaManager {
         matchXp.clear();
         playCredited.clear();
         respawning.clear();
+        lastDamager.clear();
         World world = Bukkit.getWorld(arena.settings().worldName());
         if (world != null) plugin.worlds().disableAutoSave(world);
         arena.state(Arena.State.WAITING);
         waitingStructure.build();
         refreshGeneratorLabels();
+    }
+
+    /** All Item entities (gen drops + player dumps). UUID tracking alone misses re-drops. */
+    private void clearArenaItems() {
+        World world = Bukkit.getWorld(arena.settings().worldName());
+        if (world != null) {
+            for (Item item : new ArrayList<Item>(world.getEntitiesByClass(Item.class))) {
+                item.remove();
+            }
+        }
+        arena.generatedItems().clear();
     }
 
     public void shutdown() {
@@ -837,6 +945,7 @@ public final class ArenaManager {
     }
 
     private void clearPlayer(Player player) {
+        InvisArmor.clear(player);
         player.closeInventory();
         player.getInventory().clear();
         player.getInventory().setArmorContents(new ItemStack[4]);
@@ -859,6 +968,8 @@ public final class ArenaManager {
 
     /** Strip match gear, teleport to network lobby, give lobby items only. */
     public void sendToNetworkLobby(Player player) {
+        // Match/leave always ends setup context for this player — leftover arenaDraft made lobby compass open Game Setup.
+        plugin.gui().clearArenaDraft(player);
         clearPlayer(player);
         clearEnderChest(player);
         player.setGameMode(GameMode.ADVENTURE);
@@ -1030,6 +1141,7 @@ public final class ArenaManager {
                 break;
             case REVEAL:
                 enemy.removePotionEffect(PotionEffectType.INVISIBILITY);
+                InvisArmor.clear(enemy);
                 enemy.sendMessage(ChatColor.YELLOW + "Your invisibility was stripped!");
                 break;
             case COUNTER_OFFENSIVE:
@@ -1281,14 +1393,6 @@ public final class ArenaManager {
             }
             if (entity.hasMetadata("bedlamShop")) entity.setCustomNameVisible(false);
             else if (entity.hasMetadata("bedlamHologram")) entity.setCustomNameVisible(anyNear);
-            if (entity instanceof ArmorStand && entity.hasMetadata("bedlamGeneratorDisplay")) {
-                // Keep rotating block present only when a non-spectator is near.
-                if (!anyNear && entity.isValid()) ((ArmorStand) entity).getEquipment().setHelmet(null);
-                else if (anyNear) {
-                    String kind = generatorKinds.get(entity.getUniqueId());
-                    if (kind != null) ((ArmorStand) entity).getEquipment().setHelmet(new ItemStack(kind.equals("diamond") ? Material.DIAMOND_BLOCK : Material.EMERALD_BLOCK));
-                }
-            }
         }
     }
 
@@ -1338,6 +1442,7 @@ public final class ArenaManager {
             if (entry.getValue() != team || arena.eliminated().contains(entry.getKey())) continue;
             Player player = Bukkit.getPlayer(entry.getKey());
             if (player == null || !player.getWorld().equals(forge.getWorld())) continue;
+            if (isSoftSpectating(player)) continue;
             Location at = player.getLocation();
             if (GameRules.forgeShareInRange(at.getX() - cx, at.getY() - cy, at.getZ() - cz)) recipients.add(player);
         }
@@ -1386,6 +1491,7 @@ public final class ArenaManager {
     }
 
     private void spawnPinnedDrop(Location at, ItemStack stack) {
+        if (arena.state() != Arena.State.RUNNING) return;
         if (at == null || at.getWorld() == null || stack == null) return;
         Item item = at.getWorld().dropItem(at, stack.clone());
         item.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
@@ -1429,6 +1535,14 @@ public final class ArenaManager {
         for (UUID uuid : arena.players().keySet()) {
             Player player = Bukkit.getPlayer(uuid);
             if (player != null) player.sendMessage(ChatColor.DARK_GRAY + "[" + ChatColor.RED + "Bedlam" + ChatColor.DARK_GRAY + "] " + message);
+        }
+    }
+
+    /** Match chat without [Bedlam] prefix (Hypixel kill / bed lines). */
+    private void announce(String message) {
+        for (UUID uuid : arena.players().keySet()) {
+            Player player = Bukkit.getPlayer(uuid);
+            if (player != null) player.sendMessage(message);
         }
     }
 

@@ -19,9 +19,13 @@ public final class GameRulesCheck {
         assertTrue(GameRules.canRespawn(true, false));
         assertFalse(GameRules.canRespawn(false, false));
         assertFalse(GameRules.canRespawn(true, true));
-        assertTrue(GameRules.teamContending(true, 0));
-        assertTrue(GameRules.teamContending(false, 1));
-        assertFalse(GameRules.teamContending(false, 0));
+        // Contending: living, or bed+occupied; empty never-occupied bed does not block.
+        assertFalse(GameRules.teamContending(true, 0, false));
+        assertTrue(GameRules.teamContending(true, 0, true));
+        assertTrue(GameRules.teamContending(false, 1, false));
+        assertTrue(GameRules.teamContending(false, 1, true));
+        assertFalse(GameRules.teamContending(false, 0, true));
+        assertFalse(GameRules.teamContending(false, 0, false));
         assertFalse(GameRules.shouldEndMatch(2));
         assertTrue(GameRules.shouldEndMatch(1));
         assertTrue(GameRules.shouldEndMatch(0));
@@ -88,6 +92,14 @@ public final class GameRulesCheck {
         assertEquals(1, GameRules.bridgeSideZ(1.0, 0.2));
         assertEquals(1, GameRules.bridgeSideX(0.2, 1.0));
         assertEquals(0, GameRules.bridgeSideZ(0.2, 1.0));
+        assertEquals(0, GameRules.bridgeEggEndDip(1, 20));
+        assertEquals(0, GameRules.bridgeEggEndDip(12, 20));
+        assertEquals(1, GameRules.bridgeEggEndDip(13, 20));
+        assertEquals(1, GameRules.bridgeEggEndDip(14, 20));
+        assertEquals(2, GameRules.bridgeEggEndDip(15, 20));
+        assertEquals(4, GameRules.bridgeEggEndDip(20, 20));
+        assertEquals(0, GameRules.bridgeEggEndDip(0, 20));
+        assertEquals(0, GameRules.bridgeEggEndDip(10, 0));
         assertTrue(GameRules.isGlassBlock("GLASS"));
         assertTrue(GameRules.isGlassBlock("STAINED_GLASS"));
         assertTrue(GameRules.isGlassBlock("THIN_GLASS"));
@@ -130,6 +142,37 @@ public final class GameRulesCheck {
         assertTrue(GameRules.isAxe("DIAMOND_AXE"));
         assertFalse(GameRules.isAxe("DIAMOND_PICKAXE"));
         assertEquals(40, GameRules.TRAP_COOLDOWN_TICKS);
+        assertEquals(900, GameRules.POTION_SPEED_TICKS);
+        assertEquals(900, GameRules.POTION_JUMP_TICKS);
+        assertEquals(600, GameRules.POTION_INVIS_TICKS);
+        assertEquals(1, GameRules.POTION_SPEED_AMPLIFIER);
+        assertEquals(4, GameRules.POTION_JUMP_AMPLIFIER);
+        assertEquals(2, GameRules.POTION_INVIS_COST_EMERALD);
+        assertEquals(1, GameRules.POTION_SPEED_COST_EMERALD);
+        assertEquals(1, GameRules.LEGACY_EQUIP_BOOTS);
+        assertEquals(4, GameRules.LEGACY_EQUIP_HELMET);
+        assertEquals("\u00A7cVictim\u00A77 was killed by \u00A79Killer\u00A77.",
+            GameRules.killMessage("\u00A7cVictim", "\u00A79Killer", "kill", false));
+        assertEquals("\u00A7cVictim\u00A77 was shot by \u00A79Killer\u00A77. \u00A7c\u00A7lFINAL KILL!",
+            GameRules.killMessage("\u00A7cVictim", "\u00A79Killer", "shot", true));
+        assertEquals("\u00A7cVictim\u00A77 fell into the void.",
+            GameRules.killMessage("\u00A7cVictim", null, "void", false));
+        assertEquals("\u00A7cVictim\u00A77 was knocked into the void by \u00A79Killer\u00A77.",
+            GameRules.killMessage("\u00A7cVictim", "\u00A79Killer", "void_kill", false));
+        assertEquals("\u00A7f\u00A7lBED DESTRUCTION > \u00A7cRed\u00A7f\u00A7l's Bed\u00A77 > Destroyed by \u00A79Bob",
+            GameRules.bedBreakMessage("\u00A7cRed", "\u00A79Bob"));
+        assertTrue(GameRules.isMatchOre("IRON_INGOT"));
+        assertTrue(GameRules.isMatchOre("EMERALD"));
+        assertFalse(GameRules.isMatchOre("WOOL"));
+        int[] totals = new int[] {64, 8, 2, 2};
+        int[] shares = GameRules.killLootShares(totals);
+        assertEquals(64, shares[GameRules.RES_IRON]);
+        assertEquals(4, shares[GameRules.RES_GOLD]);
+        assertEquals(1, shares[GameRules.RES_DIAMOND]);
+        assertEquals(1, shares[GameRules.RES_EMERALD]);
+        assertEquals("\u00A7a+64 Iron! \u00A76+4 Gold! \u00A7b+1 Diamond! \u00A72+1 Emerald!",
+            GameRules.killLootKillerMessage(shares));
+        assertEquals("\u00A7cBob killed you and stole your resources!", GameRules.killLootVictimMessage("Bob"));
         System.out.println("BedlamCore game rules: PASS");
     }
 
