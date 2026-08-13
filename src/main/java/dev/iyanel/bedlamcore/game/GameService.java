@@ -46,7 +46,12 @@ public final class GameService {
     public void register(ArenaSettings settings) {
         ArenaManager old = arenas.remove(settings.id());
         if (old != null) old.shutdown();
-        arenas.put(settings.id(), new ArenaManager(plugin, settings));
+        try {
+            arenas.put(settings.id(), new ArenaManager(plugin, settings));
+        } catch (RuntimeException e) {
+            plugin.getLogger().severe("Failed to load arena " + settings.id() + ": " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     public ArenaSettings remove(String id) {

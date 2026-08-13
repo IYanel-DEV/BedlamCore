@@ -34,10 +34,10 @@ public final class BedlamCore extends JavaPlugin {
         waitingTemplates = new WaitingTemplateService(this);
         lobby = repository.loadLobby();
         worlds = new GameWorlds(this);
+        npcs = new LobbyNpcService(this);
         games = new GameService(this, repository.loadArenas());
         views = new NetworkViewService(this);
         gui = new GuiController(this);
-        npcs = new LobbyNpcService(this);
         sidebars = new SidebarService(this);
         listener = new GameListener(this);
         getServer().getPluginManager().registerEvents(listener, this);
