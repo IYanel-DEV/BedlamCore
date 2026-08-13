@@ -290,14 +290,15 @@ public final class ArenaManager {
             || loc.getBlockX() > bounds[3] || loc.getBlockY() > bounds[4] || loc.getBlockZ() > bounds[5])) {
             return "You cannot build outside the arena.";
         }
-        if (protectedZone(loc)) return "You cannot build here.";
+        if (protectedZone(loc) && !adjacentToBed(loc)) return "You cannot build here.";
         return null;
     }
 
-    /** Throw Bridge Egg: trail of team wool along flight; tracked as match blocks. */
-    public void launchBridgeEgg(Player player) {
+    /** Throw Bridge Egg: wool trail one block under the egg each tick (not on ProjectileHit). */
+    public void launchBridgeEgg(final Player player) {
         final TeamColor team = arena.team(player.getUniqueId());
         if (team == null || arena.state() != Arena.State.RUNNING || isSoftSpectating(player)) return;
+        final UUID thrower = player.getUniqueId();
         final org.bukkit.entity.Egg egg = player.launchProjectile(org.bukkit.entity.Egg.class);
         new BukkitRunnable() {
             private int placed;
@@ -309,8 +310,13 @@ public final class ArenaManager {
                     return;
                 }
                 Location here = egg.getLocation();
+                Player online = Bukkit.getPlayer(thrower);
+                if (online != null && here.distanceSquared(online.getLocation()) < 4.0) {
+                    prev = here.clone();
+                    return;
+                }
                 if (prev == null) {
-                    placeBridgeAt(here.getBlock(), team);
+                    placeBridgeUnder(here, team);
                     prev = here.clone();
                     return;
                 }
@@ -322,22 +328,42 @@ public final class ArenaManager {
                         (here.getX() - prev.getX()) * t,
                         (here.getY() - prev.getY()) * t,
                         (here.getZ() - prev.getZ()) * t);
-                    placeBridgeAt(point.getBlock(), team);
+                    placeBridgeUnder(point, team);
                 }
                 prev = here.clone();
             }
 
-            private void placeBridgeAt(Block block, TeamColor color) {
+            private void placeBridgeUnder(Location at, TeamColor color) {
                 if (placed >= GameRules.BRIDGE_EGG_MAX_BLOCKS) return;
+                Block block = at.getBlock().getRelative(0, -1, 0);
                 if (!GameRules.isBridgeReplaceable(block.getType().name())) return;
-                if (placeDenyReason(block.getLocation()) != null) return;
+                if (bridgePlaceDenied(block.getLocation())) return;
                 String key = Locations.blockKey(block.getLocation());
-                if (arena.placedBlocks().contains(key) && block.getType().name().contains("WOOL")) return;
+                if (arena.placedBlocks().contains(key)) return;
                 color.placeAsBlock(block);
                 arena.placedBlocks().add(key);
                 placed++;
             }
-        }.runTaskTimer(plugin, 0L, 1L);
+        }.runTaskTimer(plugin, 1L, 1L);
+    }
+
+    /** Height + XZ bounds only — Y-min would block void bridging; air-only paste skips map/beds/gens. */
+    private boolean bridgePlaceDenied(Location loc) {
+        Location waiting = arena.settings().waitingSpawn();
+        if (waiting != null && GameRules.tooHigh(loc.getBlockY(), waiting.getBlockY())) return true;
+        if (bounds != null && (loc.getBlockX() < bounds[0] || loc.getBlockX() > bounds[3]
+            || loc.getBlockZ() < bounds[2] || loc.getBlockZ() > bounds[5])) return true;
+        return false;
+    }
+
+    /** Wool on/against either bed half must not be blocked by nearby forge/shop spheres. */
+    private boolean adjacentToBed(Location loc) {
+        Block block = loc.getBlock();
+        int[][] dirs = {{0, 1, 0}, {0, -1, 0}, {1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}};
+        for (int i = 0; i < dirs.length; i++) {
+            if (block.getRelative(dirs[i][0], dirs[i][1], dirs[i][2]).getType().name().contains("BED")) return true;
+        }
+        return false;
     }
 
     public boolean mayBreak(Player player, Block block) {

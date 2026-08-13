@@ -3,7 +3,6 @@ package dev.iyanel.bedlamcore.arena;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockState;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -11,7 +10,7 @@ import java.util.List;
 final class WaitingStructure {
     private final WaitingTemplateService template;
     private final Location center;
-    private final List<BlockState> replaced = new ArrayList<BlockState>();
+    private final List<WaitingTemplateService.BlockSnap> replaced = new ArrayList<WaitingTemplateService.BlockSnap>();
 
     WaitingStructure(WaitingTemplateService template, Location center) {
         this.template = template;
@@ -32,13 +31,17 @@ final class WaitingStructure {
     }
 
     void remove() {
-        for (BlockState state : replaced) state.update(true, false);
+        if (replaced.isEmpty()) {
+            template.clear(center);
+            return;
+        }
+        for (WaitingTemplateService.BlockSnap snap : replaced) snap.restore();
         replaced.clear();
     }
 
     private void place(int x, int y, int z, Material material) {
         Block block = center.clone().add(x, y, z).getBlock();
-        replaced.add(block.getState());
+        replaced.add(WaitingTemplateService.BlockSnap.original(block, material, (byte) 0));
         block.setType(material);
     }
 }

@@ -82,6 +82,12 @@ public final class GameRulesCheck {
         assertFalse(GameRules.isBridgeReplaceable("WOOL"));
         assertFalse(GameRules.isBridgeReplaceable("BED_BLOCK"));
         assertEquals(40, GameRules.BRIDGE_EGG_MAX_BLOCKS);
+        assertEquals(32, GameRules.INVENTORY_TITLE_MAX);
+        assertEquals("Quick Buy", GameRules.inventoryTitle("Quick Buy"));
+        assertEquals(32, GameRules.inventoryTitle("12345678901234567890123456789012345").length());
+        assertTrue(GameRules.isChestGuiSize(27));
+        assertTrue(GameRules.isChestGuiSize(54));
+        assertFalse(GameRules.isChestGuiSize(45));
         assertEquals(1, GameRules.nextToolTier(0));
         assertEquals(4, GameRules.nextToolTier(3));
         assertEquals(-1, GameRules.nextToolTier(4));

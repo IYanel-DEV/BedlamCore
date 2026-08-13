@@ -185,11 +185,17 @@ public final class GameListener implements Listener {
             return;
         }
         if (event.getClickedBlock() == null || arena.state() != Arena.State.RUNNING) return;
-        // Deny sleeping in beds; still allow placing blocks against/on top of beds (bed defense).
+        // 1.8: RIGHT_CLICK_BLOCK on a bed fires interact first; cancelling it (or leaving item use
+        // DEFAULT) swallows BlockPlaceEvent. Deny sleep only; force item use when holding a block.
         if (event.getClickedBlock().getType().name().contains("BED")) {
             if (event.getAction() == Action.RIGHT_CLICK_BLOCK) {
-                event.setUseInteractedBlock(Event.Result.DENY);
-                if (item == null || item.getType() == Material.AIR || !item.getType().isBlock()) {
+                ItemStack hand = player.getItemInHand();
+                boolean placing = hand != null && hand.getType() != Material.AIR && hand.getType().isBlock();
+                if (placing) {
+                    event.setCancelled(false);
+                    event.setUseInteractedBlock(Event.Result.DENY);
+                    event.setUseItemInHand(Event.Result.ALLOW);
+                } else {
                     event.setCancelled(true);
                 }
             }
@@ -303,15 +309,28 @@ public final class GameListener implements Listener {
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player)) return;
-        Player player = (Player) event.getWhoClicked();
+        final Player player = (Player) event.getWhoClicked();
         String title = event.getView().getTitle();
         if (isBedlamTitle(title)) {
             event.setCancelled(true);
-            int raw = event.getRawSlot();
+            if (plugin.gui().guiBusy(player)) return;
             int topSize = event.getView().getTopInventory().getSize();
-            // Ignore player-inv clicks and out-of-range raw slots (never assume 54).
+            // Size 45 = ContainerPlayer; client still thinks a 54-slot chest is open.
+            if (!GameRules.isChestGuiSize(topSize)) return;
+            int raw = event.getRawSlot();
             if (raw < 0 || raw >= topSize) return;
-            plugin.gui().click(player, title, event.getCurrentItem());
+            final ItemStack clicked = event.getCurrentItem() == null ? null : event.getCurrentItem().clone();
+            final String titleCopy = title;
+            plugin.gui().beginGuiClick(player);
+            Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
+                @Override public void run() {
+                    try {
+                        if (player.isOnline()) plugin.gui().click(player, titleCopy, clicked);
+                    } finally {
+                        plugin.gui().endGuiClick(player);
+                    }
+                }
+            }, 1L);
             return;
         }
         if (lockMatchArmor(player, event)) event.setCancelled(true);

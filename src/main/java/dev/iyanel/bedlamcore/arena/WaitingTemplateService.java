@@ -2,11 +2,12 @@ package dev.iyanel.bedlamcore.arena;
 
 import dev.iyanel.bedlamcore.BedlamCore;
 import dev.iyanel.bedlamcore.compat.Items;
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockState;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -53,18 +54,27 @@ public final class WaitingTemplateService {
         if (one != null && two != null) capture(player, one, two);
     }
 
-    public boolean place(Location waitingSpawn, List<BlockState> replaced) {
+    public boolean place(Location waitingSpawn, List<BlockSnap> replaced) {
         if (waitingSpawn == null || waitingSpawn.getWorld() == null || blocks.isEmpty()) return false;
         Location origin = waitingSpawn.getBlock().getLocation().add(0, -1, 0);
         for (BlockSpec spec : blocks) {
             Block block = origin.clone().add(spec.x, spec.y, spec.z).getBlock();
-            replaced.add(block.getState());
             Material material = Material.matchMaterial(spec.material);
             if (material == null) material = Material.AIR;
+            replaced.add(BlockSnap.original(block, material, spec.data));
             block.setType(material);
             block.setData(spec.data, false);
         }
         return true;
+    }
+
+    /** PLAY-start fallback when no pre-paste snapshot exists (empty replaced list). */
+    public void clear(Location waitingSpawn) {
+        if (waitingSpawn == null || waitingSpawn.getWorld() == null || blocks.isEmpty()) return;
+        Location origin = waitingSpawn.getBlock().getLocation().add(0, -1, 0);
+        for (BlockSpec spec : blocks) {
+            origin.clone().add(spec.x, spec.y, spec.z).getBlock().setType(Material.AIR);
+        }
     }
 
     private void capture(Player player, Location one, Location two) {
@@ -131,6 +141,40 @@ public final class WaitingTemplateService {
 
     private static int number(Object value) { return value instanceof Number ? ((Number) value).intValue() : 0; }
     private static String coordinates(Location location) { return location.getBlockX() + ", " + location.getBlockY() + ", " + location.getBlockZ(); }
+
+    /** Material+data snapshot so PLAY restore survives stale BlockState / baked-in pastes. */
+    static final class BlockSnap {
+        private final String world;
+        private final int x;
+        private final int y;
+        private final int z;
+        private final Material type;
+        private final byte data;
+
+        private BlockSnap(Block block, Material type, byte data) {
+            World w = block.getWorld();
+            this.world = w == null ? null : w.getName();
+            this.x = block.getX();
+            this.y = block.getY();
+            this.z = block.getZ();
+            this.type = type;
+            this.data = data;
+        }
+
+        static BlockSnap original(Block block, Material pasteType, byte pasteData) {
+            boolean baked = block.getType() == pasteType && block.getData() == pasteData;
+            return baked ? new BlockSnap(block, Material.AIR, (byte) 0) : new BlockSnap(block, block.getType(), block.getData());
+        }
+
+        void restore() {
+            if (world == null) return;
+            World w = Bukkit.getWorld(world);
+            if (w == null) return;
+            Block block = w.getBlockAt(x, y, z);
+            block.setType(type == null ? Material.AIR : type);
+            block.setData(data, false);
+        }
+    }
 
     private static final class BlockSpec {
         private final int x;

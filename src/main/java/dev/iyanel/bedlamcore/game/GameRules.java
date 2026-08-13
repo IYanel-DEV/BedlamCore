@@ -50,11 +50,23 @@ public final class GameRules {
     public static final int TOOL_TIER_MAX = 4;
     /** Max wool blocks one Bridge Egg may place along its flight. */
     public static final int BRIDGE_EGG_MAX_BLOCKS = 40;
+    /** 1.8 client silently fails to open a chest if the title is longer than this (including color codes). */
+    public static final int INVENTORY_TITLE_MAX = 32;
 
     /** Air-only so bridge eggs never overwrite map/beds/gens. */
     public static boolean isBridgeReplaceable(String materialName) {
         return materialName != null && (materialName.equals("AIR") || materialName.equals("CAVE_AIR")
             || materialName.equals("VOID_AIR"));
+    }
+
+    /** 1.8 chest GUIs are 27 or 54; size 45 is ContainerPlayer (crafting + armor + inv). */
+    public static boolean isChestGuiSize(int size) {
+        return size == 27 || size == 54;
+    }
+
+    public static String inventoryTitle(String title) {
+        if (title == null) return "";
+        return title.length() <= INVENTORY_TITLE_MAX ? title : title.substring(0, INVENTORY_TITLE_MAX);
     }
 
     private GameRules() {

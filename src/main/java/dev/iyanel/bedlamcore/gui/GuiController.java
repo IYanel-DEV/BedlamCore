@@ -26,8 +26,10 @@ import org.bukkit.util.Vector;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -49,11 +51,13 @@ public final class GuiController {
     private final Map<UUID, GameType> selectedNpc = new HashMap<UUID, GameType>();
     private final Map<UUID, GameType> skinInputs = new ConcurrentHashMap<UUID, GameType>();
     private final Map<UUID, String> shopCategory = new HashMap<UUID, String>();
+    private final Set<UUID> guiBusy = new HashSet<UUID>();
+    private final Set<UUID> pendingOpen = new HashSet<UUID>();
 
     public GuiController(BedlamCore plugin) { this.plugin = plugin; }
 
     public void openMain(Player player) {
-        Inventory inventory = Bukkit.createInventory(null, 27, MAIN_TITLE);
+        Inventory inventory = chest(27, MAIN_TITLE);
         inventory.setItem(10, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Quick Join Solo", ChatColor.GRAY + "One player per team"));
         inventory.setItem(12, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Quick Join Doubles", ChatColor.GRAY + "Two players per team"));
         inventory.setItem(14, Items.named(new ItemStack(Material.EMERALD), ChatColor.AQUA + "Browse Solo Games", ChatColor.GRAY + "Select a waiting arena"));
@@ -65,7 +69,7 @@ public final class GuiController {
 
     public void openAdmin(Player player) {
         if (!admin(player)) return;
-        Inventory inventory = Bukkit.createInventory(null, 27, ADMIN_TITLE);
+        Inventory inventory = chest(27, ADMIN_TITLE);
         inventory.setItem(10, Items.named(new ItemStack(Material.NETHER_STAR), ChatColor.GREEN + "Lobby Setup", status(plugin.lobby().complete())));
         inventory.setItem(12, Items.named(new ItemStack(Items.material("GRASS_BLOCK", "GRASS")), ChatColor.AQUA + "Game World Setup", ChatColor.GRAY + "Create, edit, teleport, delete"));
         inventory.setItem(14, Items.named(new ItemStack(Material.COMPASS), ChatColor.YELLOW + "Current World", ChatColor.WHITE + player.getWorld().getName()));
@@ -90,7 +94,7 @@ public final class GuiController {
     private void openLobbySetup(Player player) {
         LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
         if (draft == null) { beginLobbySetup(player); return; }
-        Inventory inventory = Bukkit.createInventory(null, 27, LOBBY_TITLE);
+        Inventory inventory = chest(27, LOBBY_TITLE);
         inventory.setItem(10, setupItem(Material.NETHER_STAR, "Set Lobby Spawn", draft.spawn() != null));
         inventory.setItem(12, npcItem(GameType.SOLO, draft));
         inventory.setItem(14, npcItem(GameType.DOUBLES, draft));
@@ -101,7 +105,7 @@ public final class GuiController {
 
     public void openWorlds(Player player) {
         if (!admin(player)) return;
-        Inventory inventory = Bukkit.createInventory(null, 54, WORLDS_TITLE);
+        Inventory inventory = chest(54, WORLDS_TITLE);
         inventory.setItem(0, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Create Solo World"));
         inventory.setItem(1, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Create Doubles World"));
         inventory.setItem(4, Items.named(new ItemStack(Material.COMPASS), ChatColor.YELLOW + "Current World", ChatColor.WHITE + player.getWorld().getName()));
@@ -122,7 +126,7 @@ public final class GuiController {
         ArenaManager manager = plugin.games().byId(id);
         if (manager == null) { openWorlds(player); return; }
         selectedArena.put(player.getUniqueId(), id);
-        Inventory inventory = Bukkit.createInventory(null, 27, ChatColor.DARK_GRAY + "World Actions");
+        Inventory inventory = chest(27, ChatColor.DARK_GRAY + "World Actions");
         inventory.setItem(10, Items.named(new ItemStack(Items.material("ENDER_PEARL")), ChatColor.GREEN + "Teleport & Setup"));
         inventory.setItem(13, Items.named(new ItemStack(Material.PAPER), ChatColor.YELLOW + "Status", manager.arena().settings().validate().isEmpty() ? ChatColor.GREEN + "Ready" : ChatColor.RED + "Incomplete"));
         inventory.setItem(16, Items.named(new ItemStack(Material.TNT), ChatColor.RED + "Delete World", ChatColor.DARK_RED + "Requires confirmation"));
@@ -130,7 +134,7 @@ public final class GuiController {
     }
 
     private void confirmDelete(Player player) {
-        Inventory inventory = Bukkit.createInventory(null, 27, ChatColor.DARK_RED + "Confirm World Delete");
+        Inventory inventory = chest(27, ChatColor.DARK_RED + "Confirm World Delete");
         inventory.setItem(11, Items.named(new ItemStack(Material.BARRIER), ChatColor.GRAY + "Keep World"));
         inventory.setItem(15, Items.named(new ItemStack(Material.TNT), ChatColor.RED + "Confirm Delete", ChatColor.DARK_RED + "This cannot be undone"));
         openGui(player, inventory);
@@ -164,13 +168,15 @@ public final class GuiController {
         selectedNpc.remove(uuid);
         skinInputs.remove(uuid);
         shopCategory.remove(uuid);
+        guiBusy.remove(uuid);
+        pendingOpen.remove(uuid);
     }
 
     private void openArenaSetup(Player player) {
         ArenaDraft session = arenaDrafts.get(player.getUniqueId());
         if (session == null) { openWorlds(player); return; }
         ArenaSettings settings = session.settings;
-        Inventory inventory = Bukkit.createInventory(null, 54, ChatColor.DARK_GRAY + "Game Setup");
+        Inventory inventory = chest(54, ChatColor.DARK_GRAY + "Game Setup");
         inventory.setItem(0, Items.named(new ItemStack(Material.COMPASS), ChatColor.YELLOW + "Current World", ChatColor.WHITE + settings.worldName()));
         inventory.setItem(1, Items.named(new ItemStack(settings.gameType() == GameType.SOLO ? Material.IRON_SWORD : Material.DIAMOND_SWORD), ChatColor.AQUA + "Mode: " + settings.gameType().displayName()));
         inventory.setItem(3, setupItem(Material.GLASS, "Set Waiting Spawn", settings.waitingSpawn() != null));
@@ -193,7 +199,7 @@ public final class GuiController {
         if (session == null) return;
         selectedTeam.put(player.getUniqueId(), team);
         ArenaSettings.TeamSettings settings = session.settings.team(team);
-        Inventory inventory = Bukkit.createInventory(null, 27, ChatColor.DARK_GRAY + "Team Setup");
+        Inventory inventory = chest(27, ChatColor.DARK_GRAY + "Team Setup");
         inventory.setItem(10, setupItem(Material.ARMOR_STAND, "Set Team Spawn", settings.spawn() != null));
         inventory.setItem(11, setupItem(Items.material("RED_BED", "BED"), "Set Bed (look at it)", settings.bed() != null));
         inventory.setItem(12, setupItem(Material.IRON_INGOT, "Set Forge", settings.forge() != null));
@@ -206,7 +212,7 @@ public final class GuiController {
     }
 
     public void openQueue(Player player, GameType type) {
-        Inventory inventory = Bukkit.createInventory(null, 27, ChatColor.DARK_GRAY + PLAY_TITLE_PREFIX + type.displayName());
+        Inventory inventory = chest(27, ChatColor.DARK_GRAY + PLAY_TITLE_PREFIX + type.displayName());
         inventory.setItem(11, Items.named(new ItemStack(Items.material("RED_BED", "BED")),
             ChatColor.GREEN + "Bed Wars " + type.displayName(),
             ChatColor.WHITE + "Play a game of Bed Wars " + type.displayName() + ".",
@@ -222,7 +228,7 @@ public final class GuiController {
     }
 
     public void openMapSelector(Player player, GameType type) {
-        Inventory inventory = Bukkit.createInventory(null, 54, ChatColor.DARK_GRAY + MAP_TITLE_PREFIX + type.displayName());
+        Inventory inventory = chest(54, ChatColor.DARK_GRAY + MAP_TITLE_PREFIX + type.displayName());
         inventory.setItem(4, Items.named(new ItemStack(Items.material("RED_BED", "BED")),
             ChatColor.GREEN + "Random Map",
             ChatColor.WHITE + "Quick join any waiting " + type.displayName() + " game.",
@@ -468,7 +474,7 @@ public final class GuiController {
         }
         selectedNpc.put(player.getUniqueId(), type);
         LobbySettings.NpcSettings settings = draft.npc(type);
-        Inventory inventory = Bukkit.createInventory(null, 27, ChatColor.DARK_GRAY + "NPC Editor");
+        Inventory inventory = chest(27, ChatColor.DARK_GRAY + "NPC Editor");
         inventory.setItem(4, Items.named(settings.human() ? Skins.head(settings.skin()) : new ItemStack(Items.material("VILLAGER_SPAWN_EGG", "MONSTER_EGG")),
             ChatColor.GOLD + type.displayName() + " NPC", ChatColor.GRAY + appearance(settings)));
         inventory.setItem(10, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Previous Mob"));
@@ -545,7 +551,7 @@ public final class GuiController {
         ArenaManager manager = plugin.games().arena(player);
         if (manager == null) return;
         Arena arena = manager.arena();
-        Inventory inventory = Bukkit.createInventory(null, 54, ChatColor.DARK_GRAY + "Spectate");
+        Inventory inventory = chest(54, ChatColor.DARK_GRAY + "Spectate");
         int slot = 0;
         for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
             if (arena.eliminated().contains(entry.getKey()) || slot >= inventory.getSize()) continue;
@@ -575,7 +581,7 @@ public final class GuiController {
 
     private void openShopCategory(Player player, String category) {
         shopCategory.put(player.getUniqueId(), category);
-        Inventory inventory = Bukkit.createInventory(null, 54, SHOP_TITLE);
+        Inventory inventory = chest(54, SHOP_TITLE);
         inventory.setItem(0, categoryTab(Material.NETHER_STAR, "Quick Buy", category));
         inventory.setItem(1, categoryTab(Items.material("WHITE_TERRACOTTA", "STAINED_CLAY"), "Blocks", category));
         inventory.setItem(2, categoryTab(Items.material("GOLDEN_SWORD", "GOLD_SWORD"), "Melee", category));
@@ -759,7 +765,7 @@ public final class GuiController {
         if (manager == null) return;
         Arena arena = manager.arena();
         TeamColor team = arena.team(player.getUniqueId());
-        Inventory inventory = Bukkit.createInventory(null, 54, UPGRADES_TITLE);
+        Inventory inventory = chest(54, UPGRADES_TITLE);
         ItemStack pane = Items.named(Items.stack("GRAY_STAINED_GLASS_PANE", "STAINED_GLASS_PANE", 1, (short) 7), " ");
         for (int row = 0; row < 6; row++) inventory.setItem(row * 9 + 4, pane);
         for (int i = 27; i < 36; i++) inventory.setItem(i, pane);
@@ -1107,13 +1113,33 @@ public final class GuiController {
     private static String roman(int level) { return new String[] {"I", "II", "III", "IV", "MAX"}[Math.min(level - 1, 4)]; }
     private boolean admin(Player player) { return plugin.isAdmin(player); }
 
-    /** Next-tick open: sync openInventory during InventoryClickEvent desyncs 1.8 (client chest vs ContainerPlayer size 45). */
+    public boolean guiBusy(Player player) { return guiBusy.contains(player.getUniqueId()); }
+
+    public void beginGuiClick(Player player) { guiBusy.add(player.getUniqueId()); }
+
+    public void endGuiClick(Player player) {
+        if (!pendingOpen.contains(player.getUniqueId())) guiBusy.remove(player.getUniqueId());
+    }
+
+    private static Inventory chest(int size, String title) {
+        return Bukkit.createInventory(null, size, GameRules.inventoryTitle(title));
+    }
+
+    /** Never open during InventoryClickEvent — delay 1 tick (delay 0 still races 1.8 Container.click). */
     private void openGui(final Player player, final Inventory inventory) {
-        Bukkit.getScheduler().runTask(plugin, new Runnable() {
+        final UUID uuid = player.getUniqueId();
+        guiBusy.add(uuid);
+        pendingOpen.add(uuid);
+        Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
             @Override public void run() {
-                if (player.isOnline()) player.openInventory(inventory);
+                try {
+                    if (player.isOnline()) player.openInventory(inventory);
+                } finally {
+                    pendingOpen.remove(uuid);
+                    guiBusy.remove(uuid);
+                }
             }
-        });
+        }, 1L);
     }
 
     private static Block targetBlock(Player player, int range) {

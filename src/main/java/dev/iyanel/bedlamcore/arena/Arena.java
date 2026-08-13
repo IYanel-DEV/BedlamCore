@@ -164,7 +164,7 @@ public final class Arena {
             forgeLevel.put(team, 0);
             hasteLevel.put(team, 0);
             traps.put(team, new ArrayList<TrapType>());
-            teamChests.put(team, Bukkit.createInventory(null, 27, team.coloredName() + " Chest"));
+            teamChests.put(team, Bukkit.createInventory(null, 27, GameRules.inventoryTitle(team.coloredName() + " Chest")));
         }
     }
 
