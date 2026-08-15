@@ -162,7 +162,7 @@ Arena layout lives in `arenas.yml`. Player progression: `stats.yml`.
 
 **Proprietary — All Rights Reserved.** See [`LICENSE`](LICENSE).
 
-You may view this repository. You may **not** use, copy, modify, redistribute, or run BedlamCore on a server without **prior written permission** from the copyright holder ([IYanel-DEV](https://github.com/IYanel-DEV)). Opening the source on GitHub does not grant a license. Contact the author for permission or to discuss improvements.
+You may download, install, and run the **unmodified** official plugin on your servers without asking. Public mirrors of the unmodified official jar are allowed with attribution and a link to [IYanel-DEV/BedlamCore](https://github.com/IYanel-DEV/BedlamCore). **Modification**, derivative works, redistributing modified builds, and rebranding require **prior written permission** from the copyright holder ([IYanel-DEV](https://github.com/IYanel-DEV)).
 
 ---
 
@@ -171,3 +171,5 @@ You may view this repository. You may **not** use, copy, modify, redistribute, o
 - GitHub: [IYanel-DEV/BedlamCore](https://github.com/IYanel-DEV/BedlamCore)
 - Releases: [github.com/IYanel-DEV/BedlamCore/releases](https://github.com/IYanel-DEV/BedlamCore/releases)
 - Author: [IYanel-DEV](https://github.com/IYanel-DEV)
+
+
