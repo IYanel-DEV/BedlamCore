@@ -1,9 +1,9 @@
-plugins {
+﻿plugins {
     java
 }
 
 group = "dev.iyanel"
-version = "0.10.1"
+version = "0.10.37"
 
 repositories {
     mavenCentral()
@@ -37,7 +37,8 @@ tasks.jar {
 tasks.register<JavaExec>("coreCheck") {
     group = "verification"
     description = "Runs the dependency-free game rule checks."
-    classpath = sourceSets.main.get().runtimeClasspath
+    // compileOnly Spigot is needed so CosmeticsService/BedlamCore can classload; checks stay Bukkit-free.
+    classpath = sourceSets.main.get().runtimeClasspath + configurations.compileClasspath.get()
     mainClass.set("dev.iyanel.bedlamcore.game.GameRulesCheck")
 }
 

@@ -1,4 +1,4 @@
-﻿# BedlamCore status report (~v0.10.1)
+# BedlamCore status report (0.10.5 working tree)
 
 **Date:** 2026-08-14  
 **Repo:** `C:\Users\FUFU\Downloads\Bedwarsplugin`  
@@ -10,7 +10,7 @@
 
 ### What it is
 
-BedlamCore is an original, GUI-first Bed Wars minigame for Spigot/Paper: lobby + multi-world arena setup, Solo/Doubles queues, Hypixel-adjacent match loop (gens, shops, upgrades/traps, beds, soft spectate), and a flat YAML stats economy — one jar, no NMS, no copied proprietary assets.
+BedlamCore is an original, GUI-first Bed Wars minigame for Spigot/Paper: lobby + multi-world arena setup, Solo/Doubles queues, Hypixel-adjacent match loop (gens, shops, upgrades/traps, beds, soft spectate), and a flat YAML stats economy. Modern servers use Bukkit APIs; 1.8 entity visibility/equipment/silence uses an isolated reflective CraftBukkit/NMS fallback with no compile-time dependency.
 
 ### Compatibility
 
@@ -24,12 +24,12 @@ BedlamCore is an original, GUI-first Bed Wars minigame for Spigot/Paper: lobby +
 
 | Source | Version |
 |--------|---------|
-| `build.gradle.kts` | **0.10.1** |
-| Jar name | `BedlamCore-0.10.1.jar` |
-| Last committed bump in log | **v0.9.0** (`8bb5393` — Bridge Eggs, stats, lobby scoreboard) |
-| `README.md` | Stale (**0.4.0**) — docs lag code |
+| `build.gradle.kts` | **0.10.5** |
+| Local jar name | `BedlamCore-0.10.5.jar` |
+| Public release at review time | **v0.10.1** |
+| Release procedure | `docs/RELEASING.md` |
 
-Working tree carries post-0.9.0 work (invis armor, traps polish, forge share, NPC mute, pristine/setup fixes, etc.) under the **0.10.1** gradle version.
+The working tree carries the unreleased **0.10.5** changes. Do not publish until the exact jar passes both endpoint checks.
 
 ### Major systems working now
 
@@ -41,7 +41,7 @@ Working tree carries post-0.9.0 work (invis armor, traps polish, forge share, NP
 - **Scoreboards** — lobby (level/progress/tokens/kills/wins), waiting, in-game (next gen event + team bed lines).
 - **Stats economy** — `stats.yml` tokens/XP/level/kills/wins/beds/games; awards on win/bed/kill/final/play; end-of-match summary.
 - **Item Shop** — Quick Buy categories (Blocks/Melee/Armor/Tools/Ranged/Potions/Utility); tool tiers; potions (Speed/Jump/Invis).
-- **Upgrades & Traps** — Sharpened, Reinforced, Maniac Miner, Iron Forge, Heal Pool, Dragon Buff (max HP), Cushioned Boots; 3-slot trap queue (Blindness / Counter-Offensive / Alarm / Miner Fatigue / Reveal).
+- **Upgrades & Traps** — 45-slot Hypixel-style layout with Sharpened, Reinforced, Maniac Miner, Iron Forge, Heal Pool, Cushioned Boots I-II; 3-slot 1/2/4-diamond trap queue (Blindness / Counter-Offensive / Miner Fatigue / Reveal).
 - **Heal Pool** — base regen + green particles.
 - **Team + ender chests** — punch-to-deposit holograms; shared team inv; personal ender cleared per match.
 - **Forge share** — ~2.5 horizontal teammate copies; standing vs share sounds; L2/L3 rare diamond/emerald; ground fallback Y.
@@ -71,48 +71,43 @@ Op: setup compass → Lobby Setup + Game World Setup. Players: queue NPCs / Play
 
 ### Known limitations / gaps
 
-- Docs drift: README still cites **0.4.0**; last git message **v0.9.0** while gradle is **0.10.1**.
-- **Quick Buy Settings** is a "Coming soon" stub (no per-player layout).
 - **Tokens have no lobby sink** (earn only; nothing cosmetic/rank to buy).
 - Modes are **Solo + Doubles only** (no 3s/4s/squads).
-- **Fireball** is stock Bukkit projectile (`yield 2`, non-incendiary) — no custom KB curve.
-- **Dragon Buff** = +4 max HP only (no endgame dragon event).
-- **`ArenaManager` (~1.6k LOC) + `GuiController` (~1.2k)** own almost all match/GUI logic — hard to change safely.
-- Sidebar rebuilds a **new scoreboard every second** for every online player.
-- `StatsStore.apply` **saves YAML on every grant** (fine for small servers; will stutter under load).
-- Citizens mute needs a **per-tick silent re-apply** (remount clears flags).
+
 - 1.8 still needs careful GUI/open deferral and bed-place interact quirks; modern path uses reflection/`hideEntity` where available.
 - No parties, ranked, map vote beyond simple selector, replay, or mobile defenders (golem/tower).
+- Public GitHub release remains **v0.10.1** until the tested 0.10.5 working tree is committed/tagged by the human maintainer.
+- Endpoint startup passed for 0.10.5; full two-player gameplay and clean console shutdown remain manual acceptance checks.
 
 ---
 
-## 10 things to IMPROVE (existing, rough)
+## 0.10.5 improvement completion
 
-1. **`ArenaManager` god class (~1611 lines)** — Match lifecycle, gens, forge, traps, spectate, bridge egg, chests, displays, and reset live in one type. One wrong edit risks half the game; peel gens/forge and soft-spectate into small collaborators when the next feature forces a touch.
+1. **Release discipline** — one version source, dynamic README paths, and `docs/RELEASING.md` exact-jar gate.
 
-2. **Sidebar recreates the full scoreboard every 20 ticks** — Flicker risk and needless allocation on busy lobbies. Diff-update lines / reuse one board per player instead of `getNewScoreboard()` each pass.
+2. **Two-endpoint proof** — the exact 0.10.5 jar enabled on Paper 1.8.8 and Paper 26.2 with explicit capability logs.
 
-3. **`StatsStore` writes disk on every token/XP grant** — Kill spam = YAML spam. Batch to a periodic flush (or dirty-flag + shutdown save you already have).
+3. **Crash-safe persistence** — YAML and pristine world replacement use temporary files/directories plus replace/rollback.
 
-4. **Fireball is vanilla yield-2** — Feels inconsistent across 1.8 vs modern Paper (KB, block damage, self-boost). Cancel explosion damage you do not want and apply a fixed horizontal impulse + small vertical; keep yield low or zero.
+4. **Magic Milk** — named shop milk now grants 30 seconds of trap immunity.
 
-5. **Hologram / display visibility is O(displays × players) + magic Y constants** — Works, but gen/shop/lobby heights (`SHOP_HOLO_*`, `GEN_*`) will keep drifting per map scale. Centralize one "label stack" helper and optionally throttle visibility to every N ticks.
+5. **Permanent Chainmail** — owned legs/boots are match state and are rebuilt on every respawn.
 
-6. **Quick Buy Settings stub** — Dead compass slot trains players to click nothing. Either wire a simple 9-slot favorite bar persisted in `stats.yml`, or remove the item until real.
+6. **Single shop catalog** — fixed layout, keys, prices, currency, and lore drive categories, Quick Buy, and purchases.
 
-7. **Citizens / NPC silence is a tick patch** — Remount clears `silent`; you re-mute every tick and scan entities for sound cancel. Prefer metadata + event cancel only; document Citizens version pin in `servers/README` so operators do not fight ambient noise.
+7. **Combat/reward edge cases** — void credit expires after 15 seconds and full-inventory loot drops safely.
 
-8. **1.8 shop GUI open path is still fragile** — History of IndexOutOfBounds / desync and `pendingOpen` / deferred open. One shared `openChestGui(player, inv)` with title length clamp + next-tick open on 1.8 only would cut repeat bugs.
+8. **Entity hot paths** — generators and NPC pins retain direct references; tagged NPC silence no longer scans all worlds.
 
-9. **Trap trigger is flat radius around team spawn** — No bed-centric zone, vertical nuance, or "already in base" grace. Players trip traps camping height or miss edge rushes; define a base AABB from bed+spawn and optional re-entry flag.
+9. **Compatibility truth** — reflective 1.8 fallbacks are documented and the active path is logged at startup.
 
-10. **Forge L2/L3 rare ores are silent RNG** — No chat/sound when a diamond/emerald bonus hits, so upgrades feel placebo. Play `Sounds.forgeCollect` + a one-line team message on bonus so Iron Forge spends feel earned.
+10. **Runnable checks** — rules now cover immunity, combat timeout, catalog consistency, and atomic persistence replacement.
 
 ---
 
 ## 10 things to ADD (new, solo-dev practical)
 
-1. **Fireball knockback polish** — Highest ROI combat feel: custom boost when hitting players/self, predictable arc, optional no-terrain grief near gens. Bridge Egg already exists; this is the matching Utility skill ceiling.
+1. **Reconnect grace** — Reserve a disconnected player's match slot briefly and expose `/rejoin` so a network hiccup does not remove the team bed.
 
 2. **Pop-up tower (utility)** — Placeable wool/ladder column with a short build animation and `placeDenyReason` reuse. Classic Bed Wars macro without new AI.
 
@@ -124,13 +119,13 @@ Op: setup compass → Lobby Setup + Game World Setup. Players: queue NPCs / Play
 
 6. **Map voting UI polish** — After countdown threshold, 3-map vote chest with live tallies on the waiting sidebar. You already have Map Selector; promote it into the wait loop.
 
-7. **Per-player Quick Buy layouts** — Persist 9 favorite offer ids on the player record; ship the stubbed Settings compass. Small YAML, big daily UX.
+7. **Leaderboard GUI** — Show wins, kills, final kills, beds, and streaks from the existing stats store.
 
 8. **Triples / 3v3v3v3 mode** — Copy Doubles path with `playersPerTeam = 3` and lobby NPC #3. Same arenas if maps have 4 islands; almost pure config + GUI clone.
 
 9. **Lite "last death" replay** — On final kill, soft-spec teleports along 3–5s of recorded positions (or killer POV). No full demo format — just a short spectator camera.
 
-10. **Seasonal ranked stub** — Elo or simple MMR in `stats.yml`, separate Solo ranked queue, end-of-match ±points. Skip leagues/divisions until parties + enough maps exist.
+10. **Play Again flow** — Results item queues the same mode or returns to the lobby selector without command typing.
 
 ---
 
@@ -151,7 +146,7 @@ bbd7ca4 fix: defer 1.8 shop GUI open to avoid IndexOutOfBounds (v0.8.1)
 4cb83c0 feat: build BedlamCore bed wars foundation
 ```
 
-Uncommitted / in-progress relative to v0.9.0 includes invis armor, trap/forge/chest/NPC sound work, and gradle **0.10.1**.
+Uncommitted / in-progress work is versioned **0.10.5** and must not be published until the exact commit completes the release checklist.
 
 ---
 
@@ -170,3 +165,12 @@ Uncommitted / in-progress relative to v0.9.0 includes invis armor, trap/forge/ch
 ---
 
 *End of report. No commit, no push.*
+
+
+## 0.10.2
+- ArenaManager split into collaborators (~739 LOC coordinator + 8 services).
+- SidebarService reuses scoreboard per player / diffs lines.
+
+
+## 0.10.3
+- Parallel improves #3–#5: StatsStore dirty + 5s flush; fireball yield 0 + fixed KB; hologram labelY helper + visibility every 5 ticks.

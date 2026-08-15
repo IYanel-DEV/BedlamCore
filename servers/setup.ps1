@@ -78,4 +78,20 @@ pause
 Install-PaperServer -Name "legacy-1.8.8" -Version "1.8.8" -Port 25565 -JavaVariable "JAVA8_HOME" -CitizensUrl "https://ci.citizensnpcs.co/job/Citizens2/3219/artifact/dist/target/Citizens-2.0.33-b3219.jar"
 Install-PaperServer -Name "current-26.2" -Version "26.2" -Port 25566 -JavaVariable "JAVA25_HOME" -CitizensUrl "https://ci.citizensnpcs.co/job/Citizens2/lastSuccessfulBuild/artifact/dist/target/Citizens-2.0.43-b4232.jar"
 
+
+# Copy importable map templates into each Paper world container (once).
+$sharedMaps = Join-Path $PSScriptRoot "shared-maps"
+if (Test-Path $sharedMaps) {
+    foreach ($serverName in @("legacy-1.8.8", "current-26.2")) {
+        $serverRoot = Join-Path $PSScriptRoot $serverName
+        Get-ChildItem $sharedMaps -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $dest = Join-Path $serverRoot $_.Name
+            if (-not (Test-Path (Join-Path $dest "level.dat"))) {
+                Copy-Item $_.FullName $dest -Recurse -Force
+                Write-Host "Copied map $($_.Name) -> $serverName"
+            }
+        }
+    }
+}
+
 Write-Host "BedlamCore servers are ready. Run each server's start.bat in a separate terminal."

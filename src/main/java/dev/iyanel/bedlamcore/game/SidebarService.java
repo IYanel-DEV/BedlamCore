@@ -16,12 +16,18 @@ import org.bukkit.scoreboard.Team;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public final class SidebarService {
+    private static final String TITLE = ChatColor.YELLOW + "" + ChatColor.BOLD + "BED WARS";
+
     private final BedlamCore plugin;
+    private final Map<UUID, Board> boards = new HashMap<UUID, Board>();
 
     public SidebarService(BedlamCore plugin) {
         this.plugin = plugin;
@@ -31,35 +37,85 @@ public final class SidebarService {
     }
 
     private void updateAll() {
-        for (Player player : Bukkit.getOnlinePlayers()) update(player);
+        Set<UUID> online = new HashSet<UUID>();
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            online.add(player.getUniqueId());
+            update(player);
+        }
+        boards.keySet().retainAll(online);
     }
 
     @SuppressWarnings("deprecation")
     public void update(Player player) {
+        String context = contextOf(player);
+        Board held = boards.get(player.getUniqueId());
+        if (held == null || !held.context.equals(context) || !TITLE.equals(held.objective.getDisplayName())) {
+            held = create(player, context);
+            boards.put(player.getUniqueId(), held);
+        } else {
+            setLines(held, lines(player));
+            applyTeamColors(held.board, player);
+            if (player.getScoreboard() != held.board) player.setScoreboard(held.board);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private Board create(Player player, String context) {
         Scoreboard board = Bukkit.getScoreboardManager().getNewScoreboard();
         Objective objective = board.registerNewObjective("bedlam", "dummy");
         objective.setDisplaySlot(DisplaySlot.SIDEBAR);
-        objective.setDisplayName(ChatColor.YELLOW + "" + ChatColor.BOLD + "BED WARS");
-        List<String> lines = lines(player);
-        int score = lines.size();
-        for (String line : lines) objective.getScore(unique(line, score)).setScore(score--);
+        objective.setDisplayName(TITLE);
+        Board held = new Board(board, objective, context);
+        setLines(held, lines(player));
         applyTeamColors(board, player);
         player.setScoreboard(board);
+        return held;
+    }
+
+    /** Replace sidebar entries in place; resetScores only for entries that left. */
+    private static void setLines(Board held, List<String> lines) {
+        List<String> next = new ArrayList<String>(lines.size());
+        int score = lines.size();
+        for (String line : lines) next.add(unique(line, score--));
+        for (String old : held.entries) {
+            if (!next.contains(old)) held.board.resetScores(old);
+        }
+        score = next.size();
+        for (String entry : next) held.objective.getScore(entry).setScore(score--);
+        held.entries = next;
     }
 
     /** Tab list + nametag colors from match teams. Invis players: nametag NEVER (armor hide is InvisArmor). */
     @SuppressWarnings("deprecation")
     private void applyTeamColors(Scoreboard board, Player viewer) {
         ArenaManager manager = plugin.games().arena(viewer);
-        if (manager == null || manager.arena().state() == Arena.State.WAITING || manager.arena().state() == Arena.State.COUNTDOWN) {
+        if (manager == null) {
             viewer.setPlayerListName(null);
             return;
         }
         Arena arena = manager.arena();
+        if (arena.state() == Arena.State.WAITING || arena.state() == Arena.State.COUNTDOWN) {
+            Team waiting = board.getTeam("WAIT_HIDE");
+            if (waiting == null) {
+                waiting = board.registerNewTeam("WAIT_HIDE");
+                waiting.setNameTagVisibility(NameTagVisibility.NEVER);
+            }
+            for (UUID uuid : arena.players().keySet()) {
+                Player member = Bukkit.getPlayer(uuid);
+                if (member == null) continue;
+                waiting.addEntry(member.getName());
+                member.setPlayerListName(null);
+            }
+            return;
+        }
         for (TeamColor color : arena.settings().configuredTeams()) {
-            Team team = styleTeam(board.registerNewTeam(color.name()), color);
-            Team invis = styleTeam(board.registerNewTeam("I" + color.name()), color);
-            invis.setNameTagVisibility(NameTagVisibility.NEVER);
+            Team team = board.getTeam(color.name());
+            if (team == null) team = styleTeam(board.registerNewTeam(color.name()), color);
+            Team invis = board.getTeam("I" + color.name());
+            if (invis == null) {
+                invis = styleTeam(board.registerNewTeam("I" + color.name()), color);
+                invis.setNameTagVisibility(NameTagVisibility.NEVER);
+            }
         }
         for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
             Player member = Bukkit.getPlayer(entry.getKey());
@@ -78,6 +134,15 @@ public final class SidebarService {
             team.getClass().getMethod("setColor", ChatColor.class).invoke(team, color.chatColor());
         } catch (Throwable ignored) { }
         return team;
+    }
+
+    private String contextOf(Player player) {
+        ArenaManager manager = plugin.games().arena(player);
+        if (manager == null) return "lobby";
+        Arena arena = manager.arena();
+        String id = arena.settings().id();
+        if (arena.state() == Arena.State.WAITING || arena.state() == Arena.State.COUNTDOWN) return "wait:" + id;
+        return "game:" + id;
     }
 
     private List<String> lines(Player player) {
@@ -100,10 +165,10 @@ public final class SidebarService {
             lines.add(ChatColor.WHITE + "Total Wins: " + ChatColor.GREEN + GameRules.commas(stats.wins));
         } else {
             Arena arena = manager.arena();
-            String instance = trim(arena.settings().id(), 10);
-            lines.add(ChatColor.GRAY + date() + " " + ChatColor.DARK_GRAY + instance);
-            lines.add(" ");
+            // Waiting: date + map id. Running: date only (Hypixel-like; map stays on the Map: line while waiting).
             if (arena.state() == Arena.State.WAITING || arena.state() == Arena.State.COUNTDOWN) {
+                lines.add(ChatColor.GRAY + date() + " " + ChatColor.DARK_GRAY + trim(arena.settings().id(), 10));
+                lines.add(" ");
                 lines.add(ChatColor.WHITE + "Mode: " + ChatColor.GREEN + arena.settings().gameType().displayName());
                 lines.add(ChatColor.WHITE + "Map: " + ChatColor.GREEN + trim(arena.settings().id(), 12));
                 lines.add(ChatColor.WHITE + "Players: " + ChatColor.GREEN + arena.players().size() + "/" + arena.settings().maximumPlayers());
@@ -111,6 +176,8 @@ public final class SidebarService {
                     ? ChatColor.WHITE + "Starting in " + ChatColor.GREEN + manager.countdownRemaining() + "s"
                     : ChatColor.YELLOW + "Waiting...");
             } else {
+                lines.add(ChatColor.GRAY + date());
+                lines.add(" ");
                 lines.add(manager.nextGeneratorUpgradeLine());
                 lines.add(" ");
                 TeamColor you = arena.team(player.getUniqueId());
@@ -152,4 +219,17 @@ public final class SidebarService {
 
     private static String trim(String value, int limit) { return value.length() <= limit ? value : value.substring(0, limit); }
     private static String colors(String value) { return ChatColor.translateAlternateColorCodes('&', value == null ? "" : value); }
+
+    private static final class Board {
+        final Scoreboard board;
+        final Objective objective;
+        final String context;
+        List<String> entries = new ArrayList<String>();
+
+        Board(Scoreboard board, Objective objective, String context) {
+            this.board = board;
+            this.objective = objective;
+            this.context = context;
+        }
+    }
 }

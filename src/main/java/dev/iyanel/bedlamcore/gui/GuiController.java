@@ -7,21 +7,36 @@ import dev.iyanel.bedlamcore.arena.ArenaSettings;
 import dev.iyanel.bedlamcore.arena.GameType;
 import dev.iyanel.bedlamcore.arena.TeamColor;
 import dev.iyanel.bedlamcore.compat.Enchantments;
+import dev.iyanel.bedlamcore.compat.EntityVisibility;
 import dev.iyanel.bedlamcore.compat.Items;
+import dev.iyanel.bedlamcore.compat.Particles;
 import dev.iyanel.bedlamcore.compat.Skins;
 import dev.iyanel.bedlamcore.compat.Sounds;
+import dev.iyanel.bedlamcore.cosmetics.CosmeticsService;
 import dev.iyanel.bedlamcore.game.GameRules;
+import dev.iyanel.bedlamcore.game.ProfileStats;
+import dev.iyanel.bedlamcore.game.StatsStore;
+import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.lobby.LobbySettings;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.WorldBorder;
 import org.bukkit.block.Block;
+import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Vector;
 
@@ -33,16 +48,29 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 public final class GuiController {
     public static final String MAIN_TITLE = ChatColor.DARK_GRAY + "Bedlam Menu";
     public static final String ADMIN_TITLE = ChatColor.DARK_GRAY + "Bedlam Setup";
     public static final String LOBBY_TITLE = ChatColor.DARK_GRAY + "Lobby Setup";
     public static final String WORLDS_TITLE = ChatColor.DARK_GRAY + "Game Worlds";
+    public static final String IMPORT_TITLE = ChatColor.DARK_GRAY + "Import Maps";
+    public static final String IMPORT_TYPE_TITLE = ChatColor.DARK_GRAY + "Import As";
+    public static final String TEMPLATES_TITLE = ChatColor.DARK_GRAY + "Templates";
+    public static final String TEMPLATE_TYPE_TITLE = ChatColor.DARK_GRAY + "Template Mode";
     public static final String SHOP_TITLE = ChatColor.DARK_GRAY + "Quick Buy";
     public static final String UPGRADES_TITLE = ChatColor.DARK_GRAY + "Upgrades & Traps";
     public static final String PLAY_TITLE_PREFIX = "Play Bed Wars ";
     public static final String MAP_TITLE_PREFIX = "Map Selector ";
+    private static final String BORDER_RADIUS_PREFIX = "Build Border Radius:";
+    private static final String META_SETUP_MARKER = "bedlamSetupMarker";
+    private static final String DELETE_STICK_LORE = "Bedlam Setup Delete";
 
     private final BedlamCore plugin;
     private final Map<UUID, LobbySettings> lobbyDrafts = new HashMap<UUID, LobbySettings>();
@@ -51,11 +79,23 @@ public final class GuiController {
     private final Map<UUID, TeamColor> selectedTeam = new HashMap<UUID, TeamColor>();
     private final Map<UUID, GameType> selectedNpc = new HashMap<UUID, GameType>();
     private final Map<UUID, GameType> skinInputs = new ConcurrentHashMap<UUID, GameType>();
+    private final Set<UUID> radiusInputs = ConcurrentHashMap.newKeySet();
     private final Map<UUID, String> shopCategory = new HashMap<UUID, String>();
+    /** Next shop-item click assigns this favorite index instead of buying. */
+    private final Map<UUID, Integer> favoriteAssignSlot = new HashMap<UUID, Integer>();
+    /** Hypixel flow: sneak-click an offer, then click its destination in Quick Buy. */
+    private final Map<UUID, String> favoritePendingItem = new HashMap<UUID, String>();
     private final Set<UUID> guiBusy = new HashSet<UUID>();
-    private final Set<UUID> pendingOpen = new HashSet<UUID>();
+    /** Previous WorldBorder per world name while any setup draft overrides it. */
+    private final Map<String, BorderSnapshot> savedBorders = new HashMap<String, BorderSnapshot>();
+    /** Setup-only hologram markers keyed by draft owner. */
+    private final Map<UUID, List<ArmorStand>> setupMarkers = new HashMap<UUID, List<ArmorStand>>();
+    /** Pulsing setup particles while a draft is open. */
+    private final Map<UUID, Integer> setupMarkerTasks = new HashMap<UUID, Integer>();
 
-    public GuiController(BedlamCore plugin) { this.plugin = plugin; }
+    public GuiController(BedlamCore plugin) {
+        this.plugin = plugin;
+    }
 
     public void openMain(Player player) {
         Inventory inventory = chest(27, MAIN_TITLE);
@@ -102,6 +142,11 @@ public final class GuiController {
         if (player == null) return;
         final ArenaDraft session = arenaDrafts.remove(player.getUniqueId());
         if (session == null) return;
+        clearSetupMarkers(player);
+        restoreSetupGameMode(player, session);
+        releaseSetupWorldBorder(session.settings);
+        removeTeamSetupWands(player, null);
+        removeDeleteSticks(player);
         if (session.newWorld) {
             Bukkit.getScheduler().runTask(plugin, new Runnable() {
                 @Override public void run() { plugin.worlds().delete(session.settings, player); }
@@ -117,6 +162,8 @@ public final class GuiController {
         inventory.setItem(10, setupItem(Material.NETHER_STAR, "Set Lobby Spawn", draft.spawn() != null));
         inventory.setItem(12, npcItem(GameType.SOLO, draft));
         inventory.setItem(14, npcItem(GameType.DOUBLES, draft));
+        inventory.setItem(16, setupItem(Material.EMERALD, "Set Cosmetics NPC", draft.cosmeticsNpc() != null));
+        inventory.setItem(15, setupItem(Material.PAPER, "Set Profile NPC", draft.profileNpc() != null));
         inventory.setItem(21, Items.named(new ItemStack(Material.BARRIER), ChatColor.RED + "Cancel", ChatColor.GRAY + "Discard all lobby changes"));
         inventory.setItem(23, Items.named(new ItemStack(Material.SLIME_BALL), ChatColor.GREEN + "Apply", ChatColor.GRAY + "Validate and save"));
         openGui(player, inventory);
@@ -127,6 +174,10 @@ public final class GuiController {
         Inventory inventory = chest(54, WORLDS_TITLE);
         inventory.setItem(0, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Create Solo World"));
         inventory.setItem(1, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Create Doubles World"));
+        inventory.setItem(2, Items.named(new ItemStack(Material.CHEST), ChatColor.LIGHT_PURPLE + "Import Map",
+            ChatColor.GRAY + "Existing world folders without an arena"));
+        inventory.setItem(3, Items.named(new ItemStack(Material.BOOK), ChatColor.GREEN + "Templates",
+            ChatColor.GRAY + "Maps bundled with the plugin"));
         inventory.setItem(4, Items.named(new ItemStack(Material.COMPASS), ChatColor.YELLOW + "Current World", ChatColor.WHITE + player.getWorld().getName()));
         int slot = 9;
         for (ArenaManager manager : plugin.games().arenas()) {
@@ -138,6 +189,61 @@ public final class GuiController {
                 ChatColor.GRAY + "State: " + arena.state().name(),
                 missing.isEmpty() ? ChatColor.GREEN + "Configured" : ChatColor.RED + "Missing " + missing.size() + " item(s)"));
         }
+        openGui(player, inventory);
+    }
+
+    private void openImportMaps(Player player) {
+        if (!admin(player)) return;
+        List<String> maps = plugin.worlds().listImportable();
+        Inventory inventory = chest(54, IMPORT_TITLE);
+        inventory.setItem(0, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
+        if (maps.isEmpty()) {
+            inventory.setItem(22, Items.named(new ItemStack(Material.BARRIER), ChatColor.RED + "No importable maps",
+                ChatColor.GRAY + "Put a world folder (level.dat) in the server directory"));
+        } else {
+            int slot = 9;
+            for (String name : maps) {
+                if (slot >= inventory.getSize()) break;
+                inventory.setItem(slot++, Items.named(new ItemStack(Items.material("GRASS_BLOCK", "GRASS")),
+                    ChatColor.AQUA + "Import: " + name, ChatColor.GRAY + "Configure as a new arena"));
+            }
+        }
+        openGui(player, inventory);
+    }
+
+    private void openImportType(Player player, String worldName) {
+        selectedArena.put(player.getUniqueId(), worldName);
+        Inventory inventory = chest(27, IMPORT_TYPE_TITLE);
+        inventory.setItem(11, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Import as Solo",
+            ChatColor.GRAY + worldName));
+        inventory.setItem(15, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Import as Doubles",
+            ChatColor.GRAY + worldName));
+        inventory.setItem(22, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
+        openGui(player, inventory);
+    }
+
+    private void openTemplates(Player player) {
+        if (!admin(player)) return;
+        Inventory inventory = chest(54, TEMPLATES_TITLE);
+        inventory.setItem(0, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
+        int slot = 9;
+        for (String id : plugin.templates().list()) {
+            if (slot >= inventory.getSize()) break;
+            inventory.setItem(slot++, Items.named(new ItemStack(Items.material("GRASS_BLOCK", "GRASS")),
+                ChatColor.GREEN + "Template: " + id,
+                ChatColor.GRAY + "Pre-setup map bundled with BedlamCore"));
+        }
+        openGui(player, inventory);
+    }
+
+    private void openTemplateType(Player player, String templateId) {
+        selectedArena.put(player.getUniqueId(), templateId);
+        Inventory inventory = chest(27, TEMPLATE_TYPE_TITLE);
+        inventory.setItem(11, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Solo",
+            ChatColor.GRAY + templateId, ChatColor.DARK_GRAY + "team size 1"));
+        inventory.setItem(15, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Doubles",
+            ChatColor.GRAY + templateId, ChatColor.DARK_GRAY + "team size 2"));
+        inventory.setItem(22, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
         openGui(player, inventory);
     }
 
@@ -160,35 +266,137 @@ public final class GuiController {
     }
 
     public void beginArenaSetup(Player player, ArenaSettings settings, boolean newWorld) {
-        ArenaDraft session = new ArenaDraft(settings.copy(), newWorld);
+        ArenaDraft session = new ArenaDraft(settings.copy(), newWorld, player.getGameMode());
         arenaDrafts.put(player.getUniqueId(), session);
         World world = plugin.worlds().load(settings);
         if (world == null) {
+            arenaDrafts.remove(player.getUniqueId());
             player.sendMessage(ChatColor.RED + "Could not load " + settings.worldName() + ".");
             return;
         }
-        player.teleport(settings.spectator() == null ? world.getSpawnLocation() : settings.spectator());
+        // load() unload+recreates the World; draft Locations still hold the dead World ref.
+        session.settings.reattach(world);
+        player.teleport(session.settings.spectator() == null ? world.getSpawnLocation() : session.settings.spectator());
+        player.setGameMode(GameMode.CREATIVE);
+        refreshSetupWorldBorder(session.settings);
         reportMissing(player, session.settings.validate());
+        refreshSetupMarkers(player);
         openArenaSetup(player);
     }
 
     public boolean hasArenaDraft(Player player) { return arenaDrafts.containsKey(player.getUniqueId()); }
+
+    public boolean acceptRadiusInput(final Player player, final String message) {
+        if (!radiusInputs.remove(player.getUniqueId())) return false;
+        Bukkit.getScheduler().runTask(plugin, new Runnable() {
+            @Override public void run() {
+                ArenaDraft session = arenaDrafts.get(player.getUniqueId());
+                if (session == null || message.equalsIgnoreCase("cancel")) {
+                    player.sendMessage(ChatColor.YELLOW + "Radius input cancelled.");
+                    return;
+                }
+                try {
+                    int radius = Integer.parseInt(message.trim());
+                    if (radius < 1 || radius > 512) {
+                        player.sendMessage(ChatColor.RED + "Radius must be 1–512.");
+                        openArenaSetup(player);
+                        return;
+                    }
+                    session.settings.buildBorderRadius(radius);
+                    refreshSetupWorldBorder(session.settings);
+                    player.sendMessage(ChatColor.GREEN + "Build border radius set to " + radius
+                        + (session.settings.hasBuildBorder()
+                            ? " (XZ midpoint waiting↔spectator; height covers waiting + beds)."
+                            : " — set waiting + spectator spawns to enable the border."));
+                } catch (NumberFormatException ex) {
+                    player.sendMessage(ChatColor.RED + "Type a whole number (or cancel).");
+                }
+                openArenaSetup(player);
+            }
+        });
+        return true;
+    }
+
+    /** Setup preview / Apply: same AABB + diameter helper as mayPlace. */
+    private void refreshSetupWorldBorder(ArenaSettings settings) {
+        if (settings == null || !settings.hasBuildBorder()) return;
+        World world = Bukkit.getWorld(settings.worldName());
+        if (world == null) return;
+        captureBorderIfNeeded(world);
+        settings.applyWorldBorder(world);
+    }
+
+    private void releaseSetupWorldBorder(ArenaSettings leaving) {
+        if (leaving == null || leaving.worldName() == null) return;
+        String worldName = leaving.worldName();
+        for (ArenaDraft draft : arenaDrafts.values()) {
+            if (worldName.equals(draft.settings.worldName()) && draft.settings.hasBuildBorder()) {
+                refreshSetupWorldBorder(draft.settings);
+                return;
+            }
+        }
+        restoreSavedBorder(worldName);
+        // Match/waiting never shows WB — mayPlace AABB still enforces the build edge.
+        ArenaSettings.hideWorldBorder(Bukkit.getWorld(worldName));
+    }
+
+    private void captureBorderIfNeeded(World world) {
+        if (savedBorders.containsKey(world.getName())) return;
+        WorldBorder border = world.getWorldBorder();
+        Location center = border.getCenter();
+        savedBorders.put(world.getName(), new BorderSnapshot(
+            center.getX(), center.getZ(), border.getSize(),
+            border.getWarningDistance(), border.getDamageAmount()));
+    }
+
+    private void restoreSavedBorder(String worldName) {
+        BorderSnapshot snap = savedBorders.remove(worldName);
+        if (snap == null) return;
+        World world = Bukkit.getWorld(worldName);
+        if (world == null) return;
+        WorldBorder border = world.getWorldBorder();
+        border.setCenter(snap.centerX, snap.centerZ);
+        border.setSize(snap.size);
+        border.setWarningDistance(snap.warningDistance);
+        border.setDamageAmount(snap.damageAmount);
+    }
+
+    /** Restore every setup WorldBorder override (plugin disable / reload). */
+    public void restoreAllSetupBorders() {
+        for (String worldName : new ArrayList<String>(savedBorders.keySet())) {
+            restoreSavedBorder(worldName);
+        }
+        for (UUID uuid : new ArrayList<UUID>(setupMarkers.keySet())) {
+            clearSetupMarkers(uuid);
+        }
+        arenaDrafts.clear();
+    }
 
     public void disconnect(Player player) {
         UUID uuid = player.getUniqueId();
         LobbySettings lobbyDraft = lobbyDrafts.remove(uuid);
         if (lobbyDraft != null) plugin.npcs().respawnAll();
         final ArenaDraft arenaDraft = arenaDrafts.remove(uuid);
-        if (arenaDraft != null && arenaDraft.newWorld) Bukkit.getScheduler().runTask(plugin, new Runnable() {
-            @Override public void run() { plugin.worlds().delete(arenaDraft.settings, player); }
-        });
+        if (arenaDraft != null) {
+            restoreSetupGameMode(player, arenaDraft);
+            releaseSetupWorldBorder(arenaDraft.settings);
+            if (arenaDraft.newWorld) Bukkit.getScheduler().runTask(plugin, new Runnable() {
+                @Override public void run() { plugin.worlds().delete(arenaDraft.settings, player); }
+            });
+        }
         selectedArena.remove(uuid);
         selectedTeam.remove(uuid);
         selectedNpc.remove(uuid);
         skinInputs.remove(uuid);
+        radiusInputs.remove(uuid);
         shopCategory.remove(uuid);
+        favoriteAssignSlot.remove(uuid);
+        favoritePendingItem.remove(uuid);
         guiBusy.remove(uuid);
-        pendingOpen.remove(uuid);
+        clearSetupMarkers(uuid);
+        removeTeamSetupWands(player, null);
+        removeDeleteSticks(player);
+        ChestGuis.clear(uuid);
     }
 
     private void openArenaSetup(Player player) {
@@ -200,13 +408,21 @@ public final class GuiController {
         inventory.setItem(1, Items.named(new ItemStack(settings.gameType() == GameType.SOLO ? Material.IRON_SWORD : Material.DIAMOND_SWORD), ChatColor.AQUA + "Mode: " + settings.gameType().displayName()));
         inventory.setItem(3, setupItem(Material.GLASS, "Set Waiting Spawn", settings.waitingSpawn() != null));
         inventory.setItem(5, setupItem(Items.material("ENDER_EYE", "EYE_OF_ENDER"), "Set Spectator Spawn", settings.spectator() != null));
-        int[] slots = {10, 12, 14, 16};
+        inventory.setItem(7, Items.named(new ItemStack(Items.material("OAK_SIGN", "SIGN")),
+            (settings.hasBuildBorder() ? ChatColor.GREEN : ChatColor.YELLOW) + BORDER_RADIUS_PREFIX + " " + settings.buildBorderRadius(),
+            settings.hasBuildBorder() ? ChatColor.GREEN + "Center ready (waiting XZ↔spectator XZ; Y=waiting+beds)" : ChatColor.RED + "Needs waiting + spectator spawns",
+            ChatColor.GRAY + "Click, then type a radius in chat"));
+        int[] slots = {10, 11, 12, 13, 14, 15, 16, 17};
         int index = 0;
         for (TeamColor color : TeamColor.values()) {
-            inventory.setItem(slots[index++], Items.named(color.wool(1), color.chatColor() + "Configure " + color.displayName(), status(settings.team(color).complete())));
+            inventory.setItem(slots[index++], Items.named(color.wool(1), color.chatColor() + "Configure " + color.displayName(),
+                status(settings.team(color).complete()), ChatColor.GRAY + "Shift-click: team wool"));
         }
         inventory.setItem(30, Items.named(new ItemStack(Material.DIAMOND), ChatColor.AQUA + "Add Diamond Generator", ChatColor.GRAY + "Count: " + settings.diamondGenerators().size()));
         inventory.setItem(32, Items.named(new ItemStack(Material.EMERALD), ChatColor.GREEN + "Add Emerald Generator", ChatColor.GRAY + "Count: " + settings.emeraldGenerators().size()));
+        inventory.setItem(34, Items.named(new ItemStack(Material.STICK), ChatColor.RED + "Delete Stick",
+            ChatColor.DARK_GRAY + DELETE_STICK_LORE,
+            ChatColor.GRAY + "Left-click a setup point to remove it"));
         inventory.setItem(45, Items.named(new ItemStack(Material.BOOK), ChatColor.YELLOW + "Check Setup", ChatColor.GRAY + "Print every missing field"));
         inventory.setItem(48, Items.named(new ItemStack(Material.BARRIER), ChatColor.RED + "Cancel", ChatColor.GRAY + "Discard every draft change"));
         inventory.setItem(50, Items.named(new ItemStack(Material.SLIME_BALL), ChatColor.GREEN + "Apply", ChatColor.GRAY + "Validate and save"));
@@ -270,15 +486,23 @@ public final class GuiController {
     }
 
     public void click(Player player, String title, ItemStack clicked) {
+        click(player, title, clicked, false, -1);
+    }
+
+    public void click(Player player, String title, ItemStack clicked, boolean shiftLeft, int rawSlot) {
         String cleanTitle = ChatColor.stripColor(title);
         String name = Items.name(clicked);
         if (cleanTitle.equals("Bedlam Menu")) clickMain(player, name);
         else if (cleanTitle.equals("Bedlam Setup")) clickAdmin(player, name);
         else if (cleanTitle.equals("Lobby Setup")) clickLobby(player, name);
         else if (cleanTitle.equals("Game Worlds")) clickWorlds(player, name);
+        else if (cleanTitle.equals("Import Maps")) clickImportMaps(player, name);
+        else if (cleanTitle.equals("Import As")) clickImportType(player, name);
+        else if (cleanTitle.equals("Templates")) clickTemplates(player, name);
+        else if (cleanTitle.equals("Template Mode")) clickTemplateType(player, name);
         else if (cleanTitle.equals("World Actions")) clickWorldActions(player, name);
         else if (cleanTitle.equals("Confirm World Delete")) clickDelete(player, name);
-        else if (cleanTitle.equals("Game Setup")) clickArenaSetup(player, name);
+        else if (cleanTitle.equals("Game Setup")) clickArenaSetup(player, name, shiftLeft);
         else if (cleanTitle.equals("Team Setup")) clickTeamSetup(player, name);
         else if (cleanTitle.equals("NPC Editor")) clickNpcEditor(player, name);
         else if (cleanTitle.startsWith("Play Bed Wars ")) {
@@ -289,9 +513,14 @@ public final class GuiController {
             clickMap(player, type, name);
         } else if (cleanTitle.equals("Solo Games")) clickQueue(player, GameType.SOLO, name);
         else if (cleanTitle.equals("Doubles Games")) clickQueue(player, GameType.DOUBLES, name);
-        else if (cleanTitle.equals("Quick Buy") || cleanTitle.equals("Item Shop")) buy(player, name);
+        else if (cleanTitle.equals("Quick Buy") || cleanTitle.equals("Item Shop")) buy(player, name, shiftLeft, rawSlot);
         else if (cleanTitle.equals("Upgrades & Traps") || cleanTitle.equals("Team Upgrades")) upgrade(player, name);
         else if (cleanTitle.equals("Spectate")) clickSpectate(player, name);
+        else if (cleanTitle.equals("Cosmetics") || cleanTitle.equals("My Cosmetics")) clickCosmeticsHome(player, name);
+        else if (cleanTitle.equals("Kill Messages") || cleanTitle.equals("Kill Effects") || cleanTitle.equals("Win Effects")) {
+            clickCosmeticsCategory(player, cleanTitle, clicked);
+        }
+        else if (cleanTitle.equals("Bed Wars Statistics")) clickProfileStats(player, name);
     }
 
     private void clickMain(Player player, String name) {
@@ -318,6 +547,16 @@ public final class GuiController {
         if (name.equals("Set Lobby Spawn")) draft.spawn(player.getLocation());
         else if (name.equals("Place Solo NPC")) giveNpcPlacer(player, GameType.SOLO);
         else if (name.equals("Place Doubles NPC")) giveNpcPlacer(player, GameType.DOUBLES);
+        else if (name.equals("Set Cosmetics NPC")) {
+            draft.cosmeticsNpc(player.getLocation());
+            plugin.npcs().spawnCosmetics(draft.cosmeticsNpc());
+            player.sendMessage(ChatColor.GREEN + "Cosmetics NPC set here. Click Apply to save.");
+        }
+        else if (name.equals("Set Profile NPC")) {
+            draft.profileNpc(player.getLocation());
+            plugin.npcs().spawnProfile(draft.profileNpc());
+            player.sendMessage(ChatColor.GREEN + "Profile NPC set here. Click Apply to save.");
+        }
         else if (name.equals("Cancel")) {
             lobbyDrafts.remove(player.getUniqueId());
             removeNpcPlacers(player);
@@ -342,7 +581,56 @@ public final class GuiController {
     private void clickWorlds(Player player, String name) {
         if (name.equals("Create Solo World")) createWorld(player, GameType.SOLO);
         else if (name.equals("Create Doubles World")) createWorld(player, GameType.DOUBLES);
+        else if (name.equals("Import Map")) openImportMaps(player);
+        else if (name.equals("Templates")) openTemplates(player);
         else if (name.startsWith("World: ")) openWorldActions(player, name.substring(7));
+    }
+
+    private void clickImportMaps(Player player, String name) {
+        if (name.equals("Back")) { openWorlds(player); return; }
+        if (name.startsWith("Import: ")) openImportType(player, name.substring(8).trim());
+    }
+
+    private void clickTemplates(Player player, String name) {
+        if (name.equals("Back")) { openWorlds(player); return; }
+        if (name.startsWith("Template: ")) openTemplateType(player, name.substring(10).trim());
+    }
+
+    private void clickTemplateType(Player player, String name) {
+        if (name.equals("Back")) { openTemplates(player); return; }
+        String templateId = selectedArena.get(player.getUniqueId());
+        if (templateId == null || templateId.isEmpty()) { openTemplates(player); return; }
+        GameType type = null;
+        if (name.equals("Solo")) type = GameType.SOLO;
+        else if (name.equals("Doubles")) type = GameType.DOUBLES;
+        if (type == null) return;
+        player.closeInventory();
+        player.sendMessage(ChatColor.YELLOW + "Loading template " + templateId + " as " + type.displayName() + "...");
+        try {
+            ArenaSettings settings = plugin.templates().materialize(templateId, type);
+            beginArenaSetup(player, settings, false);
+        } catch (Exception exception) {
+            player.sendMessage(ChatColor.RED + "Template failed: " + exception.getMessage());
+            openTemplates(player);
+        }
+    }
+
+    private void clickImportType(Player player, String name) {
+        if (name.equals("Back")) { openImportMaps(player); return; }
+        String worldName = selectedArena.get(player.getUniqueId());
+        if (worldName == null || worldName.isEmpty()) { openImportMaps(player); return; }
+        GameType type = null;
+        if (name.equals("Import as Solo")) type = GameType.SOLO;
+        else if (name.equals("Import as Doubles")) type = GameType.DOUBLES;
+        if (type == null) return;
+        if (plugin.games().byId(worldName) != null || plugin.games().arenaInWorld(worldName) != null) {
+            player.sendMessage(ChatColor.RED + worldName + " already has an arena.");
+            openImportMaps(player);
+            return;
+        }
+        player.closeInventory();
+        player.sendMessage(ChatColor.YELLOW + "Importing " + worldName + " as " + type.displayName() + "...");
+        beginArenaSetup(player, new ArenaSettings(worldName, type, worldName), false);
     }
 
     private void createWorld(Player player, GameType type) {
@@ -379,14 +667,28 @@ public final class GuiController {
         openWorlds(player);
     }
 
-    private void clickArenaSetup(Player player, String name) {
+    private void clickArenaSetup(Player player, String name, boolean shiftLeft) {
         ArenaDraft session = arenaDrafts.get(player.getUniqueId());
         if (session == null) return;
         ArenaSettings settings = session.settings;
-        if (name.equals("Set Waiting Spawn")) settings.waitingSpawn(player.getLocation());
-        else if (name.equals("Set Spectator Spawn")) settings.spectator(player.getLocation());
+        if (name.equals("Set Waiting Spawn")) {
+            settings.waitingSpawn(player.getLocation());
+            refreshSetupWorldBorder(settings);
+        }
+        else if (name.equals("Set Spectator Spawn")) {
+            settings.spectator(player.getLocation());
+            refreshSetupWorldBorder(settings);
+        }
+        else if (name.startsWith(BORDER_RADIUS_PREFIX)) {
+            radiusInputs.add(player.getUniqueId());
+            player.closeInventory();
+            player.sendMessage(ChatColor.YELLOW + "Type the build border radius in chat (current "
+                + settings.buildBorderRadius() + "). Type cancel to stop.");
+            return;
+        }
         else if (name.equals("Add Diamond Generator")) settings.diamondGenerators().add(player.getLocation());
         else if (name.equals("Add Emerald Generator")) settings.emeraldGenerators().add(player.getLocation());
+        else if (name.equals("Delete Stick")) { giveDeleteStick(player); return; }
         else if (name.equals("Check Setup")) reportMissing(player, settings.validate());
         else if (name.equals("Cancel")) { cancelArena(player, session); return; }
         else if (name.equals("Apply")) {
@@ -400,10 +702,19 @@ public final class GuiController {
                 player.sendMessage(ChatColor.RED + "Game world " + settings.worldName() + " is not loaded.");
                 return;
             }
+            arenaDrafts.remove(player.getUniqueId());
+            radiusInputs.remove(player.getUniqueId());
+            clearSetupMarkers(player);
+            removeTeamSetupWands(player, null);
+            removeDeleteSticks(player);
+            restoreSetupGameMode(player, session);
+            // Setup-only WB: hide for match (mayPlace AABB keeps the edge); drop setup snapshot.
+            restoreSavedBorder(settings.worldName());
+            ArenaSettings.hideWorldBorder(world);
+            settings.warnBedsOutsideBorder(plugin.getLogger());
             plugin.worlds().saveOnce(world);
             plugin.games().register(settings.copy());
             plugin.saveSettings();
-            arenaDrafts.remove(player.getUniqueId());
             player.closeInventory();
             Location lobby = plugin.lobby().spawn();
             if (lobby == null && !Bukkit.getWorlds().isEmpty()) lobby = Bukkit.getWorlds().get(0).getSpawnLocation();
@@ -411,18 +722,30 @@ public final class GuiController {
             player.sendMessage(ChatColor.GREEN + "Game setup applied and world saved for " + settings.id() + ". Nothing is missing.");
             return;
         } else {
-            for (TeamColor team : TeamColor.values()) if (name.equals("Configure " + team.displayName())) { openTeamSetup(player, team); return; }
+            for (TeamColor team : TeamColor.values()) {
+                if (!name.equals("Configure " + team.displayName())) continue;
+                if (shiftLeft) { giveTeamSetupWand(player, team); return; }
+                openTeamSetup(player, team);
+                return;
+            }
         }
+        refreshSetupMarkers(player);
         openArenaSetup(player);
     }
 
     private void cancelArena(Player player, ArenaDraft session) {
         arenaDrafts.remove(player.getUniqueId());
-        if (session.newWorld) {
-            Location lobby = plugin.lobby().spawn();
-            if (lobby != null) player.teleport(lobby);
-            plugin.worlds().delete(session.settings, player);
-        }
+        radiusInputs.remove(player.getUniqueId());
+        clearSetupMarkers(player);
+        removeTeamSetupWands(player, null);
+        removeDeleteSticks(player);
+        restoreSetupGameMode(player, session);
+        releaseSetupWorldBorder(session.settings);
+        // Always leave the map — staying put made compass reopen call beginArenaSetup → load() lobby flash → bounce back.
+        Location lobby = plugin.lobby().spawn();
+        if (lobby == null && !Bukkit.getWorlds().isEmpty()) lobby = Bukkit.getWorlds().get(0).getSpawnLocation();
+        if (lobby != null) player.teleport(lobby);
+        if (session.newWorld) plugin.worlds().delete(session.settings, player);
         player.sendMessage(ChatColor.YELLOW + "Game setup cancelled. No changes were saved.");
         openWorlds(player);
     }
@@ -443,6 +766,13 @@ public final class GuiController {
             if (target == null || !target.getType().name().contains("BED")) { player.sendMessage(ChatColor.RED + "Look directly at a bed within six blocks."); return; }
             settings.bed(target.getLocation());
         } else if (name.equals("Back")) { openArenaSetup(player); return; }
+        refreshSetupMarkers(player);
+        if (settings.complete()) {
+            removeTeamSetupWands(player, team);
+            player.closeInventory();
+            player.sendMessage(ChatColor.GREEN + team.displayName() + " team setup complete.");
+            return;
+        }
         openTeamSetup(player, team);
     }
 
@@ -473,10 +803,188 @@ public final class GuiController {
         return null;
     }
 
+    public TeamColor teamSetupWand(ItemStack item) {
+        if (!Items.hasLore(item, "Bedlam Team Setup:")) return null;
+        for (TeamColor team : TeamColor.values()) if (Items.hasLore(item, "Bedlam Team Setup: " + team.name())) return team;
+        return null;
+    }
+
+    public boolean isDeleteStick(ItemStack item) {
+        return Items.hasLore(item, DELETE_STICK_LORE);
+    }
+
+    private void giveTeamSetupWand(Player player, TeamColor team) {
+        selectedTeam.put(player.getUniqueId(), team);
+        removeTeamSetupWands(player, null);
+        ArenaDraft session = arenaDrafts.get(player.getUniqueId());
+        ArenaSettings.TeamSettings settings = session == null ? null : session.settings.team(team);
+        if (settings != null && settings.complete()) {
+            player.closeInventory();
+            player.sendMessage(ChatColor.GREEN + team.displayName() + " team is already complete.");
+            return;
+        }
+        ItemStack wand = Items.named(team.wool(1), team.chatColor() + team.displayName() + " Team Setup",
+            ChatColor.DARK_GRAY + "Bedlam Team Setup: " + team.name(),
+            ChatColor.GRAY + "Right-click: open Team Setup");
+        player.getInventory().setItem(GameRules.slotBeforeSetup(setupCompassSlot(player)), wand);
+        player.closeInventory();
+    }
+
+    private void giveDeleteStick(Player player) {
+        if (!hasArenaDraft(player)) {
+            player.sendMessage(ChatColor.RED + "No active game setup draft.");
+            return;
+        }
+        removeDeleteSticks(player);
+        ItemStack stick = Items.named(new ItemStack(Material.STICK), ChatColor.RED + "Setup Delete Stick",
+            ChatColor.DARK_GRAY + DELETE_STICK_LORE,
+            ChatColor.GRAY + "Left-click a setup point to remove it");
+        player.getInventory().setItem(GameRules.deleteStickSlot(setupCompassSlot(player)), stick);
+        player.closeInventory();
+        player.sendMessage(ChatColor.YELLOW + "Delete stick ready — left-click a marked setup point.");
+    }
+
+    /** Left-click block/entity with delete stick: remove matching draft point. */
+    public boolean useDeleteStick(Player player, ItemStack item, Location hit) {
+        if (!isDeleteStick(item)) return false;
+        ArenaDraft session = arenaDrafts.get(player.getUniqueId());
+        if (session == null || !admin(player)) {
+            removeDeleteSticks(player);
+            player.sendMessage(ChatColor.RED + "No active game setup draft.");
+            return true;
+        }
+        if (hit == null) return true;
+        String removed = session.settings.removeNear(hit);
+        if (removed == null) {
+            player.sendMessage(ChatColor.YELLOW + "No setup point here.");
+            return true;
+        }
+        refreshSetupMarkers(player);
+        player.sendMessage(ChatColor.GREEN + "Removed " + removed);
+        return true;
+    }
+
+    /** Right-click team wool: open that team's Team Setup GUI (same as Teams → team). */
+    public boolean useTeamSetupWand(Player player, ItemStack item) {
+        TeamColor team = teamSetupWand(item);
+        if (team == null) return false;
+        ArenaDraft session = arenaDrafts.get(player.getUniqueId());
+        if (session == null || !admin(player)) {
+            removeTeamSetupWands(player, null);
+            player.sendMessage(ChatColor.RED + "No active game setup draft.");
+            return true;
+        }
+        ArenaSettings.TeamSettings settings = session.settings.team(team);
+        if (settings.complete()) {
+            removeTeamSetupWands(player, team);
+            player.closeInventory();
+            player.sendMessage(ChatColor.GREEN + team.displayName() + " team setup is already complete.");
+            return true;
+        }
+        openTeamSetup(player, team);
+        return true;
+    }
+
+    /** Hotbar slot holding Bedlam Setup compass (default 8 from giveNavigation). */
+    private static int setupCompassSlot(Player player) {
+        for (int slot = 0; slot < 9; slot++) {
+            if (Items.name(player.getInventory().getItem(slot)).equals("Bedlam Setup")) return slot;
+        }
+        return 8;
+    }
+
+    private void restoreSetupGameMode(Player player, ArenaDraft session) {
+        if (player == null || session == null || session.previousGameMode == null) return;
+        player.setGameMode(session.previousGameMode);
+    }
+
+    private void removeTeamSetupWands(Player player, TeamColor only) {
+        for (int slot = 0; slot < player.getInventory().getSize(); slot++) {
+            TeamColor wand = teamSetupWand(player.getInventory().getItem(slot));
+            if (wand == null) continue;
+            if (only == null || wand == only) player.getInventory().setItem(slot, null);
+        }
+    }
+
+    private void removeDeleteSticks(Player player) {
+        if (player == null) return;
+        for (int slot = 0; slot < player.getInventory().getSize(); slot++) {
+            if (isDeleteStick(player.getInventory().getItem(slot))) player.getInventory().setItem(slot, null);
+        }
+    }
+
+    private void refreshSetupMarkers(Player player) {
+        if (player == null) return;
+        clearSetupMarkers(player.getUniqueId());
+        ArenaDraft session = arenaDrafts.get(player.getUniqueId());
+        if (session == null) return;
+        List<ArmorStand> stands = new ArrayList<ArmorStand>();
+        for (ArenaSettings.LabeledPoint point : session.settings.setupMarkerPoints()) {
+            Location loc = point.location;
+            if (loc == null || loc.getWorld() == null) continue;
+            Location pin = loc.getBlock().getLocation().add(0.5, 0.2, 0.5);
+            ArmorStand stand = (ArmorStand) loc.getWorld().spawnEntity(pin, EntityType.ARMOR_STAND);
+            LobbyNpcService.prepareArmorStand(stand, true);
+            stand.setCustomName(point.label);
+            stand.setCustomNameVisible(true);
+            stand.setMetadata(META_SETUP_MARKER, new FixedMetadataValue(plugin, player.getUniqueId().toString()));
+            stands.add(stand);
+            for (Player viewer : pin.getWorld().getPlayers()) {
+                if (viewer.getUniqueId().equals(player.getUniqueId())) EntityVisibility.show(plugin, viewer, stand);
+                else EntityVisibility.hide(plugin, viewer, stand);
+            }
+        }
+        if (!stands.isEmpty()) setupMarkers.put(player.getUniqueId(), stands);
+        startSetupMarkerPulse(player);
+    }
+
+    private void startSetupMarkerPulse(final Player player) {
+        stopSetupMarkerPulse(player.getUniqueId());
+        if (player == null || !arenaDrafts.containsKey(player.getUniqueId())) return;
+        int task = Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, new Runnable() {
+            @Override public void run() {
+                ArenaDraft session = arenaDrafts.get(player.getUniqueId());
+                if (session == null || !player.isOnline()) {
+                    clearSetupMarkers(player.getUniqueId());
+                    return;
+                }
+                for (ArenaSettings.LabeledPoint point : session.settings.setupMarkerPoints()) {
+                    if (point.location != null) Particles.setupPin(player, point.location);
+                }
+            }
+        }, 5L, 10L);
+        setupMarkerTasks.put(player.getUniqueId(), task);
+    }
+
+    private void stopSetupMarkerPulse(UUID owner) {
+        Integer task = setupMarkerTasks.remove(owner);
+        if (task != null) Bukkit.getScheduler().cancelTask(task);
+    }
+
+    private void clearSetupMarkers(Player player) {
+        if (player != null) clearSetupMarkers(player.getUniqueId());
+    }
+
+    private void clearSetupMarkers(UUID owner) {
+        stopSetupMarkerPulse(owner);
+        List<ArmorStand> stands = setupMarkers.remove(owner);
+        if (stands == null) return;
+        for (ArmorStand stand : stands) {
+            if (stand != null && !stand.isDead()) stand.remove();
+        }
+    }
+
     public void placeNpc(Player player, GameType type, Location location) {
         LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
         if (draft == null || !admin(player)) return;
-        draft.npc(type).location(location);
+        Location pin = location.clone();
+        // Face the placer (yaw toward player), not default/random spawn facing.
+        Vector toward = player.getLocation().toVector().subtract(pin.toVector());
+        if (toward.lengthSquared() > 1.0E-6) {
+            pin.setYaw((float) Math.toDegrees(Math.atan2(-toward.getX(), toward.getZ())));
+        }
+        pin.setPitch(0f);
+        draft.npc(type).location(pin);
         plugin.npcs().spawn(type, draft.npc(type));
         player.getInventory().removeItem(player.getItemInHand());
         player.sendMessage(ChatColor.GREEN + type.displayName() + " NPC placed. Shift-left-click it to change its entity.");
@@ -562,8 +1070,196 @@ public final class GuiController {
 
     public void openShop(Player player) {
         String category = shopCategory.get(player.getUniqueId());
-        if (category == null || category.equals("Traps")) category = "Quick Buy";
+        if (category == null || category.equals("Traps") || category.equals("Settings")) category = "Quick Buy";
         openShopCategory(player, category);
+    }
+
+    public void openProfileStats(Player player) {
+        StatsStore.Record stats = plugin.stats().get(player.getUniqueId());
+        Inventory inventory = chest(27, ChatColor.DARK_GRAY + "Bed Wars Statistics");
+        inventory.setItem(11, statsPaper("Overall Statistics", ProfileStats.overallLore(stats)));
+        inventory.setItem(13, statsPaper("Solo Statistics", ProfileStats.modeLore("Solo", stats, stats.solo)));
+        inventory.setItem(15, statsPaper("Doubles Statistics", ProfileStats.modeLore("Doubles", stats, stats.doubles)));
+        inventory.setItem(22, Items.named(new ItemStack(Material.BARRIER), ChatColor.RED + "Close"));
+        openGui(player, inventory);
+    }
+
+    private void clickProfileStats(Player player, String name) {
+        if (name.equals("Close")) player.closeInventory();
+    }
+
+    private static ItemStack statsPaper(String name, List<String> lore) {
+        ItemStack item = new ItemStack(Material.PAPER);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(ChatColor.GREEN + name);
+            meta.setLore(lore);
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+
+    public void openCosmetics(Player player) {
+        StatsStore.Record stats = plugin.stats().get(player.getUniqueId());
+        Inventory inventory = chest(54, ChatColor.DARK_GRAY + "My Cosmetics");
+        // Sparse diamond layout (spaced category icons).
+        inventory.setItem(10, cosmeticsHomeIcon(player, "Bed Destroys",
+            Items.material("RED_BED", "BED"),
+            "Break beds with a flair.", null));
+        inventory.setItem(12, cosmeticsHomeIcon(player, "Projectile Trails",
+            Material.EGG,
+            "Leave a trail behind arrows and fireballs.", null));
+        inventory.setItem(14, cosmeticsHomeIcon(player, "Victory Dances",
+            Material.ARMOR_STAND,
+            "Celebrate when your team wins.", CosmeticsService.CAT_WIN_EFFECT));
+        inventory.setItem(16, cosmeticsHomeIcon(player, "Final Kill Effects",
+            Material.REDSTONE,
+            "Big effects on a final kill.", null));
+        inventory.setItem(19, cosmeticsHomeIcon(player, "Glyphs",
+            Material.DIAMOND,
+            "Draw a glyph when you kill.", null));
+        inventory.setItem(21, cosmeticsHomeIcon(player, "Hats",
+            Items.material("LEATHER_HELMET", "LEATHER_HELMET"),
+            "Wear a hat in lobby and matches.", null));
+        inventory.setItem(23, cosmeticsHomeIcon(player, "Kill Messages",
+            Items.material("OAK_SIGN", "SIGN"),
+            "Custom chat lines when you get a kill.", CosmeticsService.CAT_KILL_MESSAGE));
+        inventory.setItem(25, cosmeticsHomeIcon(player, "Prestige Customizer",
+            Material.NAME_TAG,
+            "Customize your prestige look.", null));
+        inventory.setItem(28, cosmeticsHomeIcon(player, "Shopkeeper Skins",
+            Items.material("VILLAGER_SPAWN_EGG", "MONSTER_EGG"),
+            "Change shopkeeper appearances.", null));
+        inventory.setItem(30, cosmeticsHomeIcon(player, "Sprays",
+            Material.MAP,
+            "Spray images on walls.", null));
+        inventory.setItem(32, cosmeticsHomeIcon(player, "Death Cries",
+            Items.material("WITHER_SKELETON_SKULL", "SKULL_ITEM"),
+            "Play a cry when you die.", null));
+        inventory.setItem(34, cosmeticsHomeIcon(player, "Island Toppers",
+            Items.material("OAK_SAPLING", "SAPLING"),
+            "Decorate your island spawn.", null));
+        inventory.setItem(37, cosmeticsHomeIcon(player, "Wood Skins",
+            Items.material("OAK_LOG", "LOG"),
+            "Custom wood blocks for builds.", null));
+        inventory.setItem(39, cosmeticsHomeIcon(player, "Figurines",
+            Items.material("PLAYER_HEAD", "SKULL_ITEM"),
+            "Place cute figurines on your island.", null));
+        inventory.setItem(41, cosmeticsHomeIcon(player, "Kill Effects",
+            Items.material("BLAZE_POWDER", "BLAZE_POWDER"),
+            "Particles when you get a kill.", CosmeticsService.CAT_KILL_EFFECT));
+        inventory.setItem(49, Items.named(new ItemStack(Material.EMERALD),
+            ChatColor.GREEN + "Tokens: " + ChatColor.YELLOW + GameRules.commas(stats.tokens),
+            ChatColor.GRAY + "Spend tokens to buy cosmetics"));
+        openGui(player, inventory);
+    }
+
+    private ItemStack cosmeticsHomeIcon(Player player, String title, Material icon, String description, String category) {
+        List<String> lore = new ArrayList<String>();
+        lore.add("");
+        lore.add(ChatColor.GRAY + description);
+        lore.add("");
+        if (category != null) {
+            lore.add(ChatColor.GRAY + CosmeticsService.unlockProgress(ownedCount(player, category), plugin.cosmetics().category(category).size()));
+            lore.add(ChatColor.GRAY + CosmeticsService.selectedLabel(equippedName(player, category)));
+            lore.add("");
+            lore.add(ChatColor.YELLOW + "Click to view!");
+        } else {
+            lore.add(ChatColor.RED + "Coming Soon");
+        }
+        return Items.named(new ItemStack(icon), ChatColor.GREEN + title, lore.toArray(new String[0]));
+    }
+
+    private int ownedCount(Player player, String category) {
+        int owned = 0;
+        for (CosmeticsService.Cosmetic cosmetic : plugin.cosmetics().category(category)) {
+            if (plugin.stats().ownsCosmetic(player.getUniqueId(), cosmetic.id)) owned++;
+        }
+        return owned;
+    }
+
+    private String equippedName(Player player, String category) {
+        CosmeticsService.Cosmetic cosmetic = plugin.cosmetics().get(plugin.stats().equippedCosmetic(player.getUniqueId(), category));
+        return cosmetic == null ? null : ChatColor.stripColor(cosmetic.name);
+    }
+
+    private void openCosmeticsCategory(Player player, String category) {
+        String key = CosmeticsService.normalizeCategory(category);
+        if (key == null) { openCosmetics(player); return; }
+        StatsStore.Record stats = plugin.stats().get(player.getUniqueId());
+        Inventory inventory = chest(54, ChatColor.DARK_GRAY + CosmeticsService.categoryDisplay(key));
+        inventory.setItem(4, Items.named(new ItemStack(Material.EMERALD),
+            ChatColor.GREEN + "Tokens: " + ChatColor.YELLOW + GameRules.commas(stats.tokens),
+            ChatColor.GRAY + CosmeticsService.categoryDisplay(key)));
+        inventory.setItem(45, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
+        int slot = 9;
+        for (CosmeticsService.Cosmetic cosmetic : plugin.cosmetics().category(key)) {
+            if (slot >= 45) break;
+            inventory.setItem(slot++, cosmeticsIcon(player, cosmetic));
+        }
+        openGui(player, inventory);
+    }
+
+    private ItemStack cosmeticsIcon(Player player, CosmeticsService.Cosmetic cosmetic) {
+        boolean owned = plugin.stats().ownsCosmetic(player.getUniqueId(), cosmetic.id);
+        boolean equipped = cosmetic.id.equals(plugin.stats().equippedCosmetic(player.getUniqueId(), cosmetic.category));
+        Material icon = Material.PAPER;
+        if (CosmeticsService.CAT_KILL_EFFECT.equals(cosmetic.category)) icon = Items.material("BLAZE_POWDER", "BLAZE_POWDER");
+        else if (CosmeticsService.CAT_WIN_EFFECT.equals(cosmetic.category)) icon = Items.material("FIREWORK_ROCKET", "FIREWORK");
+        List<String> lore = new ArrayList<String>();
+        lore.add(ChatColor.DARK_GRAY + "Bedlam Cosmetic: " + cosmetic.id);
+        lore.add(ChatColor.GRAY + "Cost: " + ChatColor.GOLD + cosmetic.cost + " tokens");
+        String sample = cosmetic.templateFor("kill");
+        if (sample != null && !sample.isEmpty()) {
+            lore.add(ChatColor.DARK_GRAY + "Sample:");
+            lore.add(ChatColor.GRAY + ChatColor.stripColor(CosmeticsService.formatKillMessage(sample, "Victim", "You", false)));
+        }
+        if (equipped) lore.add(ChatColor.GREEN + "EQUIPPED " + ChatColor.GRAY + "(click to unequip)");
+        else if (owned) lore.add(ChatColor.AQUA + "OWNED " + ChatColor.GRAY + "(click to equip)");
+        else lore.add(ChatColor.YELLOW + "Click to buy & equip");
+        return Items.named(new ItemStack(icon), (equipped ? ChatColor.GREEN : owned ? ChatColor.AQUA : ChatColor.WHITE) + ChatColor.stripColor(cosmetic.name),
+            lore.toArray(new String[0]));
+    }
+
+    private void clickCosmeticsHome(Player player, String name) {
+        if (name.startsWith("Tokens:")) return;
+        if (name.equals("Kill Messages")) openCosmeticsCategory(player, CosmeticsService.CAT_KILL_MESSAGE);
+        else if (name.equals("Kill Effects")) openCosmeticsCategory(player, CosmeticsService.CAT_KILL_EFFECT);
+        else if (name.equals("Victory Dances") || name.equals("Win Effects")) {
+            openCosmeticsCategory(player, CosmeticsService.CAT_WIN_EFFECT);
+        } else if (isComingSoonCosmetic(name)) {
+            player.sendMessage(ChatColor.RED + "Coming Soon");
+        }
+    }
+
+    private static boolean isComingSoonCosmetic(String name) {
+        return name.equals("Bed Destroys") || name.equals("Projectile Trails") || name.equals("Final Kill Effects")
+            || name.equals("Glyphs") || name.equals("Hats") || name.equals("Prestige Customizer")
+            || name.equals("Shopkeeper Skins") || name.equals("Sprays") || name.equals("Death Cries")
+            || name.equals("Island Toppers") || name.equals("Wood Skins") || name.equals("Figurines");
+    }
+
+    private void clickCosmeticsCategory(Player player, String title, ItemStack clicked) {
+        String name = Items.name(clicked);
+        if (name.equals("Back") || name.startsWith("Tokens:")) {
+            openCosmetics(player);
+            return;
+        }
+        String id = cosmeticId(clicked);
+        if (id == null) return;
+        String result = plugin.cosmetics().clickOffer(player, id);
+        player.sendMessage(result);
+        if (result.startsWith(ChatColor.GREEN.toString()) || result.startsWith(ChatColor.YELLOW.toString())) Sounds.purchase(player);
+        openCosmeticsCategory(player, title);
+    }
+
+    private static String cosmeticId(ItemStack item) {
+        if (item == null || !item.hasItemMeta() || item.getItemMeta().getLore() == null) return null;
+        for (String line : item.getItemMeta().getLore()) {
+            String clean = ChatColor.stripColor(line);
+            if (clean.startsWith("Bedlam Cosmetic: ")) return clean.substring("Bedlam Cosmetic: ".length()).trim();
+        }
+        return null;
     }
 
     public void openSpectate(Player player) {
@@ -615,128 +1311,153 @@ public final class GuiController {
         String[] cats = {"Quick Buy", "Blocks", "Melee", "Armor", "Tools", "Ranged", "Potions", "Utility"};
         for (int i = 0; i < 8; i++) inventory.setItem(9 + i, cats[i].equals(category) ? lime : gray);
         inventory.setItem(17, gray);
+        int[] borders = {18, 26, 27, 35, 36, 44};
+        for (int slot : borders) inventory.setItem(slot, gray);
         ArenaManager manager = plugin.games().arena(player);
         TeamColor team = manager == null ? TeamColor.RED : manager.arena().team(player.getUniqueId());
         if (team == null) team = TeamColor.RED;
         Arena arena = manager == null ? null : manager.arena();
-        if (category.equals("Quick Buy") || category.equals("Blocks")) {
-            inventory.setItem(19, shopOffer(player, team.wool(16), "Wool", "16 Wool", 4, Material.IRON_INGOT,
-                ChatColor.GRAY + "Basic building block", ChatColor.GRAY + "Colored to your team"));
-            inventory.setItem(20, shopOffer(player, Items.stack("WHITE_TERRACOTTA", "STAINED_CLAY", 16, (short) 0), "Hardened Clay", "16 Hardened Clay", 12, Material.IRON_INGOT,
-                ChatColor.GRAY + "Sturdier than wool"));
-            inventory.setItem(21, shopOffer(player, Items.stack("GLASS", "GLASS", 4, (short) 0), "Blast-Proof Glass", "4 Blast-Proof Glass", 12, Material.IRON_INGOT,
-                ChatColor.GRAY + "See-through defense"));
-            inventory.setItem(22, shopOffer(player, new ItemStack(Items.material("END_STONE", "ENDER_STONE"), 12), "End Stone", "12 End Stone", 24, Material.IRON_INGOT,
-                ChatColor.GRAY + "Tough island block"));
-            inventory.setItem(23, shopOffer(player, new ItemStack(Material.LADDER, 8), "Ladder", "8 Ladders", 4, Material.IRON_INGOT,
-                ChatColor.GRAY + "Climb enemy walls"));
-            inventory.setItem(24, shopOffer(player, Items.stack("OAK_PLANKS", "WOOD", 16, (short) 0), "Wood", "16 Oak Planks", 4, Material.GOLD_INGOT,
-                ChatColor.GRAY + "Cheap bridging wood"));
-            if (category.equals("Blocks")) {
-                inventory.setItem(25, shopOffer(player, new ItemStack(Material.OBSIDIAN, 4), "Obsidian", "4 Obsidian", 4, Material.EMERALD,
-                    ChatColor.GRAY + "Blast-resistant cover"));
-                inventory.setItem(28, shopOffer(player, new ItemStack(Material.ICE, 8), "Ice", "8 Ice", 8, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Slippery flooring"));
+        if (category.equals("Quick Buy")) {
+            putQuickBuyFavorites(inventory, player, team, arena, gray);
+        } else if (category.equals("Settings")) {
+            putFavoriteEditor(inventory, player, team, arena, gray);
+        } else if (category.equals("Tools")) {
+            putToolOffers(inventory, player, arena, 19, 20, 21);
+        } else {
+            for (ShopCatalog.Offer offer : ShopCatalog.offers(category)) {
+                inventory.setItem(offer.slot, catalogOffer(player, team, arena, offer));
             }
         }
-        if (category.equals("Quick Buy") || category.equals("Melee")) {
-            int base = category.equals("Melee") ? 19 : 28;
-            inventory.setItem(base, shopOffer(player, new ItemStack(Items.material("STONE_SWORD")), "Stone Sword", "Stone Sword", 10, Material.IRON_INGOT,
-                ChatColor.GRAY + "Replaces a weaker sword"));
-            inventory.setItem(base + 1, shopOffer(player, new ItemStack(Items.material("IRON_SWORD")), "Iron Sword", "Iron Sword", 7, Material.GOLD_INGOT,
-                ChatColor.GRAY + "Replaces a weaker sword"));
-            inventory.setItem(base + 2, shopOffer(player, new ItemStack(Items.material("DIAMOND_SWORD")), "Diamond Sword", "Diamond Sword", 4, Material.EMERALD,
-                ChatColor.GRAY + "Replaces a weaker sword"));
-            inventory.setItem(base + 3, shopOffer(player, new ItemStack(Items.material("STICK")), "Knockback Stick", "Knockback Stick", 5, Material.GOLD_INGOT,
-                ChatColor.GRAY + "Knockback I stick"));
-        }
-        if (category.equals("Quick Buy") || category.equals("Armor")) {
-            int base = category.equals("Armor") ? 19 : 37;
-            inventory.setItem(base, shopOffer(player, new ItemStack(Items.material("CHAINMAIL_BOOTS")), "Chainmail Armor", "Permanent Chainmail Armor", 40, Material.IRON_INGOT,
-                ChatColor.GRAY + "Permanent chainmail legs + boots"));
-            inventory.setItem(base + 1, shopOffer(player, new ItemStack(Items.material("IRON_BOOTS")), "Iron Armor", "Permanent Iron Armor", 12, Material.GOLD_INGOT,
-                ChatColor.GRAY + "Permanent iron helmet + chest"));
-            inventory.setItem(base + 2, shopOffer(player, new ItemStack(Items.material("DIAMOND_BOOTS")), "Diamond Armor", "Permanent Diamond Armor", 6, Material.EMERALD,
-                ChatColor.GRAY + "Permanent diamond helmet + chest"));
-        }
-        if (category.equals("Tools") || category.equals("Quick Buy")) {
-            int base = category.equals("Tools") ? 19 : 29;
-            if (category.equals("Tools")) {
-                putToolOffers(inventory, player, arena, 19, 20, 21);
-            } else {
-                putShearsOffer(inventory, player, arena, base);
-            }
-        }
-        if (category.equals("Ranged") || category.equals("Quick Buy")) {
-            int base = category.equals("Ranged") ? 19 : 30;
-            if (category.equals("Ranged")) {
-                inventory.setItem(19, shopOffer(player, new ItemStack(Material.BOW), "Bow", "Bow", 12, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Unbreakable bow"));
-                inventory.setItem(20, shopOffer(player, new ItemStack(Material.ARROW, 8), "Arrows", "8 Arrows", 2, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Ammunition"));
-                ItemStack punch = new ItemStack(Material.BOW);
-                Enchantments.add(punch, 1, "ARROW_KNOCKBACK", "PUNCH");
-                inventory.setItem(21, shopOffer(player, punch, "Punch Bow", "Punch Bow", 24, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Bow with Punch I"));
-            } else {
-                inventory.setItem(base, shopOffer(player, new ItemStack(Material.BOW), "Bow", "Bow", 12, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Unbreakable bow"));
-            }
-        }
-        if (category.equals("Potions")) {
-            PotionEffectType speed = Items.potionType("SPEED");
-            PotionEffectType jump = Items.potionType("JUMP", "JUMP_BOOST");
-            PotionEffectType invis = Items.potionType("INVISIBILITY");
-            inventory.setItem(19, shopOffer(player,
-                Items.drinkPotion(speed, GameRules.POTION_SPEED_TICKS, GameRules.POTION_SPEED_AMPLIFIER, (short) 8226),
-                "Speed II Potion (45 seconds)", "Speed II Potion (45 seconds)", GameRules.POTION_SPEED_COST_EMERALD, Material.EMERALD,
-                ChatColor.GRAY + "Speed II for 45 seconds"));
-            inventory.setItem(20, shopOffer(player,
-                Items.drinkPotion(jump, GameRules.POTION_JUMP_TICKS, GameRules.POTION_JUMP_AMPLIFIER, (short) 8235),
-                "Jump V Potion (45 seconds)", "Jump V Potion (45 seconds)", GameRules.POTION_JUMP_COST_EMERALD, Material.EMERALD,
-                ChatColor.GRAY + "Jump Boost V for 45 seconds"));
-            inventory.setItem(21, shopOffer(player,
-                Items.drinkPotion(invis, GameRules.POTION_INVIS_TICKS, 0, (short) 8206),
-                "Invisibility Potion (30 seconds)", "Invisibility Potion (30 seconds)", GameRules.POTION_INVIS_COST_EMERALD, Material.EMERALD,
-                ChatColor.GRAY + "Full invisibility for 30 seconds",
-                ChatColor.DARK_GRAY + "Armor hidden from enemies"));
-        }
-        if (category.equals("Utility") || category.equals("Quick Buy")) {
-            if (category.equals("Utility")) {
-                inventory.setItem(19, shopOffer(player, new ItemStack(Items.material("GOLDEN_APPLE")), "Golden Apple", "Golden Apple", 3, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Well-rounded healing"));
-                inventory.setItem(20, shopOffer(player, new ItemStack(Items.material("SNOWBALL", "SNOW_BALL"), 16), "Snowball", "16 Snowballs", 16, Material.IRON_INGOT,
-                    ChatColor.GRAY + "Slow projectiles"));
-                inventory.setItem(21, shopOffer(player, new ItemStack(Items.material("FIRE_CHARGE", "FIREBALL")), "Fireball", "Fireball", 40, Material.IRON_INGOT,
-                    ChatColor.GRAY + "Explosive knockback charge"));
-                inventory.setItem(22, shopOffer(player, new ItemStack(Material.TNT), "TNT", "TNT", 4, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Auto-ignites when placed"));
-                inventory.setItem(23, shopOffer(player, new ItemStack(Material.ENDER_PEARL), "Ender Pearl", "Ender Pearl", 4, Material.EMERALD,
-                    ChatColor.GRAY + "Teleport across the map"));
-                inventory.setItem(24, shopOffer(player, new ItemStack(Material.WATER_BUCKET), "Water Bucket", "Water Bucket", 3, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "One-use water place"));
-                inventory.setItem(25, shopOffer(player, new ItemStack(Items.material("MILK_BUCKET")), "Magic Milk", "Magic Milk", 4, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Brief trap immunity"));
-                inventory.setItem(28, shopOffer(player, new ItemStack(Material.SPONGE, 4), "Sponge", "4 Sponges", 3, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Soak up water"));
-                inventory.setItem(29, shopOffer(player, new ItemStack(Material.EGG), "Bridge Egg", "Bridge Egg", 1, Material.EMERALD,
-                    ChatColor.GRAY + "Throws a team-wool bridge", ChatColor.GRAY + "along its flight path"));
-            } else {
-                inventory.setItem(39, shopOffer(player, new ItemStack(Material.TNT), "TNT", "TNT", 4, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Auto-ignites when placed"));
-                inventory.setItem(40, shopOffer(player, new ItemStack(Items.material("FIRE_CHARGE", "FIREBALL")), "Fireball", "Fireball", 40, Material.IRON_INGOT,
-                    ChatColor.GRAY + "Explosive knockback charge"));
-                inventory.setItem(41, shopOffer(player, new ItemStack(Material.WATER_BUCKET), "Water Bucket", "Water Bucket", 3, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "One-use water place"));
-                inventory.setItem(42, shopOffer(player, new ItemStack(Items.material("GOLDEN_APPLE")), "Golden Apple", "Golden Apple", 3, Material.GOLD_INGOT,
-                    ChatColor.GRAY + "Well-rounded healing"));
-                inventory.setItem(43, shopOffer(player, new ItemStack(Material.ENDER_PEARL), "Ender Pearl", "Ender Pearl", 4, Material.EMERALD,
-                    ChatColor.GRAY + "Teleport across the map"));
-            }
-        }
-        inventory.setItem(48, Items.named(new ItemStack(Material.COMPASS), ChatColor.GREEN + "Quick Buy Settings", ChatColor.GRAY + "Coming soon"));
+        if (!category.equals("Quick Buy") && !category.equals("Settings")) addAssignHints(inventory);
+        Integer assign = favoriteAssignSlot.get(player.getUniqueId());
+        String settingsLore = category.equals("Settings")
+            ? ChatColor.GRAY + "Editing favorites"
+            : (assign != null
+                ? ChatColor.YELLOW + "Assigning slot #" + (assign + 1) + " — click an item"
+                : ChatColor.GRAY + "Edit your 9 favorite slots");
+        inventory.setItem(48, Items.named(new ItemStack(Material.COMPASS), ChatColor.GREEN + "Quick Buy Settings", settingsLore));
         inventory.setItem(49, Items.named(new ItemStack(Items.material("FIREWORK_STAR", "FIREWORK_CHARGE")), ChatColor.GREEN + "Close", ChatColor.YELLOW + "Click to close"));
+        boolean importEnabled = !hypixelApiKey().isEmpty();
+        inventory.setItem(50, Items.named(new ItemStack(Material.PAPER), ChatColor.AQUA + "Import Hypixel Quick Buy",
+            importEnabled ? ChatColor.GRAY + "Load your personal Hypixel layout" : ChatColor.RED + "Set BEDLAM_HYPIXEL_API_KEY",
+            importEnabled ? ChatColor.YELLOW + "Click to import" : ChatColor.DARK_GRAY + "or hypixel-api-key in config.yml"));
         openGui(player, inventory);
+    }
+
+    private void putQuickBuyFavorites(Inventory inventory, Player player, TeamColor team, Arena arena, ItemStack emptyPane) {
+        String[] favs = plugin.stats().favorites(player.getUniqueId());
+        String pending = favoritePendingItem.get(player.getUniqueId());
+        for (int i = 0; i < StatsStore.FAVORITE_SLOTS; i++) {
+            String key = favs[i];
+            int slot = GameRules.QUICK_BUY_SLOTS[i];
+            if (key == null || key.isEmpty()) {
+                inventory.setItem(slot, Items.named(emptyPane.clone(), ChatColor.RED + "Empty slot!",
+                    pending == null ? ChatColor.GRAY + "Sneak Click any shop item" : ChatColor.GREEN + "Click to place " + pending,
+                    pending == null ? ChatColor.GRAY + "to add it here." : ChatColor.GRAY + "in this Quick Buy slot."));
+            } else {
+                ItemStack offer = offerForKey(player, team, arena, key);
+                inventory.setItem(slot, appendLore(offer,
+                    pending == null ? ChatColor.AQUA + "Sneak Click to remove from Quick Buy!" : ChatColor.GREEN + "Click to replace with " + pending));
+            }
+        }
+    }
+
+    private void putFavoriteEditor(Inventory inventory, Player player, TeamColor team, Arena arena, ItemStack emptyPane) {
+        String[] favs = plugin.stats().favorites(player.getUniqueId());
+        Integer assign = favoriteAssignSlot.get(player.getUniqueId());
+        for (int i = 0; i < StatsStore.FAVORITE_SLOTS; i++) {
+            String key = favs[i];
+            int slot = GameRules.QUICK_BUY_SLOTS[i];
+            if (key == null || key.isEmpty()) {
+                boolean picking = assign != null && assign == i;
+                inventory.setItem(slot, Items.named(emptyPane.clone(), ChatColor.YELLOW + "Favorite #" + (i + 1),
+                    picking ? ChatColor.GREEN + "Selected — click a shop item" : ChatColor.GRAY + "Click, then click a shop item",
+                    ChatColor.DARK_GRAY + "Browse categories to pick"));
+            } else {
+                ItemStack offer = offerForKey(player, team, arena, key);
+                List<String> lore = offer.getItemMeta() != null && offer.getItemMeta().getLore() != null
+                    ? new ArrayList<String>(offer.getItemMeta().getLore()) : new ArrayList<String>();
+                lore.add(ChatColor.RED + "Click to clear this slot");
+                inventory.setItem(slot, Items.named(offer.clone(), ChatColor.GREEN + key, lore.toArray(new String[0])));
+            }
+        }
+        inventory.setItem(45, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back",
+            ChatColor.GRAY + "Return to Quick Buy"));
+    }
+
+    /** Shop offer icon for a persisted buy-key; unknown keys show a barrier. */
+    private ItemStack offerForKey(Player player, TeamColor team, Arena arena, String key) {
+        ShopCatalog.Offer catalog = ShopCatalog.offer(key);
+        if (catalog != null) return catalogOffer(player, team, arena, catalog);
+        if (key.equals("Shears") || key.equals("Permanent Shears")) {
+            if (arena != null && arena.shearsOwned(player.getUniqueId())) {
+                return Items.named(new ItemStack(Items.material("SHEARS")), ChatColor.GREEN + "Permanent Shears",
+                    ChatColor.GREEN + "UNLOCKED", ChatColor.GRAY + "Kept on every respawn");
+            }
+            return shopOffer(player, new ItemStack(Items.material("SHEARS")), "Permanent Shears", "Shears", 20, Material.IRON_INGOT,
+                ChatColor.GRAY + "Permanent item", ChatColor.DARK_GRAY + "Always respawn with shears");
+        }
+        if (key.endsWith(" Pickaxe") || key.endsWith(" Axe")) {
+            boolean pickaxe = key.endsWith(" Pickaxe");
+            int current = arena == null ? 0 : (pickaxe ? arena.pickaxeTier(player.getUniqueId()) : arena.axeTier(player.getUniqueId()));
+            return nextToolOffer(player, pickaxe, current);
+        }
+        return Items.named(new ItemStack(Material.BARRIER), ChatColor.RED + key, ChatColor.GRAY + "Unknown shop item");
+    }
+
+    private ItemStack catalogOffer(Player player, TeamColor team, Arena arena, ShopCatalog.Offer offer) {
+        String[] lore = new String[offer.lore.length];
+        for (int i = 0; i < lore.length; i++) lore[i] = ChatColor.GRAY + offer.lore[i];
+        return shopOffer(player, catalogItem(offer.key, team, arena), offer.display, offer.key, offer.cost,
+            Items.material(offer.currency), lore);
+    }
+
+    private static ItemStack catalogItem(String key, TeamColor team, Arena arena) {
+        if (key.equals("16 Wool")) return team.wool(16);
+        if (key.equals("16 Hardened Clay")) return Items.stack("WHITE_TERRACOTTA", "STAINED_CLAY", 16, (short) 0);
+        if (key.equals("4 Blast-Proof Glass")) return team.glass(4);
+        if (key.equals("12 End Stone")) return new ItemStack(Items.material("END_STONE", "ENDER_STONE"), 12);
+        if (key.equals("8 Ladders")) return new ItemStack(Material.LADDER, 8);
+        if (key.equals("16 Oak Planks")) return Items.stack("OAK_PLANKS", "WOOD", 16, (short) 0);
+        if (key.equals("4 Obsidian")) return new ItemStack(Material.OBSIDIAN, 4);
+        if (key.equals("8 Ice")) return new ItemStack(Material.ICE, 8);
+        boolean sharp = arena != null && team != null && arena.sharpness(team);
+        if (key.equals("Stone Sword")) return sword(Items.material("STONE_SWORD"), sharp);
+        if (key.equals("Iron Sword")) return sword(Material.IRON_SWORD, sharp);
+        if (key.equals("Diamond Sword")) return sword(Items.material("DIAMOND_SWORD"), sharp);
+        if (key.equals("Knockback Stick")) {
+            ItemStack stick = Items.unbreakable(new ItemStack(Items.material("STICK")));
+            Enchantments.add(stick, 1, "KNOCKBACK");
+            return stick;
+        }
+        if (key.equals("Permanent Chainmail Armor")) return new ItemStack(Items.material("CHAINMAIL_BOOTS"));
+        if (key.equals("Permanent Iron Armor")) return new ItemStack(Items.material("IRON_BOOTS"));
+        if (key.equals("Permanent Diamond Armor")) return new ItemStack(Items.material("DIAMOND_BOOTS"));
+        if (key.equals("Bow")) return Items.unbreakable(new ItemStack(Material.BOW));
+        if (key.equals("8 Arrows")) return new ItemStack(Material.ARROW, 8);
+        if (key.equals("Punch Bow")) {
+            ItemStack bow = Items.unbreakable(new ItemStack(Material.BOW));
+            Enchantments.add(bow, 1, "ARROW_KNOCKBACK", "PUNCH");
+            return bow;
+        }
+        if (key.equals("Speed II Potion (45 seconds)")) return Items.drinkPotion(Items.potionType("SPEED"), GameRules.POTION_SPEED_TICKS, GameRules.POTION_SPEED_AMPLIFIER, (short) 8226);
+        if (key.equals("Jump V Potion (45 seconds)")) return Items.drinkPotion(Items.potionType("JUMP", "JUMP_BOOST"), GameRules.POTION_JUMP_TICKS, GameRules.POTION_JUMP_AMPLIFIER, (short) 8235);
+        if (key.equals("Invisibility Potion (30 seconds)")) return Items.drinkPotion(Items.potionType("INVISIBILITY"), GameRules.POTION_INVIS_TICKS, 0, (short) 8206);
+        if (key.equals("Golden Apple")) return new ItemStack(Items.material("GOLDEN_APPLE"));
+        if (key.equals("16 Snowballs")) return new ItemStack(Items.material("SNOWBALL", "SNOW_BALL"), 16);
+        if (key.equals("Fireball")) return new ItemStack(Items.material("FIRE_CHARGE", "FIREBALL"));
+        if (key.equals("TNT")) return new ItemStack(Material.TNT);
+        if (key.equals("Ender Pearl")) return new ItemStack(Material.ENDER_PEARL);
+        if (key.equals("Water Bucket")) return new ItemStack(Material.WATER_BUCKET);
+        if (key.equals("Magic Milk")) return Items.named(new ItemStack(Items.material("MILK_BUCKET")), ChatColor.AQUA + "Magic Milk", ChatColor.GRAY + "30 seconds of trap immunity");
+        if (key.equals("4 Sponges")) return new ItemStack(Material.SPONGE, 4);
+        if (key.equals("Bridge Egg")) return Items.named(new ItemStack(Material.EGG), ChatColor.GREEN + "Bridge Egg",
+            ChatColor.GRAY + "Throws a team-wool bridge", ChatColor.GRAY + "along its flight path");
+        if (key.equals("Dream Defender")) return Items.named(Items.stack("IRON_GOLEM_SPAWN_EGG", "MONSTER_EGG", 1, (short) 99),
+            ChatColor.AQUA + "Dream Defender", ChatColor.GRAY + "Guards your team for 4 minutes");
+        if (key.equals("Pop-up Tower")) return Items.named(new ItemStack(Material.CHEST), ChatColor.GREEN + "Pop-up Tower",
+            ChatColor.GRAY + "Right-click a block to deploy");
+        throw new IllegalArgumentException("No item for shop key " + key);
     }
 
     private void putShearsOffer(Inventory inventory, Player player, Arena arena, int slot) {
@@ -795,172 +1516,207 @@ public final class GuiController {
         if (manager == null) return;
         Arena arena = manager.arena();
         TeamColor team = arena.team(player.getUniqueId());
-        Inventory inventory = chest(54, UPGRADES_TITLE);
-        ItemStack pane = Items.named(Items.stack("GRAY_STAINED_GLASS_PANE", "STAINED_GLASS_PANE", 1, (short) 7), " ");
-        for (int row = 0; row < 6; row++) inventory.setItem(row * 9 + 4, pane);
-        for (int i = 27; i < 36; i++) inventory.setItem(i, pane);
+        if (team == null) return;
+        Inventory inventory = chest(45, UPGRADES_TITLE);
 
-        inventory.setItem(10, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Sharpened Swords",
-            arena.sharpness(team) ? ChatColor.GREEN + "Purchased" : costLine(4, Material.DIAMOND),
-            ChatColor.GRAY + "Your team gets Sharpness I", ChatColor.GRAY + "on all swords"));
-        int level = arena.protection(team);
-        int cost = new int[] {2, 4, 8, 16}[Math.min(level, 3)];
-        inventory.setItem(11, Items.named(new ItemStack(Material.IRON_CHESTPLATE), ChatColor.AQUA + "Reinforced Armor " + roman(level + 1),
-            level >= 4 ? ChatColor.GREEN + "Maximum level" : costLine(cost, Material.DIAMOND),
-            ChatColor.GRAY + "Protection on team armor"));
+        inventory.setItem(10, upgradeOffer(player, new ItemStack(Material.IRON_SWORD), "Sharpened Swords", 4,
+            arena.sharpness(team), ChatColor.GRAY + "Your team gets Sharpness I", ChatColor.GRAY + "on all swords."));
+        int protection = arena.protection(team);
+        int protectionCost = new int[] {2, 4, 8, 16}[Math.min(protection, 3)];
+        inventory.setItem(11, upgradeOffer(player, new ItemStack(Material.IRON_CHESTPLATE),
+            "Reinforced Armor " + roman(Math.min(protection + 1, 4)), protectionCost, protection >= 4,
+            ChatColor.GRAY + "Your team gets Protection", ChatColor.GRAY + "on all armor pieces."));
         int haste = arena.hasteLevel(team);
-        inventory.setItem(12, Items.named(new ItemStack(Items.material("GOLDEN_PICKAXE", "GOLD_PICKAXE")), ChatColor.AQUA + "Maniac Miner " + roman(haste + 1),
-            haste >= 2 ? ChatColor.GREEN + "Maximum level" : costLine(haste == 0 ? 2 : 4, Material.DIAMOND),
-            ChatColor.GRAY + "Haste for your whole team"));
+        inventory.setItem(12, upgradeOffer(player, new ItemStack(Items.material("GOLDEN_PICKAXE", "GOLD_PICKAXE")),
+            "Maniac Miner " + roman(Math.min(haste + 1, 2)), haste == 0 ? 2 : 4, haste >= 2,
+            ChatColor.GRAY + "Your team gets Haste", ChatColor.GRAY + "for the entire game."));
+
         int forge = arena.forgeLevel(team);
-        inventory.setItem(19, Items.named(new ItemStack(Material.FURNACE), ChatColor.AQUA + "Iron Forge " + roman(forge + 1),
-            forge >= 4 ? ChatColor.GREEN + "Maximum level" : costLine(forge + 2, Material.DIAMOND),
-            ChatColor.GRAY + "Faster iron/gold forge", ChatColor.DARK_GRAY + "L2+ rare diamond/emerald"));
-        inventory.setItem(20, Items.named(new ItemStack(Items.material("BEACON")), ChatColor.AQUA + "Heal Pool",
-            arena.healPool(team) ? ChatColor.GREEN + "Purchased" : costLine(3, Material.DIAMOND),
-            ChatColor.GRAY + "Regen + green particles at base"));
-        inventory.setItem(21, Items.named(new ItemStack(Items.material("DRAGON_EGG")), ChatColor.AQUA + "Dragon Buff",
-            arena.dragonBuff(team) ? ChatColor.GREEN + "Purchased" : costLine(5, Material.DIAMOND),
-            ChatColor.GRAY + "+2 hearts max health for your team"));
-        inventory.setItem(22, Items.named(new ItemStack(Items.material("FEATHER")), ChatColor.AQUA + "Cushioned Boots",
-            arena.cushionedBoots(team) ? ChatColor.GREEN + "Purchased" : costLine(2, Material.DIAMOND),
-            ChatColor.GRAY + "Feather Falling IV on team boots"));
+        inventory.setItem(19, upgradeOffer(player, new ItemStack(Material.FURNACE),
+            "Iron Forge " + roman(Math.min(forge + 1, 4)), GameRules.forgeUpgradeCost(forge), forge >= 4,
+            ChatColor.GRAY + "Upgrades your island resource", ChatColor.GRAY + "generator."));
+        inventory.setItem(20, upgradeOffer(player, new ItemStack(Items.material("BEACON")), "Heal Pool", 1,
+            arena.healPool(team), ChatColor.GRAY + "Creates a regeneration field", ChatColor.GRAY + "around your base."));
+        int boots = arena.cushionedBootsLevel(team);
+        inventory.setItem(21, upgradeOffer(player, new ItemStack(Items.material("DIAMOND_BOOTS")),
+            "Cushioned Boots " + roman(Math.min(boots + 1, 2)), GameRules.cushionedBootsCost(boots), boots >= 2,
+            ChatColor.GRAY + "Your team gets Feather Falling", ChatColor.GRAY + "on their boots."));
 
         int trapCost = GameRules.trapDiamondCost(arena.traps(team).size());
-        String queueLine = ChatColor.GRAY + "Queue: " + arena.traps(team).size() + "/" + GameRules.TRAP_QUEUE_MAX;
-        inventory.setItem(14, trapOffer("Blindness Trap", Items.material("EYE_OF_ENDER", "ENDER_EYE"), trapCost, queueLine,
-            ChatColor.GRAY + "Blind enemies who enter your base"));
-        inventory.setItem(15, trapOffer("Counter-Offensive Trap", Items.material("FEATHER"), trapCost, queueLine,
-            ChatColor.GRAY + "Speed II + Jump for allies near base"));
-        inventory.setItem(16, trapOffer("Alarm Trap", Items.material("REDSTONE_TORCH", "REDSTONE_TORCH_ON"), trapCost, queueLine,
-            ChatColor.GRAY + "Alerts your team when enemies enter"));
-        inventory.setItem(23, trapOffer("Miner Fatigue Trap", Items.material("IRON_PICKAXE"), trapCost, queueLine,
-            ChatColor.GRAY + "Mining Fatigue on base invaders"));
-        inventory.setItem(24, trapOffer("Reveal Trap", Items.material("TRIPWIRE_HOOK"), trapCost, queueLine,
-            ChatColor.GRAY + "Strip invisibility from invaders"));
+        boolean queueFull = arena.traps(team).size() >= GameRules.TRAP_QUEUE_MAX;
+        inventory.setItem(15, trapOffer(player, "Blindness Trap", Items.material("TRIPWIRE_HOOK"), trapCost, queueFull,
+            ChatColor.GRAY + "Inflicts Blindness and Slowness", ChatColor.GRAY + "for 8 seconds."));
+        inventory.setItem(16, trapOffer(player, "Counter-Offensive Trap", Items.material("FEATHER"), trapCost, queueFull,
+            ChatColor.GRAY + "Grants Speed II and Jump Boost II", ChatColor.GRAY + "for 15 seconds to allied players", ChatColor.GRAY + "near your base."));
+        inventory.setItem(17, trapOffer(player, "Reveal Trap", Items.material("REDSTONE_TORCH", "REDSTONE_TORCH_ON"), trapCost, queueFull,
+            ChatColor.GRAY + "Reveals invisible players as well as", ChatColor.GRAY + "their name and team."));
+        inventory.setItem(24, trapOffer(player, "Miner Fatigue Trap", Items.material("GOLDEN_PICKAXE", "GOLD_PICKAXE"), trapCost, queueFull,
+            ChatColor.GRAY + "Inflicts Mining Fatigue for 8 seconds."));
+
+        ItemStack divider = Items.named(Items.stack("GRAY_STAINED_GLASS_PANE", "STAINED_GLASS_PANE", 1, (short) 7),
+            ChatColor.GRAY + "↑ Purchasable", ChatColor.GRAY + "↓ Traps Queue");
+        for (int slot = 27; slot < 36; slot++) inventory.setItem(slot, divider);
 
         List<Arena.TrapType> traps = arena.traps(team);
         for (int i = 0; i < GameRules.TRAP_QUEUE_MAX; i++) {
+            int amount = i + 1;
             if (i < traps.size()) {
-                inventory.setItem(39 + i, Items.named(team.wool(1), ChatColor.GREEN + "Trap #" + (i + 1),
+                inventory.setItem(39 + i, Items.named(team.wool(amount), ChatColor.GREEN + "Trap #" + amount,
                     ChatColor.WHITE + traps.get(i).displayName()));
             } else {
-                inventory.setItem(39 + i, Items.named(Items.stack("GRAY_WOOL", "WOOL", 1, (short) 7), ChatColor.GRAY + "Trap slot #" + (i + 1),
-                    ChatColor.DARK_GRAY + "Buy a trap above"));
+                inventory.setItem(39 + i, Items.named(Items.stack("GRAY_WOOL", "WOOL", amount, (short) 7),
+                    ChatColor.GRAY + "Trap slot #" + amount, ChatColor.DARK_GRAY + "Buy a trap above."));
             }
         }
         openGui(player, inventory);
     }
 
-    private static ItemStack trapOffer(String name, Material icon, int cost, String queueLine, String... desc) {
+    private static ItemStack upgradeOffer(Player player, ItemStack icon, String name, int cost, boolean purchased, String... description) {
         List<String> lore = new ArrayList<String>();
-        lore.add(costLine(cost, Material.DIAMOND));
-        for (String line : desc) lore.add(line);
-        lore.add(queueLine);
-        lore.add(ChatColor.YELLOW + "Click to purchase");
-        return Items.named(new ItemStack(icon), ChatColor.YELLOW + name, lore.toArray(new String[0]));
+        for (String line : description) lore.add(line);
+        lore.add("");
+        lore.add(diamondCostLine(cost));
+        lore.add("");
+        if (purchased) lore.add(ChatColor.GREEN + "Purchased!");
+        else if (hasDiamonds(player, cost)) lore.add(ChatColor.YELLOW + "Click to purchase!");
+        else lore.add(ChatColor.RED + "You don't have enough Diamonds!");
+        return Items.named(icon, ChatColor.AQUA + name, lore.toArray(new String[0]));
     }
 
-    private void buy(Player player, String name) {
+    private static ItemStack trapOffer(Player player, String name, Material icon, int cost, boolean queueFull, String... description) {
+        List<String> lore = new ArrayList<String>();
+        for (String line : description) lore.add(line);
+        lore.add("");
+        lore.add(diamondCostLine(cost));
+        lore.add("");
+        if (queueFull) lore.add(ChatColor.RED + "Your traps queue is full!");
+        else if (hasDiamonds(player, cost)) lore.add(ChatColor.YELLOW + "Click to purchase!");
+        else lore.add(ChatColor.RED + "You don't have enough Diamonds!");
+        return Items.named(new ItemStack(icon), ChatColor.RED + name, lore.toArray(new String[0]));
+    }
+
+    private static String diamondCostLine(int cost) {
+        return ChatColor.GRAY + "Cost: " + ChatColor.AQUA + cost + " Diamond" + (cost == 1 ? "" : "s");
+    }
+
+    private static boolean hasDiamonds(Player player, int cost) {
+        return player.getInventory().containsAtLeast(new ItemStack(Material.DIAMOND), cost);
+    }
+    private void buy(Player player, String name, boolean shiftLeft, int rawSlot) {
+        if (name == null || name.isEmpty() || name.equals(" ")) return;
         if (name.equals("Quick Buy") || name.equals("Blocks") || name.equals("Melee") || name.equals("Armor")
             || name.equals("Tools") || name.equals("Ranged") || name.equals("Potions") || name.equals("Utility")) {
             openShopCategory(player, name);
             return;
         }
-        if (name.equals("Close") || name.equals("Quick Buy Settings")) { player.closeInventory(); return; }
+        if (name.equals("Close")) {
+            favoriteAssignSlot.remove(player.getUniqueId());
+            favoritePendingItem.remove(player.getUniqueId());
+            player.closeInventory();
+            return;
+        }
+        if (name.equals("Import Hypixel Quick Buy")) {
+            importHypixelQuickBuy(player);
+            return;
+        }
+        if (name.equals("Quick Buy Settings")) {
+            openShopCategory(player, "Settings");
+            return;
+        }
+        if (name.equals("Back")) {
+            favoriteAssignSlot.remove(player.getUniqueId());
+            favoritePendingItem.remove(player.getUniqueId());
+            openShopCategory(player, "Quick Buy");
+            return;
+        }
+        String category = shopCategory.containsKey(player.getUniqueId()) ? shopCategory.get(player.getUniqueId()) : "Quick Buy";
+        int favoriteIndex = quickBuyIndex(rawSlot);
+        String pending = favoritePendingItem.get(player.getUniqueId());
+        if (category.equals("Quick Buy") && favoriteIndex >= 0) {
+            if (pending != null) {
+                plugin.stats().setFavorite(player.getUniqueId(), favoriteIndex, pending);
+                favoritePendingItem.remove(player.getUniqueId());
+                player.sendMessage(ChatColor.GREEN + pending + " added to Quick Buy slot #" + (favoriteIndex + 1) + ".");
+                Sounds.purchase(player);
+                openShopCategory(player, "Quick Buy");
+                return;
+            }
+            if (shiftLeft) {
+                plugin.stats().setFavorite(player.getUniqueId(), favoriteIndex, "");
+                player.sendMessage(ChatColor.YELLOW + "Removed Quick Buy slot #" + (favoriteIndex + 1) + ".");
+                openShopCategory(player, "Quick Buy");
+                return;
+            }
+        }
+        if (name.equals("Empty slot") || name.equals("Empty slot!")) return;
+        if (shiftLeft && !category.equals("Quick Buy") && !category.equals("Settings") && isFavoriteOffer(name)) {
+            String key = favoriteKey(name);
+            favoritePendingItem.put(player.getUniqueId(), key);
+            favoriteAssignSlot.remove(player.getUniqueId());
+            player.sendMessage(ChatColor.AQUA + "Choose a Quick Buy slot for " + ChatColor.YELLOW + key + ChatColor.AQUA + ".");
+            openShopCategory(player, "Quick Buy");
+            return;
+        }
+        if (category.equals("Settings")) {
+            if (favoriteIndex < 0) return;
+            if (name.startsWith("Favorite #")) {
+                favoriteAssignSlot.put(player.getUniqueId(), favoriteIndex);
+                player.sendMessage(ChatColor.YELLOW + "Click a shop item to set favorite #" + (favoriteIndex + 1) + ".");
+                openShopCategory(player, "Blocks");
+                return;
+            }
+            plugin.stats().setFavorite(player.getUniqueId(), favoriteIndex, "");
+            player.sendMessage(ChatColor.YELLOW + "Cleared favorite #" + (favoriteIndex + 1) + ".");
+            openShopCategory(player, "Settings");
+            return;
+        }
+        Integer assign = favoriteAssignSlot.get(player.getUniqueId());
+        if (assign != null) {
+            if (name.equals("MAXED") || name.contains("UNLOCKED")) return;
+            plugin.stats().setFavorite(player.getUniqueId(), assign, favoriteKey(name));
+            favoriteAssignSlot.remove(player.getUniqueId());
+            player.sendMessage(ChatColor.GREEN + "Favorite #" + (assign + 1) + " set to " + name + ".");
+            openShopCategory(player, "Settings");
+            return;
+        }
         if (name.equals("MAXED") || name.contains("UNLOCKED")) return;
         ArenaManager manager = plugin.games().arena(player);
         if (manager == null) return;
         Arena arena = manager.arena();
         TeamColor team = arena.team(player.getUniqueId());
         if (team == null || arena.state() != Arena.State.RUNNING) return;
-        if (name.equals("16 Wool") && pay(player, Material.IRON_INGOT, 4)) give(player, team.wool(16));
-        else if (name.equals("16 Hardened Clay") && pay(player, Material.IRON_INGOT, 12)) give(player, Items.stack("WHITE_TERRACOTTA", "STAINED_CLAY", 16, (short) 0));
-        else if (name.equals("4 Blast-Proof Glass") && pay(player, Material.IRON_INGOT, 12)) give(player, new ItemStack(Material.GLASS, 4));
-        else if (name.equals("Stone Sword") && pay(player, Material.IRON_INGOT, 10)) giveSword(player, sword(Items.material("STONE_SWORD"), arena.sharpness(team)));
-        else if (name.equals("Iron Sword") && pay(player, Material.GOLD_INGOT, 7)) giveSword(player, sword(Material.IRON_SWORD, arena.sharpness(team)));
-        else if (name.equals("Diamond Sword") && pay(player, Material.EMERALD, 4)) giveSword(player, sword(Items.material("DIAMOND_SWORD"), arena.sharpness(team)));
-        else if (name.equals("Knockback Stick") && pay(player, Material.GOLD_INGOT, 5)) {
-            ItemStack stick = Items.unbreakable(new ItemStack(Items.material("STICK")));
-            Enchantments.add(stick, 1, "KNOCKBACK");
-            give(player, Items.named(stick, ChatColor.GREEN + "Knockback Stick"));
+        ShopCatalog.Offer catalog = ShopCatalog.offer(name);
+        if (catalog != null) {
+            if (pay(player, Items.material(catalog.currency), catalog.cost)) grantCatalogOffer(player, manager, arena, team, catalog);
+            return;
         }
-        else if (name.equals("Permanent Chainmail Armor") && pay(player, Material.IRON_INGOT, 40)) {
-            ItemStack boots = Items.unbreakable(new ItemStack(Items.material("CHAINMAIL_BOOTS")));
-            ItemStack legs = Items.unbreakable(new ItemStack(Items.material("CHAINMAIL_LEGGINGS")));
-            int protection = arena.protection(team);
-            if (protection > 0) {
-                Enchantments.add(boots, protection, "PROTECTION", "PROTECTION_ENVIRONMENTAL");
-                Enchantments.add(legs, protection, "PROTECTION", "PROTECTION_ENVIRONMENTAL");
-            }
-            if (arena.cushionedBoots(team)) Enchantments.add(boots, 4, "PROTECTION_FALL", "FEATHER_FALLING");
-            player.getInventory().setBoots(boots);
-            player.getInventory().setLeggings(legs);
-        }
-        else if (name.equals("Permanent Iron Armor") && pay(player, Material.GOLD_INGOT, 12)) {
-            if (arena.armorTier(player.getUniqueId()) < 1) arena.armorTier(player.getUniqueId(), 1);
-            manager.equipArmor(player, team);
-        } else if (name.equals("Permanent Diamond Armor") && pay(player, Material.EMERALD, 6)) {
-            arena.armorTier(player.getUniqueId(), 2);
-            manager.equipArmor(player, team);
-        }
-        else if (name.equals("16 Oak Planks") && pay(player, Material.GOLD_INGOT, 4)) give(player, Items.stack("OAK_PLANKS", "WOOD", 16, (short) 0));
-        else if (name.equals("12 End Stone") && pay(player, Material.IRON_INGOT, 24)) give(player, new ItemStack(Items.material("END_STONE", "ENDER_STONE"), 12));
-        else if (name.equals("8 Ladders") && pay(player, Material.IRON_INGOT, 4)) give(player, new ItemStack(Material.LADDER, 8));
-        else if (name.equals("4 Obsidian") && pay(player, Material.EMERALD, 4)) give(player, new ItemStack(Material.OBSIDIAN, 4));
-        else if (name.equals("8 Ice") && pay(player, Material.GOLD_INGOT, 8)) give(player, new ItemStack(Material.ICE, 8));
-        else if ((name.endsWith(" Pickaxe") || name.endsWith(" Axe")) && buyToolUpgrade(player, arena, manager, name)) { /* done */ }
+        if ((name.endsWith(" Pickaxe") || name.endsWith(" Axe")) && buyToolUpgrade(player, arena, manager, name)) { /* done */ }
         else if ((name.equals("Shears") || name.equals("Permanent Shears")) && !arena.shearsOwned(player.getUniqueId()) && pay(player, Material.IRON_INGOT, 20)) {
             arena.shearsOwned(player.getUniqueId(), true);
             manager.giveOwnedTools(player);
         }
-        else if (name.equals("Golden Apple") && pay(player, Material.GOLD_INGOT, 3)) give(player, new ItemStack(Items.material("GOLDEN_APPLE")));
-        else if (name.equals("16 Snowballs") && pay(player, Material.IRON_INGOT, 16)) give(player, new ItemStack(Items.material("SNOWBALL", "SNOW_BALL"), 16));
-        else if (name.equals("TNT") && pay(player, Material.GOLD_INGOT, 4)) give(player, new ItemStack(Material.TNT));
-        else if (name.equals("Fireball") && pay(player, Material.IRON_INGOT, 40)) give(player, new ItemStack(Items.material("FIRE_CHARGE", "FIREBALL")));
-        else if (name.equals("Ender Pearl") && pay(player, Material.EMERALD, 4)) give(player, new ItemStack(Material.ENDER_PEARL));
-        else if (name.equals("Bow") && pay(player, Material.GOLD_INGOT, 12)) give(player, Items.unbreakable(new ItemStack(Material.BOW)));
-        else if (name.equals("Punch Bow") && pay(player, Material.GOLD_INGOT, 24)) {
-            ItemStack bow = Items.unbreakable(new ItemStack(Material.BOW));
-            Enchantments.add(bow, 1, "ARROW_KNOCKBACK", "PUNCH");
-            give(player, Items.named(bow, ChatColor.GREEN + "Punch Bow"));
-        }
-        else if (name.equals("8 Arrows") && pay(player, Material.GOLD_INGOT, 2)) give(player, new ItemStack(Material.ARROW, 8));
-        else if (name.equals("Water Bucket") && pay(player, Material.GOLD_INGOT, 3)) give(player, new ItemStack(Material.WATER_BUCKET));
-        else if (name.equals("Magic Milk") && pay(player, Material.GOLD_INGOT, 4)) give(player, new ItemStack(Items.material("MILK_BUCKET")));
-        else if (name.equals("4 Sponges") && pay(player, Material.GOLD_INGOT, 3)) give(player, new ItemStack(Material.SPONGE, 4));
-        else if (name.equals("Bridge Egg") && pay(player, Material.EMERALD, 1)) {
-            give(player, Items.named(new ItemStack(Material.EGG), ChatColor.GREEN + "Bridge Egg",
-                ChatColor.GRAY + "Throws a team-wool bridge", ChatColor.GRAY + "along its flight path"));
-        }
-        else if (name.equals("Speed II Potion (45 seconds)") && pay(player, Material.EMERALD, GameRules.POTION_SPEED_COST_EMERALD)) {
-            give(player, Items.named(
-                Items.drinkPotion(Items.potionType("SPEED"), GameRules.POTION_SPEED_TICKS, GameRules.POTION_SPEED_AMPLIFIER, (short) 8226),
-                ChatColor.AQUA + "Speed II Potion (45 seconds)"));
-        } else if (name.equals("Jump V Potion (45 seconds)") && pay(player, Material.EMERALD, GameRules.POTION_JUMP_COST_EMERALD)) {
-            give(player, Items.named(
-                Items.drinkPotion(Items.potionType("JUMP", "JUMP_BOOST"), GameRules.POTION_JUMP_TICKS, GameRules.POTION_JUMP_AMPLIFIER, (short) 8235),
-                ChatColor.GREEN + "Jump V Potion (45 seconds)"));
-        } else if (name.equals("Invisibility Potion (30 seconds)") && pay(player, Material.EMERALD, GameRules.POTION_INVIS_COST_EMERALD)) {
-            give(player, Items.named(
-                Items.drinkPotion(Items.potionType("INVISIBILITY"), GameRules.POTION_INVIS_TICKS, 0, (short) 8206),
-                ChatColor.GRAY + "Invisibility Potion (30 seconds)"));
-        }
-        // legacy short names from older shop lore clicks
-        else if (name.equals("Speed Potion") && pay(player, Material.EMERALD, GameRules.POTION_SPEED_COST_EMERALD)) {
-            give(player, Items.named(
-                Items.drinkPotion(Items.potionType("SPEED"), GameRules.POTION_SPEED_TICKS, GameRules.POTION_SPEED_AMPLIFIER, (short) 8226),
-                ChatColor.AQUA + "Speed II Potion (45 seconds)"));
-        } else if (name.equals("Jump Potion") && pay(player, Material.EMERALD, GameRules.POTION_JUMP_COST_EMERALD)) {
-            give(player, Items.named(
-                Items.drinkPotion(Items.potionType("JUMP", "JUMP_BOOST"), GameRules.POTION_JUMP_TICKS, GameRules.POTION_JUMP_AMPLIFIER, (short) 8235),
-                ChatColor.GREEN + "Jump V Potion (45 seconds)"));
-        } else if (name.equals("Invisibility Potion") && pay(player, Material.EMERALD, GameRules.POTION_INVIS_COST_EMERALD)) {
-            give(player, Items.named(
-                Items.drinkPotion(Items.potionType("INVISIBILITY"), GameRules.POTION_INVIS_TICKS, 0, (short) 8206),
-                ChatColor.GRAY + "Invisibility Potion (30 seconds)"));
-        }
         openShopCategory(player, shopCategory.containsKey(player.getUniqueId()) ? shopCategory.get(player.getUniqueId()) : "Quick Buy");
+    }
+
+    private static void grantCatalogOffer(Player player, ArenaManager manager, Arena arena, TeamColor team, ShopCatalog.Offer offer) {
+        if (offer.key.equals("Permanent Chainmail Armor")) {
+            arena.chainmailOwned(player.getUniqueId(), true);
+            manager.equipArmor(player, team);
+            return;
+        }
+        if (offer.key.equals("Permanent Iron Armor")) {
+            if (arena.armorTier(player.getUniqueId()) < 1) arena.armorTier(player.getUniqueId(), 1);
+            manager.equipArmor(player, team);
+            return;
+        }
+        if (offer.key.equals("Permanent Diamond Armor")) {
+            arena.armorTier(player.getUniqueId(), 2);
+            manager.equipArmor(player, team);
+            return;
+        }
+        ItemStack item = catalogItem(offer.key, team, arena);
+        if (GameRules.isSword(item.getType().name())) giveSword(player, item);
+        else give(player, item);
     }
 
     private boolean buyToolUpgrade(Player player, Arena arena, ArenaManager manager, String name) {
@@ -1005,27 +1761,21 @@ public final class GuiController {
             }
         } else if (name.startsWith("Iron Forge") && arena.forgeLevel(team) < 4) {
             int level = arena.forgeLevel(team);
-            if (pay(player, Material.DIAMOND, level + 2)) arena.forgeLevel(team, level + 1);
+            if (pay(player, Material.DIAMOND, GameRules.forgeUpgradeCost(level))) arena.forgeLevel(team, level + 1);
         } else if (name.startsWith("Maniac Miner") && arena.hasteLevel(team) < 2) {
             int level = arena.hasteLevel(team);
             if (pay(player, Material.DIAMOND, level == 0 ? 2 : 4)) {
                 arena.hasteLevel(team, level + 1);
                 for (Player member : Bukkit.getOnlinePlayers()) if (team == arena.team(member.getUniqueId())) manager.applyHaste(member, team);
             }
-        } else if (name.equals("Heal Pool") && !arena.healPool(team) && pay(player, Material.DIAMOND, 3)) {
+        } else if (name.equals("Heal Pool") && !arena.healPool(team) && pay(player, Material.DIAMOND, 1)) {
             arena.healPool(team, true);
-        } else if (name.equals("Dragon Buff") && !arena.dragonBuff(team) && pay(player, Material.DIAMOND, 5)) {
-            arena.dragonBuff(team, true);
-            for (Player member : Bukkit.getOnlinePlayers()) {
-                if (team != arena.team(member.getUniqueId()) || arena.eliminated().contains(member.getUniqueId())) continue;
-                try {
-                    member.setMaxHealth(24.0);
-                    member.setHealth(Math.min(24.0, member.getHealth() + 4.0));
-                } catch (Throwable ignored) { }
+        } else if (name.startsWith("Cushioned Boots") && arena.cushionedBootsLevel(team) < 2) {
+            int level = arena.cushionedBootsLevel(team);
+            if (pay(player, Material.DIAMOND, GameRules.cushionedBootsCost(level))) {
+                arena.cushionedBootsLevel(team, level + 1);
+                for (Player member : Bukkit.getOnlinePlayers()) if (team == arena.team(member.getUniqueId())) manager.equipArmor(member, team);
             }
-        } else if (name.equals("Cushioned Boots") && !arena.cushionedBoots(team) && pay(player, Material.DIAMOND, 2)) {
-            arena.cushionedBoots(team, true);
-            for (Player member : Bukkit.getOnlinePlayers()) if (team == arena.team(member.getUniqueId())) manager.equipArmor(member, team);
         } else if (buyTrap(player, arena, team, name)) {
             /* queued */
         }
@@ -1034,15 +1784,18 @@ public final class GuiController {
 
     private boolean buyTrap(Player player, Arena arena, TeamColor team, String name) {
         Arena.TrapType type = null;
-        if (name.equals("Alarm Trap")) type = Arena.TrapType.ALARM;
-        else if (name.equals("Blindness Trap")) type = Arena.TrapType.BLINDNESS;
+        if (name.equals("Blindness Trap")) type = Arena.TrapType.BLINDNESS;
         else if (name.equals("Counter-Offensive Trap")) type = Arena.TrapType.COUNTER_OFFENSIVE;
         else if (name.equals("Miner Fatigue Trap")) type = Arena.TrapType.MINER_FATIGUE;
         else if (name.equals("Reveal Trap")) type = Arena.TrapType.REVEAL;
         if (type == null) return false;
+        if (arena.traps(team).size() >= GameRules.TRAP_QUEUE_MAX) {
+            player.sendMessage(ChatColor.RED + "Your traps queue is full!");
+            Sounds.cannotAfford(player);
+            return true;
+        }
         int cost = GameRules.trapDiamondCost(arena.traps(team).size());
-        if (!pay(player, Material.DIAMOND, cost)) return true;
-        if (!arena.enqueueTrap(team, type)) player.sendMessage(ChatColor.RED + "Trap queue is full.");
+        if (pay(player, Material.DIAMOND, cost)) arena.enqueueTrap(team, type);
         return true;
     }
 
@@ -1123,6 +1876,122 @@ public final class GuiController {
     private static ItemStack setupItem(Material material, String name, boolean set) { return Items.named(new ItemStack(material), (set ? ChatColor.GREEN : ChatColor.YELLOW) + name, status(set)); }
     private static String status(boolean set) { return set ? ChatColor.GREEN + "Set" : ChatColor.RED + "Missing"; }
 
+    private static int quickBuyIndex(int rawSlot) {
+        for (int i = 0; i < GameRules.QUICK_BUY_SLOTS.length; i++) if (GameRules.QUICK_BUY_SLOTS[i] == rawSlot) return i;
+        return -1;
+    }
+
+    private static boolean isFavoriteOffer(String name) {
+        return ShopCatalog.offer(name) != null || name.equals("Shears") || name.equals("Permanent Shears")
+            || name.endsWith(" Pickaxe") || name.endsWith(" Axe");
+    }
+
+    private static String favoriteKey(String name) {
+        if (name.equals("Permanent Shears")) return "Shears";
+        if (name.endsWith(" Pickaxe")) return "Wooden Pickaxe";
+        if (name.endsWith(" Axe")) return "Wooden Axe";
+        return name;
+    }
+
+    private static ItemStack appendLore(ItemStack item, String line) {
+        ItemStack copy = item.clone();
+        if (copy.getItemMeta() == null) return copy;
+        org.bukkit.inventory.meta.ItemMeta meta = copy.getItemMeta();
+        List<String> lore = meta.getLore() == null ? new ArrayList<String>() : new ArrayList<String>(meta.getLore());
+        lore.add(line);
+        meta.setLore(lore);
+        copy.setItemMeta(meta);
+        return copy;
+    }
+
+    private static void addAssignHints(Inventory inventory) {
+        for (int slot = 18; slot <= 44; slot++) {
+            ItemStack item = inventory.getItem(slot);
+            String name = Items.name(item);
+            if (item == null || name.isEmpty() || name.equals(" ")) continue;
+            inventory.setItem(slot, appendLore(item, ChatColor.AQUA + "Sneak Click to add to Quick Buy!"));
+        }
+    }
+
+    private String hypixelApiKey() {
+        try {
+            String environment = System.getenv("BEDLAM_HYPIXEL_API_KEY");
+            if (environment != null && !environment.trim().isEmpty()) return environment.trim();
+        } catch (SecurityException ignored) { }
+        return plugin.getConfig().getString("hypixel-api-key", "").trim();
+    }
+
+    private void importHypixelQuickBuy(final Player player) {
+        final String apiKey = hypixelApiKey();
+        if (apiKey.isEmpty()) {
+            player.sendMessage(ChatColor.RED + "Set BEDLAM_HYPIXEL_API_KEY or hypixel-api-key in config.yml, then reload.");
+            Sounds.cannotAfford(player);
+            return;
+        }
+        player.closeInventory();
+        player.sendMessage(ChatColor.YELLOW + "Loading your Quick Buy from Hypixel...");
+        final UUID uuid = player.getUniqueId();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, new Runnable() {
+            @Override public void run() {
+                HttpURLConnection connection = null;
+                try {
+                    URL url = new URL("https://api.hypixel.net/v2/player?uuid=" + uuid.toString().replace("-", ""));
+                    connection = (HttpURLConnection) url.openConnection();
+                    connection.setRequestProperty("API-Key", apiKey);
+                    connection.setConnectTimeout(7000);
+                    connection.setReadTimeout(7000);
+                    int status = connection.getResponseCode();
+                    InputStream input = status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream();
+                    String body = readUtf8(input);
+                    if (status != 200) throw new IllegalStateException("Hypixel API returned HTTP " + status + ".");
+                    JsonObject root = new JsonParser().parse(body).getAsJsonObject();
+                    JsonElement playerElement = root.get("player");
+                    if (playerElement == null || playerElement.isJsonNull()) throw new IllegalStateException("Hypixel could not find this player.");
+                    JsonObject stats = playerElement.getAsJsonObject().getAsJsonObject("stats");
+                    JsonObject bedwars = stats == null ? null : stats.getAsJsonObject("Bedwars");
+                    JsonElement favorites = bedwars == null ? null : bedwars.get("favourites_2");
+                    if (favorites == null || favorites.isJsonNull()) throw new IllegalStateException("This Hypixel account has no saved Bed Wars Quick Buy layout.");
+                    final String[] imported = ShopCatalog.parseHypixelFavorites(favorites.getAsString());
+                    Bukkit.getScheduler().runTask(plugin, new Runnable() {
+                        @Override public void run() {
+                            Player online = Bukkit.getPlayer(uuid);
+                            if (online == null) return;
+                            plugin.stats().setFavorites(uuid, imported);
+                            plugin.stats().save();
+                            favoritePendingItem.remove(uuid);
+                            favoriteAssignSlot.remove(uuid);
+                            online.sendMessage(ChatColor.GREEN + "Imported your Hypixel Quick Buy layout.");
+                            Sounds.levelUp(online);
+                            openShopCategory(online, "Quick Buy");
+                        }
+                    });
+                } catch (final Exception exception) {
+                    Bukkit.getScheduler().runTask(plugin, new Runnable() {
+                        @Override public void run() {
+                            Player online = Bukkit.getPlayer(uuid);
+                            if (online != null) online.sendMessage(ChatColor.RED + "Quick Buy import failed: " + exception.getMessage());
+                        }
+                    });
+                } finally {
+                    if (connection != null) connection.disconnect();
+                }
+            }
+        });
+    }
+
+    private static String readUtf8(InputStream input) throws java.io.IOException {
+        if (input == null) return "";
+        BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+        StringBuilder text = new StringBuilder();
+        try {
+            String line;
+            while ((line = reader.readLine()) != null) text.append(line);
+        } finally {
+            reader.close();
+        }
+        return text.toString();
+    }
+
     private ItemStack shopOffer(Player player, ItemStack icon, String title, String buyName, int amount, Material currency, String... extra) {
         boolean afford = player.getInventory().containsAtLeast(new ItemStack(currency), amount);
         List<String> lore = new ArrayList<String>();
@@ -1161,33 +2030,20 @@ public final class GuiController {
     private static String roman(int level) { return new String[] {"I", "II", "III", "IV", "MAX"}[Math.min(level - 1, 4)]; }
     private boolean admin(Player player) { return plugin.isAdmin(player); }
 
-    public boolean guiBusy(Player player) { return guiBusy.contains(player.getUniqueId()); }
+    public boolean guiBusy(Player player) {
+        return guiBusy.contains(player.getUniqueId()) || ChestGuis.isPendingOpen(player);
+    }
 
     public void beginGuiClick(Player player) { guiBusy.add(player.getUniqueId()); }
 
-    public void endGuiClick(Player player) {
-        if (!pendingOpen.contains(player.getUniqueId())) guiBusy.remove(player.getUniqueId());
-    }
+    public void endGuiClick(Player player) { guiBusy.remove(player.getUniqueId()); }
 
     private static Inventory chest(int size, String title) {
-        return Bukkit.createInventory(null, size, GameRules.inventoryTitle(title));
+        return ChestGuis.create(size, title);
     }
 
-    /** Never open during InventoryClickEvent — delay 1 tick (delay 0 still races 1.8 Container.click). */
-    private void openGui(final Player player, final Inventory inventory) {
-        final UUID uuid = player.getUniqueId();
-        guiBusy.add(uuid);
-        pendingOpen.add(uuid);
-        Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
-            @Override public void run() {
-                try {
-                    if (player.isOnline()) player.openInventory(inventory);
-                } finally {
-                    pendingOpen.remove(uuid);
-                    guiBusy.remove(uuid);
-                }
-            }
-        }, 1L);
+    private void openGui(Player player, Inventory inventory) {
+        ChestGuis.open(plugin, player, inventory);
     }
 
     private static Block targetBlock(Player player, int range) {
@@ -1200,6 +2056,27 @@ public final class GuiController {
     private static final class ArenaDraft {
         private final ArenaSettings settings;
         private final boolean newWorld;
-        private ArenaDraft(ArenaSettings settings, boolean newWorld) { this.settings = settings; this.newWorld = newWorld; }
+        private final GameMode previousGameMode;
+        private ArenaDraft(ArenaSettings settings, boolean newWorld, GameMode previousGameMode) {
+            this.settings = settings;
+            this.newWorld = newWorld;
+            this.previousGameMode = previousGameMode;
+        }
+    }
+
+    private static final class BorderSnapshot {
+        private final double centerX;
+        private final double centerZ;
+        private final double size;
+        private final int warningDistance;
+        private final double damageAmount;
+
+        private BorderSnapshot(double centerX, double centerZ, double size, int warningDistance, double damageAmount) {
+            this.centerX = centerX;
+            this.centerZ = centerZ;
+            this.size = size;
+            this.warningDistance = warningDistance;
+            this.damageAmount = damageAmount;
+        }
     }
 }

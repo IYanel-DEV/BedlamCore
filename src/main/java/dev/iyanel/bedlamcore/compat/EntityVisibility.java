@@ -204,6 +204,12 @@ public final class EntityVisibility {
         }
     }
 
+    public static String compatibilityMode() {
+        resolveModern();
+        if (hideEntity != null && showEntity != null) return "Bukkit hideEntity/showEntity";
+        return resolvePackets() ? "reflective 1.8 packet fallback" : "unavailable";
+    }
+
     public static void clearViewer(UUID viewerId) {
         packetHidden.remove(viewerId);
     }

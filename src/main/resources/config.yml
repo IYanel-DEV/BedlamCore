@@ -1,6 +1,8 @@
 countdown-seconds: 10
 respawn-seconds: 5
 ending-seconds: 8
+# Prefer the BEDLAM_HYPIXEL_API_KEY environment variable. The config value is an optional fallback.
+hypixel-api-key: ""
 modes:
   solo:
     minimum-players: 2
@@ -21,10 +23,447 @@ chat:
     blue: "&9[BLUE] "
     green: "&a[GREEN] "
     yellow: "&e[YELLOW] "
+    aqua: "&b[AQUA] "
+    white: "&f[WHITE] "
+    pink: "&d[PINK] "
+    gray: "&7[GRAY] "
 scoreboard:
   footer: "&eplay.bedlam"
   lobby-id: "L1"
-void-drop-blocks: 30
+# Blocks below lowest team bed Y (else waiting spawn) before instant void kill.
+void-depth: 15
+# Lobby cosmetics shop (tokens). Owned/equipped persist in stats.yml.
+# Kill Message packs use messages.{kill,void_kill,shot,fall,explosion,fire}.
+# Missing item IDs are filled from built-in defaults on reload (old configs keep working).
+cosmetics:
+  items:
+    km_fire:
+      category: KILL_MESSAGE
+      name: "&6Fire"
+      cost: 100
+      messages:
+        kill: "%victim% &7was struck down by %killer%&7."
+        void_kill: "%victim% &7was melted by %killer%&7."
+        shot: "%victim% &7was turned to ash by %killer%&7."
+        fall: "%victim% &7was turned to dust by %killer%&7."
+        explosion: "%victim% &7was fried by %killer%&7."
+        fire: "%victim% &7was incinerated by %killer%&7."
+    km_western:
+      category: KILL_MESSAGE
+      name: "&eWestern"
+      cost: 100
+      messages:
+        kill: "%victim% &7was filled full of lead by %killer%&7."
+        void_kill: "%victim% &7met their end by %killer%&7."
+        shot: "%victim% &7lost the draw to %killer%&7."
+        fall: "%victim% &7lost a drinking contest with %killer%&7."
+        explosion: "%victim% &7was killed with dynamite by %killer%&7."
+        fire: "%victim% &7was iced by %killer%&7."
+    km_honourable:
+      category: KILL_MESSAGE
+      name: "&aHonourable"
+      cost: 100
+      messages:
+        kill: "%victim% &7died in close combat to %killer%&7."
+        void_kill: "%victim% &7fought to the edge with %killer%&7."
+        shot: "%victim% &7fell to the great marksmanship of %killer%&7."
+        fall: "%victim% &7stumbled off a ledge with help by %killer%&7."
+        explosion: "%victim% &7tangoed with %killer%&7."
+        fire: "%victim% &7had to raise the white flag to %killer%&7."
+    km_love:
+      category: KILL_MESSAGE
+      name: "&dLove"
+      cost: 200
+      messages:
+        kill: "%victim% &7was given the cold shoulder by %killer%&7."
+        void_kill: "%victim% &7was hit off by a love bomb from %killer%&7."
+        shot: "%victim% &7was struck with Cupid's arrow by %killer%&7."
+        fall: "%victim% &7was out of the league of %killer%&7."
+        explosion: "%victim% &7was no match for %killer%&7."
+        fire: "%victim% &7was dismantled by %killer%&7."
+    km_bbq:
+      category: KILL_MESSAGE
+      name: "&cBBQ"
+      cost: 200
+      messages:
+        kill: "%victim% &7was glazed in BBQ sauce by %killer%&7."
+        void_kill: "%victim% &7slipped in BBQ sauce off the edge spilled by %killer%&7."
+        shot: "%victim% &7was thrown chili powder at by %killer%&7."
+        fall: "%victim% &7was not spicy enough for %killer%&7."
+        explosion: "%victim% &7was deep fried by %killer%&7."
+        fire: "%victim% &7was sliced up by %killer%&7."
+    km_woof:
+      category: KILL_MESSAGE
+      name: "&6Woof Woof"
+      cost: 200
+      messages:
+        kill: "%victim% &7was bitten by %killer%&7."
+        void_kill: "%victim% &7howled into the void for %killer%&7."
+        shot: "%victim% &7caught the ball thrown by %killer%&7."
+        fall: "%victim% &7was distracted by a puppy placed by %killer%&7."
+        explosion: "%victim% &7played too rough with %killer%&7."
+        fire: "%victim% &7was ripped apart by %killer%&7."
+    km_pirate:
+      category: KILL_MESSAGE
+      name: "&9Pirate"
+      cost: 300
+      messages:
+        kill: "%victim% &7be sent to Davy Jones' locker by %killer%&7."
+        void_kill: "%victim% &7be cannonballed to death by %killer%&7."
+        shot: "%victim% &7be shot and killed by %killer%&7."
+        fall: "%victim% &7be killed with magic by %killer%&7."
+        explosion: "%victim% &7be blown to bits by %killer%&7."
+        fire: "%victim% &7be killed with metal by %killer%&7."
+    km_spooky:
+      category: KILL_MESSAGE
+      name: "&5Literally Spooky"
+      cost: 350
+      messages:
+        kill: "%victim% &7was spooked by %killer%&7."
+        void_kill: "%victim% &7was spooked off the map by %killer%&7."
+        shot: "%victim% &7was remotely spooked by %killer%&7."
+        fall: "%victim% &7was totally spooked by %killer%&7."
+        explosion: "%victim% &7was blasted spooky by %killer%&7."
+        fire: "%victim% &7was spooked in flames by %killer%&7."
+    km_memed:
+      category: KILL_MESSAGE
+      name: "&bMemed"
+      cost: 350
+      messages:
+        kill: "%victim% &7got rekt by %killer%&7."
+        void_kill: "%victim% &7took the L to %killer%&7."
+        shot: "%victim% &7got smacked by %killer%&7."
+        fall: "%victim% &7got roasted by %killer%&7."
+        explosion: "%victim% &7got bamboozled by %killer%&7."
+        fire: "%victim% &7got memed by %killer%&7."
+    km_dramatic:
+      category: KILL_MESSAGE
+      name: "&4Dramatic"
+      cost: 350
+      messages:
+        kill: "%victim% &7was tragically backstabbed by %killer%&7."
+        void_kill: "%victim% &7was heartlessly let go by %killer%&7."
+        shot: "%victim% &7's heart was pierced by %killer%&7."
+        fall: "%victim% &7was delivered into nothingness by %killer%&7."
+        explosion: "%victim% &7was dreadfully corrupted by %killer%&7."
+        fire: "%victim% &7was dismembered by %killer%&7."
+    km_snow:
+      category: KILL_MESSAGE
+      name: "&fSnow Storm"
+      cost: 350
+      messages:
+        kill: "%victim% &7was locked outside during a snow storm by %killer%&7."
+        void_kill: "%victim% &7was pushed into a snowbank by %killer%&7."
+        shot: "%victim% &7was hit with a snowball from %killer%&7."
+        fall: "%victim% &7was shoved down an icy slope by %killer%&7."
+        explosion: "%victim% &7got snowed in by %killer%&7."
+        fire: "%victim% &7was made into a snowman by %killer%&7."
+    km_eggy:
+      category: KILL_MESSAGE
+      name: "&eEggy"
+      cost: 350
+      messages:
+        kill: "%victim% &7was painted pretty by %killer%&7."
+        void_kill: "%victim% &7was deviled into the void by %killer%&7."
+        shot: "%victim% &7slipped into a pan placed by %killer%&7."
+        fall: "%victim% &7was flipped off the edge by %killer%&7."
+        explosion: "%victim% &7was scrambled by %killer%&7."
+        fire: "%victim% &7was made sunny side up by %killer%&7."
+    km_celebratory:
+      category: KILL_MESSAGE
+      name: "&dCelebratory"
+      cost: 350
+      messages:
+        kill: "%victim% &7was whacked with a party balloon by %killer%&7."
+        void_kill: "%victim% &7was popped into the void by %killer%&7."
+        shot: "%victim% &7was shot with a roman candle by %killer%&7."
+        fall: "%victim% &7was launched like a firework by %killer%&7."
+        explosion: "%victim% &7exploded from a firework by %killer%&7."
+        fire: "%victim% &7was lit up by %killer%&7."
+    km_wrapped:
+      category: KILL_MESSAGE
+      name: "&cWrapped Up"
+      cost: 350
+      messages:
+        kill: "%victim% &7was wrapped up by %killer%&7."
+        void_kill: "%victim% &7was tied into a bow by %killer%&7."
+        shot: "%victim% &7was glued up by %killer%&7."
+        fall: "%victim% &7tripped over a present placed by %killer%&7."
+        explosion: "%victim% &7was stuffed with tissue paper by %killer%&7."
+        fire: "%victim% &7was taped together by %killer%&7."
+    km_moon:
+      category: KILL_MESSAGE
+      name: "&bTo The Moon"
+      cost: 300
+      messages:
+        kill: "%victim% &7was crushed into moon dust by %killer%&7."
+        void_kill: "%victim% &7was sent the wrong way by %killer%&7."
+        shot: "%victim% &7was hit by an asteroid from %killer%&7."
+        fall: "%victim% &7was blasted to the moon by %killer%&7."
+        explosion: "%victim% &7was blasted to dust by %killer%&7."
+        fire: "%victim% &7was blown up by %killer%&7."
+    km_festive:
+      category: KILL_MESSAGE
+      name: "&aFestive"
+      cost: 350
+      messages:
+        kill: "%victim% &7was smothered in holiday cheer by %killer%&7."
+        void_kill: "%victim% &7was banished into the ether by %killer%&7's holiday spirit."
+        shot: "%victim% &7was sniped by a missile of festivity by %killer%&7."
+        fall: "%victim% &7was pushed by %killer%&7's holiday spirit."
+        explosion: "%victim% &7was melted by %killer%&7's holiday spirit."
+        fire: "%victim% &7was sung holiday tunes to by %killer%&7."
+    km_roar:
+      category: KILL_MESSAGE
+      name: "&6Roar"
+      cost: 300
+      messages:
+        kill: "%victim% &7was ripped to shreds by %killer%&7."
+        void_kill: "%victim% &7was charged by %killer%&7."
+        shot: "%victim% &7was pounced on by %killer%&7."
+        fall: "%victim% &7was ripped and thrown by %killer%&7."
+        explosion: "%victim% &7was mauled in a blast by %killer%&7."
+        fire: "%victim% &7was ripped to shreds by %killer%&7."
+    km_buzz:
+      category: KILL_MESSAGE
+      name: "&eBuzz"
+      cost: 200
+      messages:
+        kill: "%victim% &7was buzzed to death by %killer%&7."
+        void_kill: "%victim% &7was bzzz'd into the void by %killer%&7."
+        shot: "%victim% &7was startled by %killer%&7."
+        fall: "%victim% &7was stung off the edge by %killer%&7."
+        explosion: "%victim% &7was stung by %killer%&7."
+        fire: "%victim% &7was bee'd by %killer%&7."
+    km_oink:
+      category: KILL_MESSAGE
+      name: "&dOink"
+      cost: 200
+      messages:
+        kill: "%victim% &7was oinked by %killer%&7."
+        void_kill: "%victim% &7slipped into void for %killer%&7."
+        shot: "%victim% &7got attacked by a carrot from %killer%&7."
+        fall: "%victim% &7was distracted by a piglet from %killer%&7."
+        explosion: "%victim% &7was gulped by %killer%&7."
+        fire: "%victim% &7was oinked by %killer%&7."
+    km_squeak:
+      category: KILL_MESSAGE
+      name: "&7Squeak"
+      cost: 200
+      messages:
+        kill: "%victim% &7was chewed up by %killer%&7."
+        void_kill: "%victim% &7was scared into the void by %killer%&7."
+        shot: "%victim% &7stepped in a mouse trap placed by %killer%&7."
+        fall: "%victim% &7was distracted by a rat dragging pizza from %killer%&7."
+        explosion: "%victim% &7squeaked apart by %killer%&7."
+        fire: "%victim% &7squeaked around with %killer%&7."
+    km_ox:
+      category: KILL_MESSAGE
+      name: "&6Ox'd"
+      cost: 200
+      messages:
+        kill: "%victim% &7was trampled by %killer%&7."
+        void_kill: "%victim% &7was back kicked into the void by %killer%&7."
+        shot: "%victim% &7was impaled from a distance by %killer%&7."
+        fall: "%victim% &7was headbutted off a cliff by %killer%&7."
+        explosion: "%victim% &7was impaled by %killer%&7."
+        fire: "%victim% &7was trampled by %killer%&7."
+    km_primal:
+      category: KILL_MESSAGE
+      name: "&cPrimal"
+      cost: 250
+      messages:
+        kill: "%victim% &7was hunted down by %killer%&7."
+        void_kill: "%victim% &7was thrown into a volcano by %killer%&7."
+        shot: "%victim% &7got skewered by %killer%&7."
+        fall: "%victim% &7stumbled on a trap set by %killer%&7."
+        explosion: "%victim% &7was sacrificed by %killer%&7."
+        fire: "%victim% &7was mauled by %killer%&7."
+    km_santa:
+      category: KILL_MESSAGE
+      name: "&cSanta's Workshop"
+      cost: 250
+      messages:
+        kill: "%victim% &7was wrapped into a gift by %killer%&7."
+        void_kill: "%victim% &7hit the hard-wood floor because of %killer%&7."
+        shot: "%victim% &7was put on the naughty list by %killer%&7."
+        fall: "%victim% &7was pushed down a slope by %killer%&7."
+        explosion: "%victim% &7was traded in for milk and cookies by %killer%&7."
+        fire: "%victim% &7was turned to gingerbread by %killer%&7."
+    km_bridging:
+      category: KILL_MESSAGE
+      name: "&aBridging for Dummies"
+      cost: 500
+      messages:
+        kill: "%victim% &7had a small brain moment while fighting %killer%&7."
+        void_kill: "%victim% &7was not able to block clutch against %killer%&7."
+        shot: "%victim% &7got 360 no-scoped by %killer%&7."
+        fall: "%victim% &7forgot how many blocks they had left while fighting %killer%&7."
+        explosion: "%victim% &7got absolutely destroyed by %killer%&7."
+        fire: "%victim% &7has left the game after seeing %killer%&7."
+    km_oldman:
+      category: KILL_MESSAGE
+      name: "&eOld Man"
+      cost: 500
+      messages:
+        kill: "%victim% &7was yelled at by %killer%&7."
+        void_kill: "%victim% &7was thrown off the lawn by %killer%&7."
+        shot: "%victim% &7was accidentally spit on by %killer%&7."
+        fall: "%victim% &7slipped on the fake teeth of %killer%&7."
+        explosion: "%victim% &7was sold in a garage sale by %killer%&7."
+        fire: "%victim% &7was chased away by %killer%&7."
+    km_crushed:
+      category: KILL_MESSAGE
+      name: "&cCrushed"
+      cost: 100
+      message: "%killer% &7crushed %victim%&7."
+    km_rekt:
+      category: KILL_MESSAGE
+      name: "&6Rekt"
+      cost: 150
+      message: "%victim% &7got rekt by %killer%&7."
+    km_swept:
+      category: KILL_MESSAGE
+      name: "&bSwept Away"
+      cost: 200
+      message: "%killer% &7swept %victim% &7off the map."
+    km_obliterated:
+      category: KILL_MESSAGE
+      name: "&4Obliterated"
+      cost: 250
+      message: "%victim% &7was obliterated by %killer%&7."
+    ke_blood:
+      category: KILL_EFFECT
+      name: "&cBlood"
+      cost: 125
+      particles: [REDSTONE, CRIT, CRITICAL_HIT]
+    ke_flame:
+      category: KILL_EFFECT
+      name: "&6Flame"
+      cost: 150
+      particles: [FLAME, SMOKE]
+    ke_spark:
+      category: KILL_EFFECT
+      name: "&eSpark"
+      cost: 175
+      particles: [FIREWORKS_SPARK, FIREWORK, CRIT]
+    ke_smoke:
+      category: KILL_EFFECT
+      name: "&8Smoke Bomb"
+      cost: 100
+      particles: [LARGE_SMOKE, SMOKE, CLOUD]
+    we_firework:
+      category: WIN_EFFECT
+      name: "&dFirework"
+      cost: 200
+      effect: firework
+    we_lightning:
+      category: WIN_EFFECT
+      name: "&bLightning"
+      cost: 250
+      effect: lightning
+    we_burst:
+      category: WIN_EFFECT
+      name: "&aBurst"
+      cost: 175
+      effect: burst
+      particles: [EXPLOSION_LARGE, EXPLOSION, FLAME]
+    we_hearts:
+      category: WIN_EFFECT
+      name: "&cHearts"
+      cost: 150
+      effect: hearts
+      particles: [HEART, VILLAGER_HAPPY, HAPPY_VILLAGER]
+    we_cold_snap:
+      category: WIN_EFFECT
+      name: "&bCold Snap"
+      cost: 200
+      effect: cold_snap
+      particles: [SNOWBALL, SNOW_SHOVEL, CLOUD, FIREWORKS_SPARK]
+    we_burning_soul:
+      category: WIN_EFFECT
+      name: "&6Burning Soul"
+      cost: 300
+      effect: burning_soul
+      particles: [SOUL_FIRE_FLAME, FLAME, SMOKE, LARGE_SMOKE]
+    we_notes:
+      category: WIN_EFFECT
+      name: "&dNotes"
+      cost: 250
+      effect: notes
+      particles: [NOTE, NOTE_BLOCK, VILLAGER_HAPPY]
+    we_blood:
+      category: WIN_EFFECT
+      name: "&4Blood Explosion"
+      cost: 350
+      effect: blood
+      particles: [REDSTONE, CRIT, CRITICAL_HIT, DAMAGE_INDICATOR]
+    we_cookie:
+      category: WIN_EFFECT
+      name: "&6Cookie Fountain"
+      cost: 300
+      effect: cookie
+      particles: [CRIT, VILLAGER_HAPPY, HAPPY_VILLAGER, CLOUD]
+    we_campfire:
+      category: WIN_EFFECT
+      name: "&6Campfire"
+      cost: 275
+      effect: campfire
+      particles: [FLAME, LAVA, LARGE_SMOKE, SMOKE]
+    we_glyphs:
+      category: WIN_EFFECT
+      name: "&5Glyphs"
+      cost: 350
+      effect: glyphs
+      particles: [ENCHANTMENT_TABLE, ENCHANT, END_ROD, CRIT]
+    we_snowball:
+      category: WIN_EFFECT
+      name: "&fSnowball Fight"
+      cost: 225
+      effect: snowball
+      particles: [SNOWBALL, SNOW_SHOVEL, CLOUD, CRIT]
+    we_tornado:
+      category: WIN_EFFECT
+      name: "&7Tornado"
+      cost: 400
+      effect: tornado
+      particles: [CLOUD, SMOKE, CRIT, SPELL]
+    we_meteor:
+      category: WIN_EFFECT
+      name: "&cMeteor Shower"
+      cost: 400
+      effect: meteor
+      particles: [FLAME, LAVA, EXPLOSION, SMOKE]
+    we_sparkler:
+      category: WIN_EFFECT
+      name: "&eSparkler"
+      cost: 225
+      effect: sparkler
+      particles: [FIREWORKS_SPARK, FIREWORK, CRIT, FLAME]
+    we_portal:
+      category: WIN_EFFECT
+      name: "&5Portal"
+      cost: 300
+      effect: portal
+      particles: [PORTAL, SPELL_WITCH, SPELL, CRIT]
+    we_rainbow:
+      category: WIN_EFFECT
+      name: "&dRainbow"
+      cost: 450
+      effect: rainbow
+      particles: [REDSTONE, SPELL_MOB, SPELL, CRIT, FIREWORKS_SPARK]
+    we_anvil:
+      category: WIN_EFFECT
+      name: "&8Anvil Rain"
+      cost: 350
+      effect: anvil
+      particles: [CRIT, CRITICAL_HIT, SMOKE, CLOUD]
+    we_dragon:
+      category: WIN_EFFECT
+      name: "&5Dragon"
+      cost: 500
+      effect: dragon
+      particles: [FLAME, PORTAL, SMOKE, CRIT]
 generator-periods:
   iron: 20
   gold: 80

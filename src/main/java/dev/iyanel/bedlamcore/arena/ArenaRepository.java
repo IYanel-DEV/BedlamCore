@@ -2,17 +2,22 @@ package dev.iyanel.bedlamcore.arena;
 
 import dev.iyanel.bedlamcore.lobby.LobbySettings;
 import dev.iyanel.bedlamcore.util.Locations;
+import dev.iyanel.bedlamcore.util.AtomicFiles;
 import dev.iyanel.bedlamcore.world.GameWorlds;
+import dev.iyanel.bedlamcore.world.MapTemplatesCheck;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.WorldCreator;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.EntityType;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -42,6 +47,8 @@ public final class ArenaRepository {
             lobby.npc(type).skin(yaml.getString(path + "skin"));
             lobby.npc(type).lookAtPlayers(yaml.getBoolean(path + "look-at-players", false));
         }
+        lobby.cosmeticsNpc(decode(yaml.getString("lobby.cosmetics.location")));
+        lobby.profileNpc(decode(yaml.getString("lobby.profile.location")));
         return lobby;
     }
 
@@ -58,6 +65,26 @@ public final class ArenaRepository {
         return arenas;
     }
 
+    /** Load a bundled template {@code arena.yml} (root key {@code arena:}), remap world, force mode. */
+    public ArenaSettings readTemplatePreset(File file, String id, GameType type, String worldName) throws IOException {
+        String text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+        if (!text.isEmpty() && text.charAt(0) == '\uFEFF') text = text.substring(1);
+        try {
+            YamlConfiguration peek = new YamlConfiguration();
+            peek.loadFromString(text);
+            String fromWorld = peek.getString("arena.world", "bedwars-e2560");
+            text = MapTemplatesCheck.remapWorld(text, fromWorld, worldName);
+            YamlConfiguration yaml = new YamlConfiguration();
+            yaml.loadFromString(text);
+            ArenaSettings settings = readArena(yaml, "arena", id);
+            settings.gameType(type);
+            settings.worldName(worldName);
+            return settings;
+        } catch (InvalidConfigurationException exception) {
+            throw new IOException("Invalid template arena.yml: " + exception.getMessage(), exception);
+        }
+    }
+
     public void save(LobbySettings lobby, Collection<ArenaSettings> arenas) {
         YamlConfiguration yaml = new YamlConfiguration();
         yaml.set("lobby.spawn", Locations.encode(lobby.spawn()));
@@ -70,10 +97,12 @@ public final class ArenaRepository {
             yaml.set(path + "skin", lobby.npc(type).skin());
             yaml.set(path + "look-at-players", lobby.npc(type).lookAtPlayers());
         }
+        yaml.set("lobby.cosmetics.location", Locations.encode(lobby.cosmeticsNpc()));
+        yaml.set("lobby.profile.location", Locations.encode(lobby.profileNpc()));
         for (ArenaSettings arena : arenas) writeArena(yaml, arena);
         try {
             if (!plugin.getDataFolder().exists() && !plugin.getDataFolder().mkdirs()) throw new IOException("Could not create " + plugin.getDataFolder());
-            yaml.save(file);
+            AtomicFiles.writeUtf8(file.toPath(), yaml.saveToString());
         } catch (IOException exception) {
             plugin.getLogger().severe("Could not save arenas.yml: " + exception.getMessage());
         }
@@ -87,6 +116,7 @@ public final class ArenaRepository {
         ArenaSettings settings = new ArenaSettings(id, GameType.parse(yaml.getString(root + ".mode")), world);
         settings.waitingSpawn(decode(yaml.getString(root + ".waiting-spawn")));
         settings.spectator(spectator);
+        settings.buildBorderRadius(yaml.getInt(root + ".build-border-radius", ArenaSettings.DEFAULT_BUILD_BORDER_RADIUS));
         for (TeamColor color : TeamColor.values()) {
             String path = root + ".teams." + color.name().toLowerCase() + ".";
             ArenaSettings.TeamSettings team = settings.team(color);
@@ -109,6 +139,9 @@ public final class ArenaRepository {
         yaml.set(root + ".world", settings.worldName());
         yaml.set(root + ".waiting-spawn", Locations.encode(settings.waitingSpawn()));
         yaml.set(root + ".spectator", Locations.encode(settings.spectator()));
+        yaml.set(root + ".build-border-radius", settings.buildBorderRadius());
+        yaml.set(root + ".build-border-a", null);
+        yaml.set(root + ".build-border-b", null);
         for (TeamColor color : TeamColor.values()) {
             String path = root + ".teams." + color.name().toLowerCase() + ".";
             ArenaSettings.TeamSettings team = settings.team(color);

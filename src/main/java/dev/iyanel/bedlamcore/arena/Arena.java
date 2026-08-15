@@ -19,7 +19,7 @@ import java.util.UUID;
 public final class Arena {
     public enum State { WAITING, COUNTDOWN, RUNNING, ENDING }
     public enum TrapType {
-        ALARM("Alarm Trap"),
+
         BLINDNESS("Blindness Trap"),
         COUNTER_OFFENSIVE("Counter-Offensive Trap"),
         MINER_FATIGUE("Miner Fatigue Trap"),
@@ -36,6 +36,7 @@ public final class Arena {
     private final Set<UUID> eliminated = new HashSet<UUID>();
     /** 0 = leather, 1 = iron helm/chest, 2 = diamond helm/chest. Legs/boots always leather. */
     private final Map<UUID, Integer> armorTier = new HashMap<UUID, Integer>();
+    private final Set<UUID> chainmailOwned = new HashSet<UUID>();
     /** 0 = none; 1 wood … 4 diamond. Persists across deaths once purchased. */
     private final Map<UUID, Integer> pickaxeTier = new HashMap<UUID, Integer>();
     private final Map<UUID, Integer> axeTier = new HashMap<UUID, Integer>();
@@ -48,10 +49,11 @@ public final class Arena {
     private final Map<TeamColor, Integer> hasteLevel = new EnumMap<TeamColor, Integer>(TeamColor.class);
     private final Set<TeamColor> sharpness = new HashSet<TeamColor>();
     private final Set<TeamColor> healPool = new HashSet<TeamColor>();
-    private final Set<TeamColor> dragonBuff = new HashSet<TeamColor>();
-    private final Set<TeamColor> cushionedBoots = new HashSet<TeamColor>();
+
+    private final Map<TeamColor, Integer> cushionedBootsLevel = new EnumMap<TeamColor, Integer>(TeamColor.class);
     private final Map<TeamColor, List<TrapType>> traps = new EnumMap<TeamColor, List<TrapType>>(TeamColor.class);
     private final Map<TeamColor, Long> trapCooldownUntil = new EnumMap<TeamColor, Long>(TeamColor.class);
+    private final Map<UUID, Long> trapImmunityUntil = new HashMap<UUID, Long>();
     private final Map<TeamColor, Inventory> teamChests = new EnumMap<TeamColor, Inventory>(TeamColor.class);
     private final Set<String> placedBlocks = new HashSet<String>();
     private final Map<TeamColor, List<BlockState>> bedSnapshots = new EnumMap<TeamColor, List<BlockState>>(TeamColor.class);
@@ -72,6 +74,8 @@ public final class Arena {
     public Set<UUID> eliminated() { return eliminated; }
     public int armorTier(UUID player) { return armorTier.containsKey(player) ? armorTier.get(player) : 0; }
     public void armorTier(UUID player, int tier) { armorTier.put(player, Math.max(0, Math.min(2, tier))); }
+    public boolean chainmailOwned(UUID player) { return chainmailOwned.contains(player); }
+    public void chainmailOwned(UUID player, boolean value) { if (value) chainmailOwned.add(player); else chainmailOwned.remove(player); }
     public int pickaxeTier(UUID player) { return pickaxeTier.containsKey(player) ? pickaxeTier.get(player) : 0; }
     public void pickaxeTier(UUID player, int tier) { pickaxeTier.put(player, GameRules.clampToolTier(tier)); }
     public int axeTier(UUID player) { return axeTier.containsKey(player) ? axeTier.get(player) : 0; }
@@ -95,10 +99,9 @@ public final class Arena {
     public void sharpness(TeamColor team, boolean value) { if (value) sharpness.add(team); else sharpness.remove(team); }
     public boolean healPool(TeamColor team) { return healPool.contains(team); }
     public void healPool(TeamColor team, boolean value) { if (value) healPool.add(team); else healPool.remove(team); }
-    public boolean dragonBuff(TeamColor team) { return dragonBuff.contains(team); }
-    public void dragonBuff(TeamColor team, boolean value) { if (value) dragonBuff.add(team); else dragonBuff.remove(team); }
-    public boolean cushionedBoots(TeamColor team) { return cushionedBoots.contains(team); }
-    public void cushionedBoots(TeamColor team, boolean value) { if (value) cushionedBoots.add(team); else cushionedBoots.remove(team); }
+
+    public int cushionedBootsLevel(TeamColor team) { return cushionedBootsLevel.containsKey(team) ? cushionedBootsLevel.get(team) : 0; }
+    public void cushionedBootsLevel(TeamColor team, int level) { cushionedBootsLevel.put(team, Math.max(0, Math.min(2, level))); }
     public List<TrapType> traps(TeamColor team) { return traps.get(team); }
     public Inventory teamChest(TeamColor team) { return teamChests.get(team); }
     public Set<String> placedBlocks() { return placedBlocks; }
@@ -108,6 +111,7 @@ public final class Arena {
 
     public void clearPlayerState(UUID player) {
         armorTier.remove(player);
+        chainmailOwned.remove(player);
         pickaxeTier.remove(player);
         axeTier.remove(player);
         shearsOwned.remove(player);
@@ -135,6 +139,15 @@ public final class Arena {
         trapCooldownUntil.put(team, untilMillis);
     }
 
+    public void grantTrapImmunity(UUID player, long untilMillis) { trapImmunityUntil.put(player, untilMillis); }
+    public boolean trapImmune(UUID player, long nowMillis) {
+        Long until = trapImmunityUntil.get(player);
+        if (until == null) return false;
+        if (GameRules.activeUntil(until, nowMillis)) return true;
+        trapImmunityUntil.remove(player);
+        return false;
+    }
+
     public int aliveCount(TeamColor team) {
         int count = 0;
         for (Map.Entry<UUID, TeamColor> entry : players.entrySet()) {
@@ -146,13 +159,14 @@ public final class Arena {
     public void resetMatchData() {
         eliminated.clear();
         armorTier.clear();
+        chainmailOwned.clear();
         pickaxeTier.clear();
         axeTier.clear();
         shearsOwned.clear();
         sharpness.clear();
         healPool.clear();
-        dragonBuff.clear();
-        cushionedBoots.clear();
+
+        cushionedBootsLevel.clear();
         placedBlocks.clear();
         bedSnapshots.clear();
         generatedItems.clear();
@@ -163,6 +177,7 @@ public final class Arena {
         occupiedThisMatch.clear();
         traps.clear();
         trapCooldownUntil.clear();
+        trapImmunityUntil.clear();
         teamChests.clear();
         for (TeamColor team : TeamColor.values()) {
             beds.put(team, true);

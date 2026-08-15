@@ -10,6 +10,8 @@ import java.util.Map;
 public final class LobbySettings {
     private Location spawn;
     private final Map<GameType, NpcSettings> npcs = new EnumMap<GameType, NpcSettings>(GameType.class);
+    private Location cosmeticsNpc;
+    private Location profileNpc;
 
     public LobbySettings() {
         for (GameType type : GameType.values()) npcs.put(type, new NpcSettings());
@@ -18,11 +20,17 @@ public final class LobbySettings {
     public Location spawn() { return clone(spawn); }
     public void spawn(Location value) { spawn = clone(value); }
     public NpcSettings npc(GameType type) { return npcs.get(type); }
+    public Location cosmeticsNpc() { return clone(cosmeticsNpc); }
+    public void cosmeticsNpc(Location value) { cosmeticsNpc = clone(value); }
+    public Location profileNpc() { return clone(profileNpc); }
+    public void profileNpc(Location value) { profileNpc = clone(value); }
     public boolean complete() { return spawn != null && npc(GameType.SOLO).location() != null && npc(GameType.DOUBLES).location() != null; }
 
     public LobbySettings copy() {
         LobbySettings copy = new LobbySettings();
         copy.spawn(spawn);
+        copy.cosmeticsNpc(cosmeticsNpc);
+        copy.profileNpc(profileNpc);
         for (GameType type : GameType.values()) {
             copy.npc(type).location(npc(type).location());
             copy.npc(type).entityType(npc(type).entityType());

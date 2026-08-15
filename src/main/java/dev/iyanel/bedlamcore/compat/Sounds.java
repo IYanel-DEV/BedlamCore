@@ -85,6 +85,26 @@ public final class Sounds {
         play(player, "BLOCK_NOTE_BLOCK_CHIME", "BLOCK_NOTE_PLING", "NOTE_PLING", "ENTITY_PLAYER_LEVELUP", "LEVEL_UP");
     }
 
+    /** Short two-note cue for one-use drinks. */
+    public static void consumableUsed(Player player) {
+        play(player, 0.75F, 1.35F, "ENTITY_PLAYER_BURP", "BURP");
+        play(player, 0.55F, 1.85F, "BLOCK_NOTE_BLOCK_CHIME", "BLOCK_NOTE_PLING", "NOTE_PLING");
+    }
+
+    public static void spongeAbsorb(Location location) {
+        Sound sound = resolve("BLOCK_FIRE_EXTINGUISH", "FIZZ");
+        if (sound != null && location != null && location.getWorld() != null) {
+            location.getWorld().playSound(location, sound, 0.9F, 1.5F);
+        }
+    }
+
+    public static void deploy(Location location) {
+        Sound sound = resolve("BLOCK_ANVIL_LAND", "ANVIL_LAND", "BLOCK_WOOD_PLACE", "DIG_WOOD");
+        if (sound != null && location != null && location.getWorld() != null) {
+            location.getWorld().playSound(location, sound, 0.65F, 1.25F);
+        }
+    }
+
     /** Standing on/at forge: default item pickup. */
     public static void forgeCollect(Player player) {
         play(player, 1F, 1F, "ENTITY_ITEM_PICKUP", "ITEM_PICKUP");

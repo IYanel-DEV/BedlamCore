@@ -78,6 +78,12 @@ public final class GameService {
         return selected.join(player);
     }
 
+    public boolean playAgain(Player player) {
+        ArenaManager current = arena(player);
+        if (current == null) return false;
+        return quickJoin(player, current.arena().settings().gameType());
+    }
+
     public void leave(Player player) {
         ArenaManager current = arena(player);
         if (current != null) current.leave(player);

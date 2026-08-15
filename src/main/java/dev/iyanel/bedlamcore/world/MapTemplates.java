@@ -1,0 +1,123 @@
+package dev.iyanel.bedlamcore.world;
+
+import dev.iyanel.bedlamcore.BedlamCore;
+import dev.iyanel.bedlamcore.arena.ArenaSettings;
+import dev.iyanel.bedlamcore.arena.GameType;
+import dev.iyanel.bedlamcore.util.AtomicFiles;
+import org.bukkit.Bukkit;
+
+import java.io.BufferedInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+/**
+ * Bundled map templates (JAR resources → plugin data → server world container).
+ * ponytail: one hardcoded template for now; catalog grows when more zips ship.
+ */
+public final class MapTemplates {
+    public static final String BEDWARS_E2560 = "bedwars-e2560";
+    private static final List<String> IDS = Collections.unmodifiableList(Arrays.asList(BEDWARS_E2560));
+    private static final Set<String> SKIP_COPY = new HashSet<String>(Arrays.asList(
+        "arena.yml", "session.lock", "uid.dat", ".DS_Store"));
+
+    private final BedlamCore plugin;
+
+    public MapTemplates(BedlamCore plugin) {
+        this.plugin = plugin;
+    }
+
+    public List<String> list() {
+        return IDS;
+    }
+
+    /** Extract jar zip to {@code plugins/BedlamCore/templates/<id>/} if missing {@code arena.yml}. */
+    public Path ensureExtracted(String id) throws IOException {
+        if (!IDS.contains(id)) throw new IOException("Unknown template: " + id);
+        Path dir = plugin.getDataFolder().toPath().resolve("templates").resolve(id);
+        if (Files.isRegularFile(dir.resolve("arena.yml")) && Files.isRegularFile(dir.resolve("level.dat"))) {
+            return dir;
+        }
+        Files.createDirectories(dir.getParent());
+        String resource = "templates/" + id + ".zip";
+        InputStream raw = plugin.getResource(resource);
+        if (raw == null) throw new IOException("Missing jar resource " + resource);
+        Path temporary = dir.resolveSibling(id + ".extracting");
+        try {
+            AtomicFiles.deleteTree(temporary);
+            Files.createDirectories(temporary);
+            unzip(raw, temporary);
+            if (!Files.isRegularFile(temporary.resolve("arena.yml"))) {
+                throw new IOException("Template zip missing arena.yml: " + id);
+            }
+            AtomicFiles.replaceDirectoryFromCopy(temporary, dir, Collections.<String>emptySet());
+        } finally {
+            try { raw.close(); } catch (IOException ignored) { }
+            AtomicFiles.deleteTree(temporary);
+        }
+        return dir;
+    }
+
+    /**
+     * Resolve world name, copy template world if needed, load preset with Solo/Doubles.
+     * Prefer {@code bedwars-e2560}; on arena collision use {@code bedwars-e2560_solo|/doubles}.
+     */
+    public ArenaSettings materialize(String templateId, GameType type) throws IOException {
+        if (type == null) type = GameType.SOLO;
+        Path templateDir = ensureExtracted(templateId);
+        String worldName = resolveWorldName(templateId, type);
+        if (plugin.games().byId(worldName) != null || plugin.games().arenaInWorld(worldName) != null) {
+            throw new IOException(worldName + " already has an arena configured.");
+        }
+        Path dest = Bukkit.getWorldContainer().toPath().resolve(worldName);
+        if (!Files.isDirectory(dest) || !Files.isRegularFile(dest.resolve("level.dat"))) {
+            AtomicFiles.replaceDirectoryFromCopy(templateDir, dest, SKIP_COPY);
+        }
+        return plugin.arenas().readTemplatePreset(
+            templateDir.resolve("arena.yml").toFile(), worldName, type, worldName);
+    }
+
+    private String resolveWorldName(String templateId, GameType type) {
+        if (plugin.games().byId(templateId) == null && plugin.games().arenaInWorld(templateId) == null) {
+            return templateId;
+        }
+        return templateId + "_" + type.name().toLowerCase();
+    }
+
+    private static void unzip(InputStream raw, Path target) throws IOException {
+        ZipInputStream zip = new ZipInputStream(new BufferedInputStream(raw));
+        try {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                String name = entry.getName().replace('\\', '/');
+                if (name.isEmpty() || name.contains("..")) {
+                    zip.closeEntry();
+                    continue;
+                }
+                Path out = target.resolve(name).normalize();
+                if (!out.startsWith(target)) {
+                    zip.closeEntry();
+                    continue;
+                }
+                if (entry.isDirectory() || name.endsWith("/")) {
+                    Files.createDirectories(out);
+                } else {
+                    Files.createDirectories(out.getParent());
+                    Files.copy(zip, out, StandardCopyOption.REPLACE_EXISTING);
+                }
+                zip.closeEntry();
+            }
+        } finally {
+            zip.close();
+        }
+    }
+}

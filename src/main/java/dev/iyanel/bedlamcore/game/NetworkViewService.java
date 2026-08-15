@@ -67,6 +67,10 @@ public final class NetworkViewService {
             case BLUE: return '9';
             case GREEN: return 'a';
             case YELLOW: return 'e';
+            case AQUA: return 'b';
+            case WHITE: return 'f';
+            case PINK: return 'd';
+            case GRAY: return '7';
             default: return 'f';
         }
     }

@@ -3,6 +3,7 @@ package dev.iyanel.bedlamcore.arena;
 import dev.iyanel.bedlamcore.BedlamCore;
 import dev.iyanel.bedlamcore.compat.Items;
 import dev.iyanel.bedlamcore.game.GameRules;
+import dev.iyanel.bedlamcore.util.AtomicFiles;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Effect;
@@ -121,7 +122,11 @@ public final class WaitingTemplateService {
             return;
         }
         List<BlockSpec> captured = new ArrayList<BlockSpec>();
+        int c1x = one.getBlockX(), c1y = one.getBlockY(), c1z = one.getBlockZ();
+        int c2x = two.getBlockX(), c2y = two.getBlockY(), c2z = two.getBlockZ();
         for (int x = minX; x <= maxX; x++) for (int y = minY; y <= maxY; y++) for (int z = minZ; z <= maxZ; z++) {
+            // Axe clicks are markers only — never paste those two corner blocks into waiting builds.
+            if ((x == c1x && y == c1y && z == c1z) || (x == c2x && y == c2y && z == c2z)) continue;
             Block block = one.getWorld().getBlockAt(x, y, z);
             String material = block.getType().name();
             byte data = block.getData();
@@ -157,7 +162,7 @@ public final class WaitingTemplateService {
             values.add(value);
         }
         yaml.set("blocks", values);
-        try { yaml.save(file); }
+        try { AtomicFiles.writeUtf8(file.toPath(), yaml.saveToString()); }
         catch (IOException exception) { throw new IllegalStateException("Could not save waiting-build.yml", exception); }
     }
 

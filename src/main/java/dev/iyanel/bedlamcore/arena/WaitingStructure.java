@@ -10,12 +10,19 @@ import java.util.List;
 
 final class WaitingStructure {
     private final WaitingTemplateService template;
-    private final Location center;
+    /** Block origin; must reattach after world unload+reload (stale World → place no-ops). */
+    private Location center;
     private final List<WaitingTemplateService.BlockSnap> replaced = new ArrayList<WaitingTemplateService.BlockSnap>();
 
     WaitingStructure(WaitingTemplateService template, Location center) {
         this.template = template;
-        this.center = center == null ? null : center.getBlock().getLocation();
+        reattach(center);
+    }
+
+    /** After reloadDiscarding / settings.reattach — paste uses a live World again. */
+    void reattach(Location waitingSpawn) {
+        this.center = waitingSpawn == null ? null : waitingSpawn.getBlock().getLocation();
+        replaced.clear();
     }
 
     void build() {
