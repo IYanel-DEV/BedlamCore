@@ -7,36 +7,45 @@ Independent project. Not affiliated with Hypixel, Mojang, or Microsoft.
 
 ---
 
-## Upload these images (SpigotMC gallery / description)
+## Upload these images (SpigotMC)
 
-Paste into the resource description after uploading. Suggested order:
+### Resource icon (required size)
 
-| # | File | Role |
+| File | Role |
+|------|------|
+| `docs/spigotmc/icon-96.png` | **Upload resource icon** — exactly **96×96** (also `docs/brand/spigotmc-icon-96.png`) |
+
+Do not use `logo-bedlamcore-purple-bed.png` or other full-res logos as the resource icon — Spigot rejects non-96×96 icons.
+
+### Gallery / description body
+
+`DESCRIPTION.bbcode` already embeds GitHub raw URLs for compressed files under `docs/spigotmc/images/` — paste BBCode as-is (no Spigot gallery upload required). Full-res sources stay in `docs/brand/` and `docs/showcase/`.
+
+| # | File (`docs/spigotmc/images/`) | Role |
 |---|------|------|
-| 1 | `docs/brand/banner-bedlamcore.png` | Hero banner |
-| 2 | `docs/brand/logo-bedlamcore.png` | Logo / icon |
-| 3 | `docs/brand/logo-bedlamcore-purple-bed.png` | Purple-bed mark |
-| 4 | `docs/showcase/banner-bedlamcore-features.png` | Features strip |
-| 5 | `docs/showcase/lobby.png` | Lobby + profile hologram |
-| 6 | `docs/showcase/queue-npcs.png` | Solo / Doubles queue NPCs |
-| 7 | `docs/showcase/cosmetics.png` | Cosmetics NPC |
-| 8 | `docs/showcase/profile.png` | Profile NPC hologram |
-| 9 | `docs/showcase/setup.png` | Bedlam Setup compass GUI |
-| 10 | `docs/showcase/game-worlds.png` | Game Worlds + bedwars-e2560 |
-| 11 | `docs/showcase/templates.png` | Bundled map templates |
-| 12 | `docs/showcase/waiting.png` | Waiting structure |
-| 13 | `docs/showcase/team-island.png` | Team island |
-| 14 | `docs/showcase/forge.png` | Team forge |
-| 15 | `docs/showcase/diamond-gen.png` | Diamond generator |
-| 16 | `docs/showcase/emerald-gen.png` | Emerald generator |
-| 17 | `docs/showcase/quick-buy.png` | Item Shop Quick Buy |
-| 18 | `docs/showcase/upgrades.png` | Upgrades & Traps |
-| 19 | `docs/showcase/punch-deposit.png` | Punch-to-deposit |
-| 20 | `docs/showcase/victory.png` | Victory / Play Again |
-| 21 | `docs/showcase/cosmetics-shop.png` | Cosmetics shop (optional) |
-| 22 | `docs/showcase/stats.png` | Stats GUI (optional) |
-| 23 | `docs/showcase/play-menu.png` | Play menu (optional) |
-| 24 | `docs/showcase/shops.png` | Shop NPCs (optional) |
+| 1 | `banner-bedlamcore.jpg` | Hero banner |
+| 2 | `logo-bedlamcore-spigot.png` | Logo (compressed 512×512) |
+| 3 | `banner-bedlamcore-features.jpg` | Features strip |
+| 4 | `lobby.png` | Lobby + profile hologram |
+| 5 | `queue-npcs.png` | Solo / Doubles queue NPCs |
+| 6 | `cosmetics.png` | Cosmetics NPC |
+| 7 | `profile.png` | Profile NPC hologram |
+| 8 | `setup.png` | Bedlam Setup compass GUI |
+| 9 | `game-worlds.png` | Game Worlds + bedwars-e2560 |
+| 10 | `templates.png` | Bundled map templates |
+| 11 | `waiting.png` | Waiting structure |
+| 12 | `team-island.png` | Team island |
+| 13 | `forge.png` | Team forge |
+| 14 | `diamond-gen.png` | Diamond generator |
+| 15 | `emerald-gen.png` | Emerald generator |
+| 16 | `quick-buy.png` | Item Shop Quick Buy |
+| 17 | `upgrades.png` | Upgrades & Traps |
+| 18 | `punch-deposit.png` | Punch-to-deposit |
+| 19 | `victory.png` | Victory / Play Again |
+| 20 | `cosmetics-shop.png` | Cosmetics shop (optional) |
+| 21 | `stats.png` | Stats GUI (optional) |
+| 22 | `play-menu.png` | Play menu (optional) |
+| 23 | `shops.png` | Shop NPCs (optional) |
 
 ---
 
