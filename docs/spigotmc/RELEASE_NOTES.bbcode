@@ -1,0 +1,53 @@
+[CENTER]
+[SIZE=5][B][COLOR=#9B59B6]BedlamCore v0.10.39[/COLOR][/B][/SIZE]
+[B]Admin economy · Paper 26.2 border fix[/B]
+
+[URL=https://github.com/IYanel-DEV/BedlamCore/releases]Download BedlamCore-0.10.39.jar[/URL]
+Java 8+ · Spigot / Paper [B]1.8.8 → 26.2[/B] · Author [URL=https://github.com/IYanel-DEV]IYanel-DEV[/URL]
+[/CENTER]
+
+[HR]
+[SIZE=4][B]What’s new[/B][/SIZE]
+
+[B]Admin economy[/B]
+[LIST]
+[*][ICODE]/bc token add <player> <amount>[/ICODE] — grant tokens (online or known offline)
+[*][ICODE]/bc xp add <player> <amount>[/ICODE] — grant XP (existing stats level curve)
+[*]Perms: [ICODE]bedlam.token.add[/ICODE] · [ICODE]bedlam.xp.add[/ICODE] (default op; under [ICODE]bedlam.admin[/ICODE])
+[*]Console may run [ICODE]token[/ICODE] / [ICODE]xp[/ICODE] (same as [ICODE]reload[/ICODE])
+[/LIST]
+
+[B]Paper 26.2 world border[/B]
+[LIST]
+[*]Setup border hide no longer uses diameter [ICODE]6e7[/ICODE] (Paper rejected it — could crash [B]Cancel[/B] / [B]Apply[/B])
+[*]Diameters clamped to Paper’s max ([ICODE]59_999_968[/ICODE])
+[*]Cancel / Apply border restore guarded so a bad size cannot leave orphan setup state
+[/LIST]
+
+[HR]
+[SPOILER="Gap since v0.10.37"]
+If your last jar was [B]0.10.37[/B]: this update is the items above + version [B]0.10.39[/B].
+
+If you are jumping from [B]≤ 0.10.1[/B], you also get everything from the [B]0.10.37[/B] public gap release:
+[LIST]
+[*]Bundled template [B]bedwars-e2560[/B] + template / import tooling
+[*]Match [B]build border[/B]
+[*]Cosmetics shop (token sink)
+[*]Profile NPC + lobby polish
+[*]Win effects / dragon presentation
+[*]Dream Defender · forge/gens polish · soft spectate · team chest · Bridge Egg · match rewards
+[*]Persistence hardening (atomic saves, stats/profile, game-worlds / template checks)
+[/LIST]
+[/SPOILER]
+
+[HR]
+[SIZE=4][B]Upgrade[/B][/SIZE]
+[LIST=1]
+[*]Stop the server
+[*]Replace [ICODE]plugins/BedlamCore-*.jar[/ICODE] with [B]BedlamCore-0.10.39.jar[/B]
+[*]Start — no config migration for 0.10.37 → 0.10.39
+[*]Optional smoke: Lobby Setup cancel on Paper 26.2 · [ICODE]/bc token add[/ICODE] / [ICODE]/bc xp add[/ICODE] as op
+[/LIST]
+
+[HR]
+[SIZE=3][I]Use the unmodified official jar freely. Modification / rebrand needs permission — see LICENSE on GitHub.[/I][/SIZE]
