@@ -3,5 +3,21 @@ build/
 .idea/
 *.iml
 .tools/
-servers/legacy-1.8.8/
-servers/current-26.2/
+
+# Test server runtime files
+servers/*/logs/
+servers/*/world/
+servers/*/world_nether/
+servers/*/world_the_end/
+servers/*/plugins/
+servers/*.jar
+servers/*/banned-ips.json
+servers/*/banned-players.json
+servers/*/ops.json
+servers/*/whitelist.json
+servers/*/usercache.json
+servers/*/versions/
+servers/*/crash-reports/
+servers/*/eula.txt
+servers/*/server.properties
+servers/*/start.bat

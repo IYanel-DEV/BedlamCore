@@ -4,7 +4,7 @@
 
 Independent project by [IYanel-DEV](https://github.com/IYanel-DEV). Not affiliated with Hypixel, Mojang, or Microsoft. Ships no third-party server code, maps, or branding.
 
-Current line: **0.10.37** · [Releases](https://github.com/IYanel-DEV/BedlamCore/releases) · [Repository](https://github.com/IYanel-DEV/BedlamCore)
+Current line: **0.10.41** · [Releases](https://github.com/IYanel-DEV/BedlamCore/releases) · [Repository](https://github.com/IYanel-DEV/BedlamCore)
 
 ---
 
@@ -95,7 +95,15 @@ More stills in [`docs/showcase/`](docs/showcase/): cosmetics shop, stats GUI, pl
 
 Jar: `build/libs/BedlamCore-<version>.jar` (version from `build.gradle.kts` only).
 
-Local dual-endpoint harness: `servers/setup.ps1` → Paper 1.8.8 (`:25565`) and Paper 26.2 (`:25566`). See [`servers/README.md`](servers/README.md). Release checklist: [`docs/RELEASING.md`](docs/RELEASING.md).
+Local multi-version harness: `servers/setup.ps1` spins up one Paper test server per commonly-used version. Set up all of them, or one with `-Version 1.16.5`. See [`servers/README.md`](servers/README.md). Release checklist: [`docs/RELEASING.md`](docs/RELEASING.md).
+
+| Server | Version | Port | Java |
+|--------|---------|------|------|
+| `legacy-1.8.8`  | 1.8.8  | 25565 | 8 |
+| `stable-1.12.2` | 1.12.2 | 25567 | 8 |
+| `stable-1.16.5` | 1.16.5 | 25568 | 11+ |
+| `stable-1.20.4` | 1.20.4 | 25569 | 17+ |
+| `latest-26.2`   | 26.2   | 25570 | 25+ |
 
 ---
 
@@ -117,7 +125,7 @@ Local dual-endpoint harness: `servers/setup.ps1` → Paper 1.8.8 (`:25565`) and 
 4. Set **build border** radius once waiting + spectator exist (default 64 from their midpoint; outline only in setup).
 5. **Apply** — waiting paste stripped, world saved, pristine snapshot taken, back to lobby.
 
-Bundled template **bedwars-e2560** is the map shown in the showcase waiting / island shots.
+Bundled template **bedwars-e2560** is a 1.8-era anvil world that works through Paper 26.2 (Paper converts on first load; BedlamCore strips `session.lock` / `entities` / `poi` and clears a conflicting `world/dimensions/minecraft/<name>` leftover before createWorld).
 
 ### Match flow
 

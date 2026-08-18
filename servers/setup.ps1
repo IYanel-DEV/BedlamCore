@@ -1,6 +1,7 @@
 param(
     [switch]$Force,
-    [switch]$SkipCitizens
+    [switch]$SkipCitizens,
+    [string]$Version   # e.g. "1.16.5" — if omitted, set up all
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,8 +59,12 @@ function Install-PaperServer {
         "allow-flight=true"
     ) | Set-Content -Path (Join-Path $server "server.properties") -Encoding ASCII
 
-    $localPattern = if ($JavaVariable -eq "JAVA8_HOME") { "jdk8*" } else { "jdk25\jdk-25*" }
-    $programPattern = if ($JavaVariable -eq "JAVA8_HOME") { "jre1.8*" } else { "jdk-25*" }
+    switch ($JavaVariable) {
+        "JAVA8_HOME"  { $localPattern = "jdk8*";           $programPattern = "jre1.8*" }
+        "JAVA11_HOME" { $localPattern = "jdk11\jdk-11*";   $programPattern = "jdk-11*" }
+        "JAVA17_HOME" { $localPattern = "jdk17\jdk-17*";   $programPattern = "jdk-17*" }
+        default       { $localPattern = "jdk25\jdk-25*";   $programPattern = "jdk-25*" }
+    }
     $start = @'
 @echo off
 setlocal
@@ -75,15 +80,21 @@ pause
     Set-Content -Path (Join-Path $server "start.bat") -Value $start -Encoding ASCII
 }
 
-Install-PaperServer -Name "legacy-1.8.8" -Version "1.8.8" -Port 25565 -JavaVariable "JAVA8_HOME" -CitizensUrl "https://ci.citizensnpcs.co/job/Citizens2/3219/artifact/dist/target/Citizens-2.0.33-b3219.jar"
-Install-PaperServer -Name "current-26.2" -Version "26.2" -Port 25566 -JavaVariable "JAVA25_HOME" -CitizensUrl "https://ci.citizensnpcs.co/job/Citizens2/lastSuccessfulBuild/artifact/dist/target/Citizens-2.0.43-b4232.jar"
+function Should-Install([string]$v) { return (-not $Version) -or ($Version -eq $v) }
+
+if (Should-Install "1.8.8")  { Install-PaperServer -Name "legacy-1.8.8"  -Version "1.8.8"  -Port 25565 -JavaVariable "JAVA8_HOME"  -CitizensUrl "https://ci.citizensnpcs.co/job/Citizens2/3219/artifact/dist/target/Citizens-2.0.33-b3219.jar" }
+if (Should-Install "1.12.2") { Install-PaperServer -Name "stable-1.12.2" -Version "1.12.2" -Port 25567 -JavaVariable "JAVA8_HOME"  -CitizensUrl "https://ci.citizensnpcs.co/job/Citizens2/3219/artifact/dist/target/Citizens-2.0.33-b3219.jar" }
+if (Should-Install "1.16.5") { Install-PaperServer -Name "stable-1.16.5" -Version "1.16.5" -Port 25568 -JavaVariable "JAVA11_HOME" -CitizensUrl "https://ci.citizensnpcs.co/job/Citizens2/lastSuccessfulBuild/artifact/dist/target/Citizens-2.0.43-b4232.jar" }
+if (Should-Install "1.20.4") { Install-PaperServer -Name "stable-1.20.4" -Version "1.20.4" -Port 25569 -JavaVariable "JAVA17_HOME" -CitizensUrl "https://ci.citizensnpcs.co/job/Citizens2/lastSuccessfulBuild/artifact/dist/target/Citizens-2.0.43-b4232.jar" }
+if (Should-Install "26.2")   { Install-PaperServer -Name "latest-26.2"   -Version "26.2"   -Port 25570 -JavaVariable "JAVA25_HOME" -CitizensUrl "https://ci.citizensnpcs.co/job/Citizens2/lastSuccessfulBuild/artifact/dist/target/Citizens-2.0.43-b4232.jar" }
 
 
 # Copy importable map templates into each Paper world container (once).
 $sharedMaps = Join-Path $PSScriptRoot "shared-maps"
 if (Test-Path $sharedMaps) {
-    foreach ($serverName in @("legacy-1.8.8", "current-26.2")) {
+    foreach ($serverName in @("legacy-1.8.8", "stable-1.12.2", "stable-1.16.5", "stable-1.20.4", "latest-26.2")) {
         $serverRoot = Join-Path $PSScriptRoot $serverName
+        if (-not (Test-Path $serverRoot)) { continue }
         Get-ChildItem $sharedMaps -Directory -ErrorAction SilentlyContinue | ForEach-Object {
             $dest = Join-Path $serverRoot $_.Name
             if (-not (Test-Path (Join-Path $dest "level.dat"))) {
