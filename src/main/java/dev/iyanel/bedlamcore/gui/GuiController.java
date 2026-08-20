@@ -522,7 +522,8 @@ public final class GuiController {
         else if (cleanTitle.equals("Upgrades & Traps") || cleanTitle.equals("Team Upgrades")) upgrade(player, name);
         else if (cleanTitle.equals("Spectate")) clickSpectate(player, name);
         else if (cleanTitle.equals("Cosmetics") || cleanTitle.equals("My Cosmetics")) clickCosmeticsHome(player, name);
-        else if (cleanTitle.equals("Kill Messages") || cleanTitle.equals("Kill Effects") || cleanTitle.equals("Win Effects")) {
+        else if (cleanTitle.equals("Kill Messages") || cleanTitle.equals("Kill Effects") || cleanTitle.equals("Win Effects")
+            || cleanTitle.equals("Wood Skins") || cleanTitle.equals("Final Kill Effects") || cleanTitle.equals("Prestige Customizer")) {
             clickCosmeticsCategory(player, cleanTitle, clicked);
         }
         else if (cleanTitle.equals("Bed Wars Statistics")) clickProfileStats(player, name);

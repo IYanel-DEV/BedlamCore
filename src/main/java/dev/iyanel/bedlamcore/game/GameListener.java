@@ -1057,6 +1057,7 @@ public final class GameListener implements Listener {
             || clean.equals("Quick Buy") || clean.equals("Team Upgrades") || clean.equals("Upgrades & Traps") || clean.equals("Spectate")
             || clean.equals("Cosmetics") || clean.equals("My Cosmetics")
             || clean.equals("Kill Messages") || clean.equals("Kill Effects") || clean.equals("Win Effects")
+            || clean.equals("Wood Skins") || clean.equals("Final Kill Effects") || clean.equals("Prestige Customizer")
             || clean.equals("Bed Wars Statistics")
             || clean.startsWith("Play Bed Wars ") || clean.startsWith("Map Selector ");
     }
