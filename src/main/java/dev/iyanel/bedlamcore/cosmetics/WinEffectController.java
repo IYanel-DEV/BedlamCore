@@ -65,6 +65,13 @@ final class WinEffectController implements Listener {
     private final Map<UUID, List<UUID>> winSheep = new ConcurrentHashMap<UUID, List<UUID>>();
     /** Owner UUIDs whose dragon is mid-move (eject/remount) - dismount cancel must not fight it. */
     private final Map<UUID, Boolean> dragonMoving = new ConcurrentHashMap<UUID, Boolean>();
+    /**
+     * Authoritative flight position per owner. On 1.8 the EnderDragon's AI cannot be disabled
+     * (setAI is 1.9+), so reading dragon.getLocation() would compound the AI's drift each tick and
+     * the dragon flies off. We advance and teleport from this tracked position instead, snapping the
+     * dragon back onto the controlled path every tick regardless of where its AI tried to wander.
+     */
+    private final Map<UUID, Location> dragonPos = new ConcurrentHashMap<UUID, Location>();
 
     WinEffectController(BedlamCore plugin, CosmeticsService cosmetics) {
         this.plugin = plugin;
@@ -147,6 +154,7 @@ final class WinEffectController implements Listener {
             if (dragon != null || ownerHere) {
                 it.remove();
                 dragonFireballAt.remove(entry.getKey());
+                dragonPos.remove(entry.getKey());
             }
         }
         Iterator<Map.Entry<UUID, List<UUID>>> sheepIt = winSheep.entrySet().iterator();
@@ -375,6 +383,7 @@ final class WinEffectController implements Listener {
             invokeBoolean(living, "setCollidable", false);
         }
         winDragons.put(winner.getUniqueId(), dragon.getUniqueId());
+        dragonPos.put(winner.getUniqueId(), at.clone());
         mountPassenger(dragon, winner);
         // Every tick: fly toward the rider's look + force remount (sneak/eject cannot stick).
         // Teleport of a vehicle is blocked on 1.9+, so flightStep does eject→teleport→remount.
@@ -424,9 +433,14 @@ final class WinEffectController implements Listener {
         Vector dir = rider.getEyeLocation().getDirection();
         if (dir.lengthSquared() < 1.0e-6) dir = new Vector(0, 0, 1);
         else dir.normalize();
-        Location next = dragon.getLocation().clone().add(dir.clone().multiply(winDragonPerTickStep()));
+        // Advance from our tracked position (not dragon.getLocation()) so a live AI on 1.8 cannot
+        // drag the flight off course — the dragon is snapped back onto this path every tick.
+        Location base = dragonPos.get(owner);
+        if (base == null || base.getWorld() != dragon.getWorld()) base = dragon.getLocation();
+        Location next = base.clone().add(dir.clone().multiply(winDragonPerTickStep()));
         next.setYaw(rider.getLocation().getYaw());
         next.setPitch(rider.getLocation().getPitch());
+        dragonPos.put(owner, next.clone());
         moveMountedDragon(owner, dragon, rider, next);
         // Force the dragon's rotation to follow the rider's look. Teleport turns the body, but the
         // EnderDragon's head yaw lags on 1.11+; setRotation nudges it where the API exists (no-op on 1.8).
@@ -528,6 +542,7 @@ final class WinEffectController implements Listener {
     private void endWinDragon(UUID owner) {
         UUID dragonId = winDragons.remove(owner);
         dragonFireballAt.remove(owner);
+        dragonPos.remove(owner);
         if (dragonId == null) return;
         Player player = Bukkit.getPlayer(owner);
         World world = player != null ? player.getWorld() : null;
