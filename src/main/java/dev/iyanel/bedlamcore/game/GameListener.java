@@ -660,16 +660,12 @@ public final class GameListener implements Listener {
         }
         manager.recordPlaced(event.getBlockPlaced());
         final Player player = event.getPlayer();
-        // Wood Skin cosmetic: particle flourish when placing wood with a skin equipped (textures need a resource pack).
+        // Wood Skin cosmetic: swap placed planks to the equipped vanilla wood variant (Hypixel-style, no pack).
         String placedType = event.getBlockPlaced().getType().name();
-        if (placedType.contains("WOOD") || placedType.contains("LOG") || placedType.contains("PLANKS")) {
+        if (placedType.contains("PLANKS") || placedType.equals("WOOD")) {
             String skinId = plugin.stats().equippedCosmetic(player.getUniqueId(), CosmeticsService.CAT_WOOD_SKIN);
             CosmeticsService.Cosmetic skin = skinId == null ? null : plugin.cosmetics().get(skinId);
-            if (skin != null && !skin.particles.isEmpty()) {
-                Location where = event.getBlockPlaced().getLocation().add(0.5, 0.5, 0.5);
-                Particles.play(null, where, 20, 0.4, skin.particles.toArray(new String[0]));
-                Sounds.playAt(where, "BLOCK_NOTE_BLOCK_HARP", "BLOCK_NOTE_HARP", "NOTE_PIANO");
-            }
+            if (skin != null) applyWoodSkin(event.getBlockPlaced(), skin.effect);
         }
         if (event.getBlockPlaced().getType().name().contains("SPONGE")) {
             final Block sponge = event.getBlockPlaced();
@@ -1046,6 +1042,46 @@ public final class GameListener implements Listener {
         ItemStack cursor = event.getCursor();
         if (cursor != null && GameRules.isArmor(cursor.getType().name()) && event.getSlotType() == InventoryType.SlotType.ARMOR) return true;
         return false;
+    }
+
+    /**
+     * Swap a just-placed plank block to the equipped Wood Skin's vanilla variant. Uses the modern
+     * per-variant material where it exists (1.13+), else the legacy WOOD block + data byte (1.8). Variants
+     * that don't exist on this version (crimson/warped/cherry on old servers) leave the block unchanged.
+     */
+    private static void applyWoodSkin(Block block, String effect) {
+        if (block == null || effect == null) return;
+        String modern;
+        int data;
+        if (effect.equals("oak")) { modern = "OAK_PLANKS"; data = 0; }
+        else if (effect.equals("spruce")) { modern = "SPRUCE_PLANKS"; data = 1; }
+        else if (effect.equals("birch")) { modern = "BIRCH_PLANKS"; data = 2; }
+        else if (effect.equals("jungle")) { modern = "JUNGLE_PLANKS"; data = 3; }
+        else if (effect.equals("acacia")) { modern = "ACACIA_PLANKS"; data = 4; }
+        else if (effect.equals("dark_oak")) { modern = "DARK_OAK_PLANKS"; data = 5; }
+        else if (effect.equals("crimson")) { modern = "CRIMSON_PLANKS"; data = -1; }
+        else if (effect.equals("warped")) { modern = "WARPED_PLANKS"; data = -1; }
+        else if (effect.equals("cherry")) { modern = "CHERRY_PLANKS"; data = -1; }
+        else return;
+        Material variant = matchMaterialOrNull(modern);
+        if (variant != null) { block.setType(variant); return; }
+        if (data < 0) return; // variant absent on this version (e.g. crimson on 1.8) — leave as placed
+        Material legacy = matchMaterialOrNull("WOOD"); // 1.8 planks share one material + data byte
+        if (legacy == null) return;
+        block.setType(legacy);
+        // 1.8 legacy data byte; Block.setData is gone on 1.13+ (matchMaterialOrNull already returned a variant there).
+        try {
+            Block.class.getMethod("setData", byte.class).invoke(block, Byte.valueOf((byte) data));
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static Material matchMaterialOrNull(String name) {
+        try {
+            return Material.valueOf(name);
+        } catch (IllegalArgumentException ignored) {
+            return Material.matchMaterial(name);
+        }
     }
 
     private static boolean isBedlamTitle(String title) {
