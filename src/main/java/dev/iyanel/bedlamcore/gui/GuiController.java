@@ -1116,10 +1116,10 @@ public final class GuiController {
         // Sparse diamond layout (spaced category icons).
         inventory.setItem(10, cosmeticsHomeIcon(player, "Bed Destroys",
             Items.material("RED_BED", "BED"),
-            "Break beds with a flair.", null));
+            "Break beds with a flair.", CosmeticsService.CAT_BED_DESTROY));
         inventory.setItem(12, cosmeticsHomeIcon(player, "Projectile Trails",
             Material.EGG,
-            "Leave a trail behind arrows and fireballs.", null));
+            "Leave a trail behind arrows and fireballs.", CosmeticsService.CAT_PROJECTILE_TRAIL));
         inventory.setItem(14, cosmeticsHomeIcon(player, "Victory Dances",
             Material.ARMOR_STAND,
             "Celebrate when your team wins.", CosmeticsService.CAT_WIN_EFFECT));
@@ -1244,14 +1244,15 @@ public final class GuiController {
         } else if (name.equals("Wood Skins")) openCosmeticsCategory(player, CosmeticsService.CAT_WOOD_SKIN);
         else if (name.equals("Final Kill Effects")) openCosmeticsCategory(player, CosmeticsService.CAT_FINAL_KILL_EFFECT);
         else if (name.equals("Prestige Customizer")) openCosmeticsCategory(player, CosmeticsService.CAT_PRESTIGE);
+        else if (name.equals("Projectile Trails")) openCosmeticsCategory(player, CosmeticsService.CAT_PROJECTILE_TRAIL);
+        else if (name.equals("Bed Destroys")) openCosmeticsCategory(player, CosmeticsService.CAT_BED_DESTROY);
         else if (isComingSoonCosmetic(name)) {
             player.sendMessage(ChatColor.RED + "Coming Soon");
         }
     }
 
     private static boolean isComingSoonCosmetic(String name) {
-        return name.equals("Bed Destroys") || name.equals("Projectile Trails")
-            || name.equals("Glyphs") || name.equals("Hats")
+        return name.equals("Glyphs") || name.equals("Hats")
             || name.equals("Shopkeeper Skins") || name.equals("Sprays") || name.equals("Death Cries")
             || name.equals("Island Toppers") || name.equals("Figurines");
     }

@@ -11,6 +11,8 @@ import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
+import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -27,6 +29,8 @@ public final class CosmeticsService {
     public static final String CAT_WOOD_SKIN = "WOOD_SKIN";
     public static final String CAT_FINAL_KILL_EFFECT = "FINAL_KILL_EFFECT";
     public static final String CAT_PRESTIGE = "PRESTIGE";
+    public static final String CAT_PROJECTILE_TRAIL = "PROJECTILE_TRAIL";
+    public static final String CAT_BED_DESTROY = "BED_DESTROY";
 
     private final BedlamCore plugin;
     private final Map<String, Cosmetic> byId = new LinkedHashMap<String, Cosmetic>();
@@ -49,6 +53,8 @@ public final class CosmeticsService {
         byCategory.put(CAT_WOOD_SKIN, new ArrayList<Cosmetic>());
         byCategory.put(CAT_FINAL_KILL_EFFECT, new ArrayList<Cosmetic>());
         byCategory.put(CAT_PRESTIGE, new ArrayList<Cosmetic>());
+        byCategory.put(CAT_PROJECTILE_TRAIL, new ArrayList<Cosmetic>());
+        byCategory.put(CAT_BED_DESTROY, new ArrayList<Cosmetic>());
         FileConfiguration config = plugin.getConfig();
         ConfigurationSection root = config.getConfigurationSection("cosmetics.items");
         if (root != null) {
@@ -371,6 +377,30 @@ public final class CosmeticsService {
         add("pr_ender", CAT_PRESTIGE, "&5Ender Prestige", 2000, Collections.<String, String>emptyMap(), "ender", list("PORTAL", "ENCHANT", "END_ROD"));
         add("pr_rainbow", CAT_PRESTIGE, "&dRainbow Prestige", 3000, Collections.<String, String>emptyMap(), "rainbow", list("REDSTONE", "SPELL_MOB", "FIREWORKS_SPARK"));
         add("pr_hypixel", CAT_PRESTIGE, "&e&lHypixel Style", 5000, Collections.<String, String>emptyMap(), "hypixel", list("FIREWORK", "EXPLOSION", "FLAME"));
+
+        // Projectile Trails — particles that follow a launched projectile in flight.
+        add("pt_flame", CAT_PROJECTILE_TRAIL, "&6Flame Trail", 150, Collections.<String, String>emptyMap(), "flame", list("FLAME", "SMOKE"));
+        add("pt_portal", CAT_PROJECTILE_TRAIL, "&5Portal Trail", 200, Collections.<String, String>emptyMap(), "portal", list("PORTAL", "SPELL_WITCH"));
+        add("pt_smoke", CAT_PROJECTILE_TRAIL, "&8Smoke Trail", 100, Collections.<String, String>emptyMap(), "smoke", list("LARGE_SMOKE", "SMOKE", "CLOUD"));
+        add("pt_enchant", CAT_PROJECTILE_TRAIL, "&bEnchant Trail", 225, Collections.<String, String>emptyMap(), "enchant", list("ENCHANTMENT_TABLE", "ENCHANT", "CRIT"));
+        add("pt_snow", CAT_PROJECTILE_TRAIL, "&fSnow Trail", 175, Collections.<String, String>emptyMap(), "snow", list("SNOWBALL", "SNOW_SHOVEL", "CLOUD"));
+        add("pt_blood", CAT_PROJECTILE_TRAIL, "&4Blood Trail", 200, Collections.<String, String>emptyMap(), "blood", list("REDSTONE", "CRIT", "CRITICAL_HIT"));
+        add("pt_rainbow", CAT_PROJECTILE_TRAIL, "&dRainbow Trail", 300, Collections.<String, String>emptyMap(), "rainbow", list("REDSTONE", "SPELL_MOB", "FIREWORKS_SPARK"));
+        add("pt_note", CAT_PROJECTILE_TRAIL, "&eNote Trail", 175, Collections.<String, String>emptyMap(), "note", list("NOTE", "NOTE_BLOCK", "VILLAGER_HAPPY"));
+        add("pt_ender", CAT_PROJECTILE_TRAIL, "&5Ender Trail", 250, Collections.<String, String>emptyMap(), "ender", list("PORTAL", "END_ROD", "ENCHANT"));
+        add("pt_firework", CAT_PROJECTILE_TRAIL, "&6Firework Trail", 225, Collections.<String, String>emptyMap(), "firework", list("FIREWORKS_SPARK", "FIREWORK", "FLAME"));
+
+        // Bed Destroys — big particle shows when an enemy bed is broken.
+        add("bd_explosion", CAT_BED_DESTROY, "&cExplosion", 150, Collections.<String, String>emptyMap(), "explosion", list("EXPLOSION", "EXPLOSION_LARGE", "FLAME", "SMOKE"));
+        add("bd_fire", CAT_BED_DESTROY, "&6Inferno", 200, Collections.<String, String>emptyMap(), "fire", list("FLAME", "LAVA", "LARGE_SMOKE", "SMOKE"));
+        add("bd_soul", CAT_BED_DESTROY, "&5Soul Rupture", 250, Collections.<String, String>emptyMap(), "soul", list("SOUL_FIRE_FLAME", "PORTAL", "SMOKE", "ENCHANT"));
+        add("bd_frost", CAT_BED_DESTROY, "&bFrost Shatter", 225, Collections.<String, String>emptyMap(), "frost", list("SNOWBALL", "SNOW_SHOVEL", "CLOUD", "FIREWORKS_SPARK"));
+        add("bd_blood", CAT_BED_DESTROY, "&4Blood Burst", 200, Collections.<String, String>emptyMap(), "blood", list("REDSTONE", "CRIT", "CRITICAL_HIT", "DAMAGE_INDICATOR"));
+        add("bd_void", CAT_BED_DESTROY, "&8Void Collapse", 300, Collections.<String, String>emptyMap(), "void", list("PORTAL", "SMOKE", "LARGE_SMOKE", "SPELL"));
+        add("bd_rainbow", CAT_BED_DESTROY, "&dRainbow Explosion", 350, Collections.<String, String>emptyMap(), "rainbow", list("REDSTONE", "SPELL_MOB", "FIREWORKS_SPARK", "FIREWORK"));
+        add("bd_dragon", CAT_BED_DESTROY, "&5Dragon Breath", 400, Collections.<String, String>emptyMap(), "dragon", list("FLAME", "PORTAL", "SMOKE", "LARGE_SMOKE"));
+        add("bd_lightning", CAT_BED_DESTROY, "&eLightning Strike", 300, Collections.<String, String>emptyMap(), "lightning", list("FIREWORK", "EXPLOSION", "CLOUD", "FIREWORKS_SPARK"));
+        add("bd_glyph", CAT_BED_DESTROY, "&5Enchant Glyph", 275, Collections.<String, String>emptyMap(), "glyph", list("ENCHANTMENT_TABLE", "ENCHANT", "END_ROD", "CRIT"));
     }
 
     private void pack(String id, String name, int cost,
@@ -433,6 +463,16 @@ public final class CosmeticsService {
         return list == null ? 0 : list.size();
     }
 
+    public int projectileTrailCount() {
+        List<Cosmetic> list = byCategory.get(CAT_PROJECTILE_TRAIL);
+        return list == null ? 0 : list.size();
+    }
+
+    public int bedDestroyCount() {
+        List<Cosmetic> list = byCategory.get(CAT_BED_DESTROY);
+        return list == null ? 0 : list.size();
+    }
+
     /** Smoke-check IDs for default kill-message packs (merged when config lacks them). */
     public static String[] defaultKillMessagePackIds() {
         return new String[] {
@@ -476,6 +516,20 @@ public final class CosmeticsService {
         };
     }
 
+    public static String[] defaultProjectileTrailIds() {
+        return new String[] {
+            "pt_flame", "pt_portal", "pt_smoke", "pt_enchant", "pt_snow",
+            "pt_blood", "pt_rainbow", "pt_note", "pt_ender", "pt_firework"
+        };
+    }
+
+    public static String[] defaultBedDestroyIds() {
+        return new String[] {
+            "bd_explosion", "bd_fire", "bd_soul", "bd_frost", "bd_blood",
+            "bd_void", "bd_rainbow", "bd_dragon", "bd_lightning", "bd_glyph"
+        };
+    }
+
     public List<Cosmetic> category(String category) {
         List<Cosmetic> list = byCategory.get(normalizeCategory(category));
         return list == null ? Collections.<Cosmetic>emptyList() : Collections.unmodifiableList(list);
@@ -488,6 +542,8 @@ public final class CosmeticsService {
         if (CAT_WOOD_SKIN.equals(category)) return "Wood Skins";
         if (CAT_FINAL_KILL_EFFECT.equals(category)) return "Final Kill Effects";
         if (CAT_PRESTIGE.equals(category)) return "Prestige Customizer";
+        if (CAT_PROJECTILE_TRAIL.equals(category)) return "Projectile Trails";
+        if (CAT_BED_DESTROY.equals(category)) return "Bed Destroys";
         return category;
     }
 
@@ -512,8 +568,11 @@ public final class CosmeticsService {
         if (value.equals("WOOD_SKINS")) value = CAT_WOOD_SKIN;
         if (value.equals("FINAL_KILL_EFFECTS")) value = CAT_FINAL_KILL_EFFECT;
         if (value.equals("PRESTIGE_CUSTOMIZER")) value = CAT_PRESTIGE;
+        if (value.equals("PROJECTILE_TRAILS")) value = CAT_PROJECTILE_TRAIL;
+        if (value.equals("BED_DESTROYS")) value = CAT_BED_DESTROY;
         if (CAT_KILL_MESSAGE.equals(value) || CAT_KILL_EFFECT.equals(value) || CAT_WIN_EFFECT.equals(value)
-            || CAT_WOOD_SKIN.equals(value) || CAT_FINAL_KILL_EFFECT.equals(value) || CAT_PRESTIGE.equals(value)) return value;
+            || CAT_WOOD_SKIN.equals(value) || CAT_FINAL_KILL_EFFECT.equals(value) || CAT_PRESTIGE.equals(value)
+            || CAT_PROJECTILE_TRAIL.equals(value) || CAT_BED_DESTROY.equals(value)) return value;
         return null;
     }
 
@@ -592,6 +651,120 @@ public final class CosmeticsService {
             }
         }
         // blood_burst / dragon_breath / soulfire use the base burst above.
+    }
+
+    /** Particles for the shooter's equipped projectile trail, or null when none equipped. */
+    public String[] getProjectileTrailParticles(Player player) {
+        if (player == null) return null;
+        String id = plugin.stats().equippedCosmetic(player.getUniqueId(), CAT_PROJECTILE_TRAIL);
+        Cosmetic cosmetic = get(id);
+        if (cosmetic == null) return null;
+        if (cosmetic.particles.isEmpty()) return new String[] {"FLAME", "SMOKE"};
+        return cosmetic.particles.toArray(new String[0]);
+    }
+
+    /** Spawn the shooter's trail particles along a projectile's flight path (up to 5s). */
+    public void startProjectileTrail(final Player shooter, final Projectile projectile) {
+        if (shooter == null || projectile == null) return;
+        final String[] particles = getProjectileTrailParticles(shooter);
+        if (particles == null) return;
+        final UUID shooterId = shooter.getUniqueId();
+        new BukkitRunnable() {
+            int ticks = 0;
+            @Override public void run() {
+                if (ticks > 100 || projectile.isDead() || !projectile.isValid()) {
+                    cancel();
+                    return;
+                }
+                Player p = Bukkit.getPlayer(shooterId);
+                if (p == null || !p.isOnline()) { cancel(); return; }
+                Location loc = projectile.getLocation();
+                Particles.play(null, loc, 2, 0.05, particles);
+                ticks++;
+            }
+        }.runTaskTimer(plugin, 0L, 1L);
+    }
+
+    /** Dramatic one-shot show at a destroyed enemy bed for the breaker's equipped bed-destroy cosmetic. */
+    public void playBedDestroyEffect(Player breaker, Location bedLocation) {
+        if (breaker == null || bedLocation == null || bedLocation.getWorld() == null) return;
+        String id = plugin.stats().equippedCosmetic(breaker.getUniqueId(), CAT_BED_DESTROY);
+        Cosmetic cosmetic = get(id);
+        if (cosmetic == null) return;
+        final Location center = bedLocation.clone().add(0.5, 0.5, 0.5);
+        String effect = cosmetic.effect == null ? "" : cosmetic.effect.toLowerCase();
+        String[] particles = cosmetic.particles.isEmpty()
+            ? new String[] {"EXPLOSION", "FLAME", "SMOKE"} : cosmetic.particles.toArray(new String[0]);
+
+        // Base burst — every effect gets this.
+        Particles.play(null, center, 40, 1.0, particles);
+        Sounds.playAt(center, "ENTITY_ENDER_DRAGON_GROWL", "ENTITY_ENDERDRAGON_GROWL", "ENDERDRAGON_GROWL");
+
+        if ("explosion".equals(effect)) {
+            for (int i = 0; i < 3; i++) {
+                final int delay = i;
+                Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
+                    @Override public void run() {
+                        double r = (delay + 1) * 1.5;
+                        for (int j = 0; j < 8; j++) {
+                            double angle = (Math.PI * 2.0 * j) / 8;
+                            Location ring = center.clone().add(Math.cos(angle) * r, 0.3, Math.sin(angle) * r);
+                            Particles.play(null, ring, 4, 0.1, "EXPLOSION", "FLAME");
+                        }
+                    }
+                }, i * 3L);
+            }
+        } else if ("fire".equals(effect) || "inferno".equals(effect)) {
+            for (int y = 0; y < 8; y++) {
+                final int height = y;
+                Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
+                    @Override public void run() {
+                        Location fire = center.clone().add(0, height * 0.4, 0);
+                        Particles.play(null, fire, 8, 0.3, "FLAME", "LAVA", "SMOKE");
+                    }
+                }, y);
+            }
+        } else if ("frost".equals(effect)) {
+            for (int r = 1; r <= 4; r++) {
+                final int radius = r;
+                Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
+                    @Override public void run() {
+                        for (int i = 0; i < 12; i++) {
+                            double angle = (Math.PI * 2.0 * i) / 12;
+                            Location ring = center.clone().add(Math.cos(angle) * radius, 0.2, Math.sin(angle) * radius);
+                            Particles.play(null, ring, 3, 0.1, "SNOWBALL", "CLOUD");
+                        }
+                    }
+                }, r * 2L);
+            }
+        } else if ("void".equals(effect)) {
+            for (int i = 0; i < 16; i++) {
+                final int tick = i;
+                Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
+                    @Override public void run() {
+                        double y = tick * 0.25;
+                        double angle = tick * 0.6;
+                        Location spiral = center.clone().add(Math.cos(angle) * 1.2, y, Math.sin(angle) * 1.2);
+                        Particles.play(null, spiral, 4, 0.1, "PORTAL", "SMOKE");
+                    }
+                }, i);
+            }
+        } else if ("lightning".equals(effect)) {
+            World world = center.getWorld();
+            if (world != null) world.strikeLightningEffect(center);
+        } else if ("glyph".equals(effect)) {
+            for (int i = 0; i < 16; i++) {
+                double angle = (Math.PI * 2.0 * i) / 16;
+                Location ring = center.clone().add(Math.cos(angle) * 2.0, 0.1, Math.sin(angle) * 2.0);
+                Particles.play(null, ring, 4, 0.05, "ENCHANTMENT_TABLE", "ENCHANT");
+            }
+            for (int i = 0; i < 8; i++) {
+                double angle = (Math.PI * 2.0 * i) / 8;
+                Location ring = center.clone().add(Math.cos(angle) * 1.0, 0.1, Math.sin(angle) * 1.0);
+                Particles.play(null, ring, 3, 0.05, "END_ROD", "CRIT");
+            }
+        }
+        // soul / blood / rainbow / dragon use the base burst above.
     }
 
     /**

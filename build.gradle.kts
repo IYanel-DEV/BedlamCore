@@ -3,7 +3,7 @@
 }
 
 group = "dev.iyanel"
-version = "0.10.57"
+version = "0.10.58"
 
 repositories {
     mavenCentral()

@@ -40,6 +40,7 @@ import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.entity.ItemSpawnEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
@@ -191,6 +192,17 @@ public final class GameListener implements Listener {
             }, plugin, true);
         } catch (ClassNotFoundException ignored) {
         }
+    }
+
+    /** Projectile Trails cosmetic: follow a match player's launched projectile with particles. */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onProjectileLaunch(ProjectileLaunchEvent event) {
+        if (!(event.getEntity().getShooter() instanceof Player)) return;
+        Player shooter = (Player) event.getEntity().getShooter();
+        ArenaManager manager = plugin.games().arena(shooter);
+        if (manager == null) return;
+        if (manager.isSoftSpectating(shooter)) return;
+        plugin.cosmetics().startProjectileTrail(shooter, event.getEntity());
     }
 
     @EventHandler

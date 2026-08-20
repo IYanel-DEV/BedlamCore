@@ -97,6 +97,19 @@ public final class CosmeticsCheck {
         assertContains(prIds, "pr_none");
         assertContains(prIds, "pr_hypixel");
 
+        assertEquals(CosmeticsService.CAT_PROJECTILE_TRAIL, CosmeticsService.normalizeCategory("Projectile Trails"));
+        assertEquals(CosmeticsService.CAT_BED_DESTROY, CosmeticsService.normalizeCategory("Bed Destroys"));
+        assertEquals("Projectile Trails", CosmeticsService.categoryDisplay(CosmeticsService.CAT_PROJECTILE_TRAIL));
+        assertEquals("Bed Destroys", CosmeticsService.categoryDisplay(CosmeticsService.CAT_BED_DESTROY));
+        String[] ptIds = CosmeticsService.defaultProjectileTrailIds();
+        assertEquals(10, ptIds.length);
+        assertContains(ptIds, "pt_flame");
+        assertContains(ptIds, "pt_firework");
+        String[] bdIds = CosmeticsService.defaultBedDestroyIds();
+        assertEquals(10, bdIds.length);
+        assertContains(bdIds, "bd_explosion");
+        assertContains(bdIds, "bd_glyph");
+
         assertEquals("addPassenger", WinEffectController.passengerMountMethod(true));
         assertEquals("setPassenger", WinEffectController.passengerMountMethod(false));
         assertEquals(3, WinEffectController.rainbowSheepColorIndex(10, 1, 16));

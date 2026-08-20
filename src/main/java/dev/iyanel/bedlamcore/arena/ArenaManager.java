@@ -424,6 +424,7 @@ public final class ArenaManager {
                 return true;
             }
             arena.destroyBed(brokenBed);
+            plugin.cosmetics().playBedDestroyEffect(player, arena.settings().team(brokenBed).bed());
             removeBedBlocks(arena.settings().team(brokenBed).bed());
             clearBedFootprint(brokenBed);
             announce(GameRules.bedBreakMessage(brokenBed.coloredName(), playerTeam.chatColor() + player.getName()));
