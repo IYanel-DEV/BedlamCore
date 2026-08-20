@@ -98,12 +98,7 @@ final class WinEffectController implements Listener {
         // ponytail: fixed cadence; dragon ~7.5s ride, rainbow sheep ~5s follow
         final int durationTicks = "dragon".equals(effect) ? 150 : ("rainbow".equals(effect) ? 100 : 80);
         final int period = 5;
-        // 1.9+ can disable the dragon's flight AI (setAI) so the ride is controllable. On 1.8 the AI
-        // cannot be disabled and fights any teleport, so there we play a rider-less cinematic flyover.
-        if ("dragon".equals(effect)) {
-            if (supportsAiToggle()) spawnWinDragon(winner);
-            else spawnWinDragonCinematic(winner);
-        }
+        if ("dragon".equals(effect)) spawnWinDragon(winner);
         if ("rainbow".equals(effect)) spawnWinSheep(winner);
         new BukkitRunnable() {
             int elapsed = 0;
@@ -448,63 +443,6 @@ final class WinEffectController implements Listener {
         return aiToggle.booleanValue();
     }
 
-    /**
-     * 1.8 fallback: the EnderDragon's native flight AI cannot be disabled, so instead of a jittery ride
-     * we spawn a rider-less dragon and sweep it along a smooth scripted orbit above the winner (teleport
-     * each tick overrides the AI's position) with trailing particles and fireworks. No block grief.
-     */
-    private void spawnWinDragonCinematic(Player winner) {
-        World world = winner.getWorld();
-        if (world == null) return;
-        endWinDragon(winner.getUniqueId());
-        final Location center = winner.getLocation().clone();
-        Location at = center.clone().add(9.0, 8.0, 0.0);
-        Entity dragon;
-        try {
-            dragon = world.spawnEntity(at, EntityType.ENDER_DRAGON);
-        } catch (Throwable t) {
-            Particles.play(null, center.clone().add(0, 6, 0), 40, 1.2, "FLAME", "PORTAL", "SMOKE", "CRIT");
-            Sounds.playAt(center, "ENTITY_ENDER_DRAGON_GROWL", "ENTITY_ENDERDRAGON_GROWL", "ENDERDRAGON_GROWL");
-            return;
-        }
-        dragon.setMetadata(META_WIN_DRAGON, new FixedMetadataValue(plugin, winner.getUniqueId().toString()));
-        if (dragon instanceof LivingEntity) {
-            LivingEntity living = (LivingEntity) dragon;
-            living.setRemoveWhenFarAway(false);
-            invokeBoolean(living, "setInvulnerable", true);
-            invokeBoolean(living, "setCollidable", false);
-        }
-        winDragons.put(winner.getUniqueId(), dragon.getUniqueId());
-        final UUID owner = winner.getUniqueId();
-        final UUID dragonId = dragon.getUniqueId();
-        new BukkitRunnable() {
-            int ticks = 0;
-            @Override public void run() {
-                if (!dragonId.equals(winDragons.get(owner))) { cancel(); return; }
-                Entity d = entityByUuid(center.getWorld(), dragonId);
-                if (d == null || d.isDead()) { winDragons.remove(owner); cancel(); return; }
-                double angle = ticks * 0.14;
-                double radius = 9.0;
-                double y = 7.5 + Math.sin(ticks * 0.10) * 2.0;
-                Location next = center.clone().add(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
-                // Face along the (counter-clockwise) orbit tangent.
-                next.setYaw((float) (-Math.toDegrees(angle) - 90.0));
-                next.setPitch(0f);
-                d.teleport(next);
-                try { d.setVelocity(new Vector(0, 0, 0)); } catch (Throwable ignored) { }
-                try {
-                    d.getClass().getMethod("setRotation", float.class, float.class)
-                        .invoke(d, Float.valueOf(next.getYaw()), Float.valueOf(next.getPitch()));
-                } catch (Throwable ignored) { }
-                Particles.play(null, next.clone().add(0, 0.5, 0), 6, 0.5, "FLAME", "PORTAL", "SMOKE");
-                if (ticks % 15 == 0) spawnFirework(center.clone().add((Math.random() - 0.5) * 4, 1.0, (Math.random() - 0.5) * 4));
-                if (ticks % 30 == 0) Sounds.playAt(next, "ENTITY_ENDER_DRAGON_FLAP", "ENDERDRAGON_WINGS", "BAT_TAKEOFF");
-                ticks++;
-            }
-        }.runTaskTimer(plugin, 0L, 1L);
-        Sounds.playAt(center, "ENTITY_ENDER_DRAGON_GROWL", "ENTITY_ENDERDRAGON_GROWL", "ENDERDRAGON_GROWL");
-    }
-
     /** One flight tick: move dragon+rider toward the rider's look, grief a path, keep them seated. */
     private void flyWinDragon(UUID owner, Entity dragon, Player rider, int ticks) {
         Vector dir = rider.getEyeLocation().getDirection();
@@ -515,7 +453,9 @@ final class WinEffectController implements Listener {
         Location base = dragonPos.get(owner);
         if (base == null || base.getWorld() != dragon.getWorld()) base = dragon.getLocation();
         Location next = base.clone().add(dir.clone().multiply(winDragonPerTickStep()));
-        next.setYaw(rider.getLocation().getYaw());
+        // The EnderDragon model renders its head toward -Z at yaw 0 (opposite normal mobs), so matching the
+        // rider's raw yaw flew it tail-first ("backward"). +180 makes the head lead the direction you look.
+        next.setYaw(rider.getLocation().getYaw() + 180f);
         next.setPitch(rider.getLocation().getPitch());
         dragonPos.put(owner, next.clone());
         moveMountedDragon(owner, dragon, rider, next);
@@ -543,6 +483,22 @@ final class WinEffectController implements Listener {
      * handlers so our own programmatic eject is not itself cancelled.
      */
     private void moveMountedDragon(UUID owner, Entity dragon, Player rider, Location next) {
+        if (!supportsAiToggle()) {
+            // 1.8: the "cannot teleport a vehicle that has passengers" rule is 1.9+, so teleporting the
+            // dragon carries the rider. Skip the per-tick eject→remount packet storm that caused the 1.8
+            // rubberband/lag; only re-seat if the teleport actually dropped the rider.
+            boolean seated = isPassengerOf(dragon, rider);
+            dragon.teleport(next);
+            if (seated && !isPassengerOf(dragon, rider)) {
+                dragonMoving.put(owner, Boolean.TRUE);
+                try {
+                    mountPassenger(dragon, rider);
+                } finally {
+                    dragonMoving.remove(owner);
+                }
+            }
+            return;
+        }
         boolean seated = isPassengerOf(dragon, rider);
         if (seated) {
             dragonMoving.put(owner, Boolean.TRUE);
