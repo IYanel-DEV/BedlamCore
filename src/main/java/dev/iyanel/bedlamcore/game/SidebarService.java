@@ -90,7 +90,9 @@ public final class SidebarService {
     private void applyTeamColors(Scoreboard board, Player viewer) {
         ArenaManager manager = plugin.games().arena(viewer);
         if (manager == null) {
-            viewer.setPlayerListName(null);
+            // Lobby: colour the tab-list name with the equipped Prestige cosmetic (null = default).
+            String prestige = plugin.cosmetics().applyPrestige(viewer);
+            viewer.setPlayerListName(prestige == null ? null : prestige + viewer.getName() + ChatColor.RESET);
             return;
         }
         Arena arena = manager.arena();

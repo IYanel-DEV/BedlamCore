@@ -667,7 +667,8 @@ public final class GameListener implements Listener {
             CosmeticsService.Cosmetic skin = skinId == null ? null : plugin.cosmetics().get(skinId);
             if (skin != null && !skin.particles.isEmpty()) {
                 Location where = event.getBlockPlaced().getLocation().add(0.5, 0.5, 0.5);
-                Particles.play(null, where, 8, 0.2, skin.particles.toArray(new String[0]));
+                Particles.play(null, where, 20, 0.4, skin.particles.toArray(new String[0]));
+                Sounds.playAt(where, "BLOCK_NOTE_BLOCK_HARP", "BLOCK_NOTE_HARP", "NOTE_PIANO");
             }
         }
         if (event.getBlockPlaced().getType().name().contains("SPONGE")) {
