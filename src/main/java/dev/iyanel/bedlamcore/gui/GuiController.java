@@ -335,9 +335,14 @@ public final class GuiController {
                 return;
             }
         }
-        restoreSavedBorder(worldName);
-        // Match/waiting never shows WB — mayPlace AABB still enforces the build edge.
-        ArenaSettings.hideWorldBorder(Bukkit.getWorld(worldName));
+        // Clamp/hide must not throw — cancel already dropped the draft; a throw left orphan setup state.
+        try {
+            restoreSavedBorder(worldName);
+            // Match/waiting never shows WB — mayPlace AABB still enforces the build edge.
+            ArenaSettings.hideWorldBorder(Bukkit.getWorld(worldName));
+        } catch (IllegalArgumentException ex) {
+            plugin.getLogger().warning("WorldBorder release failed for " + worldName + ": " + ex.getMessage());
+        }
     }
 
     private void captureBorderIfNeeded(World world) {
@@ -345,7 +350,7 @@ public final class GuiController {
         WorldBorder border = world.getWorldBorder();
         Location center = border.getCenter();
         savedBorders.put(world.getName(), new BorderSnapshot(
-            center.getX(), center.getZ(), border.getSize(),
+            center.getX(), center.getZ(), ArenaSettings.clampWorldBorderSize(border.getSize()),
             border.getWarningDistance(), border.getDamageAmount()));
     }
 
@@ -356,7 +361,7 @@ public final class GuiController {
         if (world == null) return;
         WorldBorder border = world.getWorldBorder();
         border.setCenter(snap.centerX, snap.centerZ);
-        border.setSize(snap.size);
+        border.setSize(ArenaSettings.clampWorldBorderSize(snap.size));
         border.setWarningDistance(snap.warningDistance);
         border.setDamageAmount(snap.damageAmount);
     }
@@ -709,8 +714,13 @@ public final class GuiController {
             removeDeleteSticks(player);
             restoreSetupGameMode(player, session);
             // Setup-only WB: hide for match (mayPlace AABB keeps the edge); drop setup snapshot.
-            restoreSavedBorder(settings.worldName());
-            ArenaSettings.hideWorldBorder(world);
+            try {
+                restoreSavedBorder(settings.worldName());
+                ArenaSettings.hideWorldBorder(world);
+            } catch (IllegalArgumentException ex) {
+                plugin.getLogger().warning("WorldBorder hide after apply failed for "
+                    + settings.worldName() + ": " + ex.getMessage());
+            }
             settings.warnBedsOutsideBorder(plugin.getLogger());
             plugin.worlds().saveOnce(world);
             plugin.games().register(settings.copy());
@@ -1007,7 +1017,7 @@ public final class GuiController {
         inventory.setItem(10, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Previous Mob"));
         inventory.setItem(12, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Next Mob"));
         inventory.setItem(14, Items.named(new ItemStack(Material.EGG), ChatColor.AQUA + "Age: " + (settings.baby() ? "Baby" : "Adult"), ChatColor.GRAY + "Click to toggle"));
-        inventory.setItem(16, Items.named(Skins.head(settings.skin()), ChatColor.GREEN + "Use Human Player", ChatColor.GRAY + "Uses Citizens when installed"));
+        inventory.setItem(16, Items.named(Skins.head(settings.skin()), ChatColor.GREEN + "Use Human Player", ChatColor.GRAY + "Skinned armor-stand player"));
         inventory.setItem(20, Items.named(new ItemStack(Material.NAME_TAG), ChatColor.LIGHT_PURPLE + "Set Skin", ChatColor.GRAY + "Username or textures.minecraft.net URL"));
         inventory.setItem(24, Items.named(new ItemStack(Items.material("ENDER_EYE", "EYE_OF_ENDER")),
             (settings.lookAtPlayers() ? ChatColor.GREEN : ChatColor.RED) + "Look at Players: " + (settings.lookAtPlayers() ? "ON" : "OFF"), ChatColor.GRAY + "Default: OFF"));
@@ -1114,7 +1124,7 @@ public final class GuiController {
             "Celebrate when your team wins.", CosmeticsService.CAT_WIN_EFFECT));
         inventory.setItem(16, cosmeticsHomeIcon(player, "Final Kill Effects",
             Material.REDSTONE,
-            "Big effects on a final kill.", null));
+            "Big effects on a final kill.", CosmeticsService.CAT_FINAL_KILL_EFFECT));
         inventory.setItem(19, cosmeticsHomeIcon(player, "Glyphs",
             Material.DIAMOND,
             "Draw a glyph when you kill.", null));
@@ -1126,7 +1136,7 @@ public final class GuiController {
             "Custom chat lines when you get a kill.", CosmeticsService.CAT_KILL_MESSAGE));
         inventory.setItem(25, cosmeticsHomeIcon(player, "Prestige Customizer",
             Material.NAME_TAG,
-            "Customize your prestige look.", null));
+            "Customize your prestige look.", CosmeticsService.CAT_PRESTIGE));
         inventory.setItem(28, cosmeticsHomeIcon(player, "Shopkeeper Skins",
             Items.material("VILLAGER_SPAWN_EGG", "MONSTER_EGG"),
             "Change shopkeeper appearances.", null));
@@ -1141,7 +1151,7 @@ public final class GuiController {
             "Decorate your island spawn.", null));
         inventory.setItem(37, cosmeticsHomeIcon(player, "Wood Skins",
             Items.material("OAK_LOG", "LOG"),
-            "Custom wood blocks for builds.", null));
+            "Custom wood blocks for builds.", CosmeticsService.CAT_WOOD_SKIN));
         inventory.setItem(39, cosmeticsHomeIcon(player, "Figurines",
             Items.material("PLAYER_HEAD", "SKULL_ITEM"),
             "Place cute figurines on your island.", null));
@@ -1206,6 +1216,9 @@ public final class GuiController {
         Material icon = Material.PAPER;
         if (CosmeticsService.CAT_KILL_EFFECT.equals(cosmetic.category)) icon = Items.material("BLAZE_POWDER", "BLAZE_POWDER");
         else if (CosmeticsService.CAT_WIN_EFFECT.equals(cosmetic.category)) icon = Items.material("FIREWORK_ROCKET", "FIREWORK");
+        else if (CosmeticsService.CAT_WOOD_SKIN.equals(cosmetic.category)) icon = Items.material("OAK_LOG", "LOG");
+        else if (CosmeticsService.CAT_FINAL_KILL_EFFECT.equals(cosmetic.category)) icon = Material.REDSTONE;
+        else if (CosmeticsService.CAT_PRESTIGE.equals(cosmetic.category)) icon = Material.NAME_TAG;
         List<String> lore = new ArrayList<String>();
         lore.add(ChatColor.DARK_GRAY + "Bedlam Cosmetic: " + cosmetic.id);
         lore.add(ChatColor.GRAY + "Cost: " + ChatColor.GOLD + cosmetic.cost + " tokens");
@@ -1227,16 +1240,19 @@ public final class GuiController {
         else if (name.equals("Kill Effects")) openCosmeticsCategory(player, CosmeticsService.CAT_KILL_EFFECT);
         else if (name.equals("Victory Dances") || name.equals("Win Effects")) {
             openCosmeticsCategory(player, CosmeticsService.CAT_WIN_EFFECT);
-        } else if (isComingSoonCosmetic(name)) {
+        } else if (name.equals("Wood Skins")) openCosmeticsCategory(player, CosmeticsService.CAT_WOOD_SKIN);
+        else if (name.equals("Final Kill Effects")) openCosmeticsCategory(player, CosmeticsService.CAT_FINAL_KILL_EFFECT);
+        else if (name.equals("Prestige Customizer")) openCosmeticsCategory(player, CosmeticsService.CAT_PRESTIGE);
+        else if (isComingSoonCosmetic(name)) {
             player.sendMessage(ChatColor.RED + "Coming Soon");
         }
     }
 
     private static boolean isComingSoonCosmetic(String name) {
-        return name.equals("Bed Destroys") || name.equals("Projectile Trails") || name.equals("Final Kill Effects")
-            || name.equals("Glyphs") || name.equals("Hats") || name.equals("Prestige Customizer")
+        return name.equals("Bed Destroys") || name.equals("Projectile Trails")
+            || name.equals("Glyphs") || name.equals("Hats")
             || name.equals("Shopkeeper Skins") || name.equals("Sprays") || name.equals("Death Cries")
-            || name.equals("Island Toppers") || name.equals("Wood Skins") || name.equals("Figurines");
+            || name.equals("Island Toppers") || name.equals("Figurines");
     }
 
     private void clickCosmeticsCategory(Player player, String title, ItemStack clicked) {

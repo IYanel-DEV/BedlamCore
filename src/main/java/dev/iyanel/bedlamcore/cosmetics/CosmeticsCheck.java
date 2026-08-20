@@ -76,18 +76,39 @@ public final class CosmeticsCheck {
         assertContains(winIds, "we_rainbow");
         assertEquals(19, winIds.length);
 
-        assertEquals("addPassenger", CosmeticsService.passengerMountMethod(true));
-        assertEquals("setPassenger", CosmeticsService.passengerMountMethod(false));
-        assertEquals(3, CosmeticsService.rainbowSheepColorIndex(10, 1, 16));
-        assertEquals(0, CosmeticsService.rainbowSheepColorIndex(0, 0, 16));
-        assertTrue(CosmeticsService.needsWinDragonRemount(true, false));
-        assertTrue(!CosmeticsService.needsWinDragonRemount(true, true));
-        assertTrue(!CosmeticsService.needsWinDragonRemount(false, false));
-        assertTrue(CosmeticsService.winDragonFlightSpeed() >= 1.0);
-        assertTrue(CosmeticsService.winDragonFireballYield() >= 1.5f);
-        assertTrue(CosmeticsService.isWinDragonBreakable(org.bukkit.Material.STONE));
-        assertTrue(!CosmeticsService.isWinDragonBreakable(org.bukkit.Material.AIR));
-        assertTrue(!CosmeticsService.isWinDragonBreakable(org.bukkit.Material.BEDROCK));
+        assertEquals(CosmeticsService.CAT_WOOD_SKIN, CosmeticsService.normalizeCategory("Wood Skins"));
+        assertEquals(CosmeticsService.CAT_FINAL_KILL_EFFECT, CosmeticsService.normalizeCategory("Final Kill Effects"));
+        assertEquals(CosmeticsService.CAT_PRESTIGE, CosmeticsService.normalizeCategory("Prestige Customizer"));
+        assertEquals(CosmeticsService.CAT_PRESTIGE, CosmeticsService.normalizeCategory("prestige"));
+        assertEquals("Wood Skins", CosmeticsService.categoryDisplay(CosmeticsService.CAT_WOOD_SKIN));
+        assertEquals("Final Kill Effects", CosmeticsService.categoryDisplay(CosmeticsService.CAT_FINAL_KILL_EFFECT));
+        assertEquals("Prestige Customizer", CosmeticsService.categoryDisplay(CosmeticsService.CAT_PRESTIGE));
+
+        String[] wsIds = CosmeticsService.defaultWoodSkinIds();
+        assertEquals(9, wsIds.length);
+        assertContains(wsIds, "ws_cherry");
+        assertContains(wsIds, "ws_warped");
+        String[] fkeIds = CosmeticsService.defaultFinalKillEffectIds();
+        assertEquals(8, fkeIds.length);
+        assertContains(fkeIds, "fke_soul_rip");
+        assertContains(fkeIds, "fke_nova");
+        String[] prIds = CosmeticsService.defaultPrestigeIds();
+        assertEquals(8, prIds.length);
+        assertContains(prIds, "pr_none");
+        assertContains(prIds, "pr_hypixel");
+
+        assertEquals("addPassenger", WinEffectController.passengerMountMethod(true));
+        assertEquals("setPassenger", WinEffectController.passengerMountMethod(false));
+        assertEquals(3, WinEffectController.rainbowSheepColorIndex(10, 1, 16));
+        assertEquals(0, WinEffectController.rainbowSheepColorIndex(0, 0, 16));
+        assertTrue(WinEffectController.needsWinDragonRemount(true, false));
+        assertTrue(!WinEffectController.needsWinDragonRemount(true, true));
+        assertTrue(!WinEffectController.needsWinDragonRemount(false, false));
+        assertTrue(WinEffectController.winDragonFlightSpeed() >= 1.0);
+        assertTrue(WinEffectController.winDragonFireballYield() >= 1.5f);
+        assertTrue(WinEffectController.isWinDragonBreakable(org.bukkit.Material.STONE));
+        assertTrue(!WinEffectController.isWinDragonBreakable(org.bukkit.Material.AIR));
+        assertTrue(!WinEffectController.isWinDragonBreakable(org.bukkit.Material.BEDROCK));
         assertEquals("Unlocked: 3/29 (10%)", CosmeticsService.unlockProgress(3, 29));
         assertEquals("Unlocked: 0/0 (0%)", CosmeticsService.unlockProgress(0, 0));
         assertEquals("Currently Selected: NONE", CosmeticsService.selectedLabel(null));
@@ -101,6 +122,7 @@ public final class CosmeticsCheck {
         assertTrue(dev.iyanel.bedlamcore.lobby.LobbyNpcService.needsCosmeticsRespawn(true, false));
         assertTrue(!dev.iyanel.bedlamcore.lobby.LobbyNpcService.needsCosmeticsRespawn(true, true));
         assertTrue(dev.iyanel.bedlamcore.lobby.LobbyNpcService.HOLO_SCRUB_RADIUS >= 2.0);
+        assertTrue(dev.iyanel.bedlamcore.lobby.LobbyNpcService.PROFILE_ENSURE_INTERVAL >= 20);
         assertTrue(dev.iyanel.bedlamcore.lobby.LobbyNpcService.profileHologramLineCount() == 6);
         assertTrue(dev.iyanel.bedlamcore.lobby.LobbyNpcService.PROFILE_HOLO_TOP > 2.0);
     }

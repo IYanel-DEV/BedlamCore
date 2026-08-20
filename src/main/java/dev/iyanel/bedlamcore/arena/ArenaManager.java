@@ -383,10 +383,13 @@ public final class ArenaManager {
             team.placeAsBlock(block);
             recordPlaced(block);
         }
+        org.bukkit.block.BlockFace ladderFace = doorX > 0 ? org.bukkit.block.BlockFace.EAST
+            : doorX < 0 ? org.bukkit.block.BlockFace.WEST
+            : doorZ > 0 ? org.bukkit.block.BlockFace.SOUTH : org.bukkit.block.BlockFace.NORTH;
         byte ladderData = doorX > 0 ? (byte) 5 : doorX < 0 ? (byte) 4 : doorZ > 0 ? (byte) 3 : (byte) 2;
         for (Block block : ladders) {
             block.setType(Material.LADDER);
-            block.setData(ladderData);
+            dev.iyanel.bedlamcore.compat.Blocks.setFacing(block, ladderFace, ladderData);
             recordPlaced(block);
         }
         Sounds.deploy(center);
@@ -519,6 +522,7 @@ public final class ArenaManager {
             if (finalKill) {
                 rewards.grant(credited.getUniqueId(), GameRules.TOKENS_FINAL_KILL, GameRules.XP_FINAL_KILL, 1, 0, 0, 0, "Final Kill");
                 plugin.stats().addFinalKill(credited.getUniqueId(), gameType);
+                plugin.cosmetics().playFinalKillEffect(credited, player.getLocation());
             } else {
                 rewards.grant(credited.getUniqueId(), GameRules.TOKENS_KILL, GameRules.XP_KILL, 1, 0, 0, 0, "Kill");
             }
@@ -882,9 +886,9 @@ public final class ArenaManager {
         if (placeModernBed(foot, head, facing, material)) return;
         Material legacy = Items.material("BED_BLOCK", "BED");
         foot.setType(legacy);
-        foot.setData((byte) facing);
+        dev.iyanel.bedlamcore.compat.Blocks.setLegacyData(foot, (byte) facing);
         head.setType(legacy);
-        head.setData((byte) (facing | 0x8));
+        dev.iyanel.bedlamcore.compat.Blocks.setLegacyData(head, (byte) (facing | 0x8));
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -899,22 +903,19 @@ public final class ArenaManager {
             Object face = Enum.valueOf((Class<Enum>) faceClass, faceName);
             Object footPart = Enum.valueOf((Class<Enum>) partClass, "FOOT");
             Object headPart = Enum.valueOf((Class<Enum>) partClass, "HEAD");
-            try {
-                foot.getClass().getMethod("setType", Material.class, boolean.class).invoke(foot, material, Boolean.FALSE);
-                head.getClass().getMethod("setType", Material.class, boolean.class).invoke(head, material, Boolean.FALSE);
-            } catch (Throwable ignored) {
-                foot.setType(material);
-                head.setType(material);
-            }
-            Object footData = foot.getClass().getMethod("getBlockData").invoke(foot);
-            Object headData = head.getClass().getMethod("getBlockData").invoke(head);
-            if (!bedClass.isInstance(footData) || !bedClass.isInstance(headData)) return false;
+            java.lang.reflect.Method createBD = material.getClass().getMethod("createBlockData");
+            // Create foot BlockData from material, set part+facing, apply in one step
+            Object footData = createBD.invoke(material);
+            if (!bedClass.isInstance(footData)) return false;
             bedClass.getMethod("setPart", partClass).invoke(footData, footPart);
             bedClass.getMethod("setFacing", faceClass).invoke(footData, face);
+            foot.getClass().getMethod("setBlockData", blockDataClass, boolean.class).invoke(foot, footData, Boolean.FALSE);
+            // Create head BlockData from material, set part+facing, apply in one step
+            Object headData = createBD.invoke(material);
+            if (!bedClass.isInstance(headData)) return false;
             bedClass.getMethod("setPart", partClass).invoke(headData, headPart);
             bedClass.getMethod("setFacing", faceClass).invoke(headData, face);
-            foot.getClass().getMethod("setBlockData", blockDataClass).invoke(foot, footData);
-            head.getClass().getMethod("setBlockData", blockDataClass).invoke(head, headData);
+            head.getClass().getMethod("setBlockData", blockDataClass, boolean.class).invoke(head, headData, Boolean.FALSE);
             return foot.getType().name().contains("BED") && head.getType().name().contains("BED");
         } catch (Throwable ignored) {
             return false;

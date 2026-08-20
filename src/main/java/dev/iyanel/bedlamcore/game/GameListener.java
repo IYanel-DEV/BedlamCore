@@ -8,7 +8,9 @@ import dev.iyanel.bedlamcore.arena.TeamColor;
 import dev.iyanel.bedlamcore.compat.EntityVisibility;
 import dev.iyanel.bedlamcore.compat.InvisArmor;
 import dev.iyanel.bedlamcore.compat.Items;
+import dev.iyanel.bedlamcore.compat.Particles;
 import dev.iyanel.bedlamcore.compat.Sounds;
+import dev.iyanel.bedlamcore.cosmetics.CosmeticsService;
 import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.util.Locations;
 import org.bukkit.Bukkit;
@@ -47,6 +49,7 @@ import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerBedEnterEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
@@ -438,6 +441,24 @@ public final class GameListener implements Listener {
         else plugin.gui().openUpgrades(event.getPlayer());
     }
 
+    /**
+     * The shared profile NPC body is an armor stand, which fires PlayerInteractAtEntityEvent (not the
+     * PlayerInteractEntityEvent that villagers fire), so onNpcInteract never sees it. Route the profile
+     * armor-stand click to the stats GUI here. Main hand only — 1.9+ fires this once per hand.
+     */
+    @EventHandler
+    public void onNpcInteractAt(PlayerInteractAtEntityEvent event) {
+        if (!plugin.npcs().isProfile(event.getRightClicked())) return;
+        // getHand() only exists on 1.9+; on those versions this fires once per hand — skip the off-hand so the
+        // GUI opens once. Reflection keeps it compiling against the 1.8 API (no off-hand there).
+        try {
+            Object hand = PlayerInteractAtEntityEvent.class.getMethod("getHand").invoke(event);
+            if (hand != null && !"HAND".equals(hand.toString())) return;
+        } catch (ReflectiveOperationException ignored) { }
+        event.setCancelled(true);
+        plugin.gui().openProfileStats(event.getPlayer());
+    }
+
     /** Lobby: no PvP, no player→mob kills, no mob→player, no projectile combat. */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onLobbyCombat(EntityDamageByEntityEvent event) {
@@ -639,6 +660,16 @@ public final class GameListener implements Listener {
         }
         manager.recordPlaced(event.getBlockPlaced());
         final Player player = event.getPlayer();
+        // Wood Skin cosmetic: particle flourish when placing wood with a skin equipped (textures need a resource pack).
+        String placedType = event.getBlockPlaced().getType().name();
+        if (placedType.contains("WOOD") || placedType.contains("LOG") || placedType.contains("PLANKS")) {
+            String skinId = plugin.stats().equippedCosmetic(player.getUniqueId(), CosmeticsService.CAT_WOOD_SKIN);
+            CosmeticsService.Cosmetic skin = skinId == null ? null : plugin.cosmetics().get(skinId);
+            if (skin != null && !skin.particles.isEmpty()) {
+                Location where = event.getBlockPlaced().getLocation().add(0.5, 0.5, 0.5);
+                Particles.play(null, where, 8, 0.2, skin.particles.toArray(new String[0]));
+            }
+        }
         if (event.getBlockPlaced().getType().name().contains("SPONGE")) {
             final Block sponge = event.getBlockPlaced();
             String expected = wetSpongePlacements.remove(player.getUniqueId());
