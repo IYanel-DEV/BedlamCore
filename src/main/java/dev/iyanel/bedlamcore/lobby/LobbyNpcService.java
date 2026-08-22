@@ -93,6 +93,8 @@ public final class LobbyNpcService implements Listener {
     private int muteTick;
     private boolean respawningCosmetics;
     private boolean respawningProfile;
+    /** Rate-limit respawn-failure warnings per subsystem so a broken spawn logs once, not every tick. */
+    private final Map<String, Long> lastRespawnWarn = new HashMap<String, Long>();
     /** Throttle full cosmetics respawns so rapid destroy+respawn cycles can't duplicate/flicker the villager. */
     private long lastCosmeticsSpawnTick;
     /** Throttle full profile respawns (same reason as cosmetics). */
@@ -117,6 +119,15 @@ public final class LobbyNpcService implements Listener {
                 if (++visibilityTick % GameRules.DISPLAY_VISIBILITY_INTERVAL == 0) updateHologramVisibility();
             }
         }.runTaskTimer(plugin, 1L, 1L);
+    }
+
+    /** Log a respawn failure at most once per 10s per subsystem — a broken spawn must retry, not spam the console. */
+    private void warnRespawnFailure(String what, Throwable t) {
+        long now = System.currentTimeMillis();
+        Long last = lastRespawnWarn.get(what);
+        if (last != null && now - last < 10000L) return;
+        lastRespawnWarn.put(what, now);
+        plugin.getLogger().warning("Lobby " + what + " NPC respawn failed (will retry next tick): " + t);
     }
 
     public void respawnAll() {
@@ -176,6 +187,11 @@ public final class LobbyNpcService implements Listener {
         for (Entity entity : around.getWorld().getNearbyEntities(around, 1.2, 2.0, 1.2)) {
             if (tracked.containsKey(entity.getUniqueId())) continue;
             if (!(entity instanceof LivingEntity) || entity instanceof Player) continue;
+            // Never delete a live Citizens NPC body: right after a Citizens remount the fresh backing entity is
+            // not yet in `tracked`, and deleting it here would leave the body gone while holograms float — the
+            // exact "NPC vanishes until restart" bug. Citizens NPCs are in-memory (never world-saved), so a real
+            // reloaded orphan is always a plain world mob and never carries the "NPC" metadata.
+            if (entity.hasMetadata("NPC")) continue;
             entity.remove();
         }
     }
@@ -221,10 +237,15 @@ public final class LobbyNpcService implements Listener {
         if (alive(profileEntity) && profileHologramsAlive()) return;
         long now = System.currentTimeMillis();
         if (now - lastProfileSpawnTick < 2000L) return;
-        lastProfileSpawnTick = now;
         respawningProfile = true;
         try {
             spawnProfile(location);
+            // Timestamp only AFTER success: writing it up front meant a thrown spawn still consumed the 2s
+            // window, and spawnProfile() nulls profileEntity/profilePin first — so a mid-spawn throw could leave
+            // the body gone with holograms floating until restart. On failure we retry next tick instead.
+            lastProfileSpawnTick = System.currentTimeMillis();
+        } catch (Throwable t) {
+            warnRespawnFailure("profile", t);
         } finally {
             respawningProfile = false;
         }
@@ -364,7 +385,6 @@ public final class LobbyNpcService implements Listener {
         // Minimum interval between full respawns — rapid destroy+respawn cycles cause flicker and duplicate NPCs.
         long now = System.currentTimeMillis();
         if (now - lastCosmeticsSpawnTick < 2000L) return;
-        lastCosmeticsSpawnTick = now;
         // Rebind failed — destroy the old Citizens NPC so no duplicate accumulates in the registry.
         if (cosmeticsCitizen != null) {
             invoke(cosmeticsCitizen, "destroy");
@@ -373,6 +393,13 @@ public final class LobbyNpcService implements Listener {
         respawningCosmetics = true;
         try {
             spawnCosmetics(location);
+            // Timestamp only AFTER success: writing it before meant a thrown spawn (failed world.spawnEntity /
+            // Citizens reflection) still consumed the 2s window, and spawnCosmetics() nulls cosmeticsEntity/
+            // cosmeticsPin up front — so a mid-spawn throw could leave the villager gone until restart. On
+            // failure we log (rate-limited) and retry next tick.
+            lastCosmeticsSpawnTick = System.currentTimeMillis();
+        } catch (Throwable t) {
+            warnRespawnFailure("cosmetics", t);
         } finally {
             respawningCosmetics = false;
         }
@@ -818,8 +845,14 @@ public final class LobbyNpcService implements Listener {
             // destroy+respawn within 2s of the last successful spawn.
             Long last = queueLastSpawn.get(type);
             if (last != null && System.currentTimeMillis() - last < 2000L) continue;
-            spawn(type, settings);
-            queueLastSpawn.put(type, System.currentTimeMillis());
+            try {
+                spawn(type, settings);
+                queueLastSpawn.put(type, System.currentTimeMillis());
+            } catch (Throwable t) {
+                // A thrown spawn must not abort the whole per-tick runnable (pin/visibility work) nor wedge the
+                // NPC gone until restart — log rate-limited and retry next tick.
+                warnRespawnFailure("queue " + type.name(), t);
+            }
         }
     }
 

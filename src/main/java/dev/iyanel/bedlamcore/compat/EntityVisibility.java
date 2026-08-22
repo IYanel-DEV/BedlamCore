@@ -106,6 +106,10 @@ public final class EntityVisibility {
     }
 
     private static void packetHide(Player viewer, Entity entity) {
+        // Never destroy-packet an ArmorStand on the 1.8 path: packetShow() only respawns LivingEntities, so a
+        // hologram hidden this way could never be re-shown (stuck invisible until relog). Holograms are already
+        // invisible marker stands; the caller toggles their nametag for range, which is all that's visible on 1.8.
+        if (entity instanceof org.bukkit.entity.ArmorStand) return;
         if (!resolvePackets()) return;
         Set<Integer> ids = packetHidden.get(viewer.getUniqueId());
         if (ids == null) {

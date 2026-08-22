@@ -443,8 +443,20 @@ final class WinEffectController implements Listener {
         return aiToggle.booleanValue();
     }
 
-    /** One flight tick: move dragon+rider toward the rider's look, grief a path, keep them seated. */
+    /**
+     * The EnderDragon model renders its head toward -Z at yaw 0 (opposite normal mobs). Body yaw is computed from
+     * the ACTUAL displacement each tick, then this single offset makes the head LEAD the motion instead of flying
+     * tail-first. It is the ONE model-orientation constant — flip its sign here if the head ever trails.
+     */
+    private static final float DRAGON_MODEL_YAW_OFFSET = 180f;
+    /** Clamp head/body pitch so climbs and dives read naturally without the model flipping over. */
+    private static final double DRAGON_PITCH_CLAMP = 40.0;
+    /** Fraction of the yaw gap closed per tick (~3 ticks to settle) so turning eases instead of snap-flipping. */
+    private static final float DRAGON_YAW_LERP = 0.35f;
+
+    /** One flight tick: move dragon+rider toward the rider's look, carve the swept path, keep them seated. */
     private void flyWinDragon(UUID owner, Entity dragon, Player rider, int ticks) {
+        if (Boolean.TRUE.equals(dragonMoving.get(owner))) return; // a fallback eject/remount move is mid-flight
         Vector dir = rider.getEyeLocation().getDirection();
         if (dir.lengthSquared() < 1.0e-6) dir = new Vector(0, 0, 1);
         else dir.normalize();
@@ -453,21 +465,36 @@ final class WinEffectController implements Listener {
         Location base = dragonPos.get(owner);
         if (base == null || base.getWorld() != dragon.getWorld()) base = dragon.getLocation();
         Location next = base.clone().add(dir.clone().multiply(winDragonPerTickStep()));
-        // The EnderDragon model renders its head toward -Z at yaw 0 (opposite normal mobs), so matching the
-        // rider's raw yaw flew it tail-first ("backward"). +180 makes the head lead the direction you look.
-        next.setYaw(rider.getLocation().getYaw() + 180f);
-        next.setPitch(rider.getLocation().getPitch());
-        dragonPos.put(owner, next.clone());
-        moveMountedDragon(owner, dragon, rider, next);
-        // Force the dragon's rotation to follow the rider's look. Teleport turns the body, but the
-        // EnderDragon's head yaw lags on 1.11+; setRotation nudges it where the API exists (no-op on 1.8).
+        // Carve the whole swept segment (current -> destination) to air BEFORE moving. The old code griefed only
+        // the dragon's CURRENT cell AFTER the move, so climbing a hill / diving into ground teleported into solid
+        // blocks the server clamped or rubber-banded — the "no vertical progress" bug.
+        griefWinDragonPath(dragon.getWorld(), base, next);
+        // If the destination is still blocked by an unbreakable (bedrock/barrier), slide along the wall instead
+        // of stalling: drop the vertical component, optionally hop up <=1 block.
+        next = slideIfBlocked(base, next);
+        // Facing is derived from the ACTUAL displacement — never a hardcoded ±180 guess — so tail-first flight is
+        // impossible on any version. Body yaw from dx/dz + the single model offset; pitch from dy.
+        double dx = next.getX() - base.getX();
+        double dy = next.getY() - base.getY();
+        double dz = next.getZ() - base.getZ();
+        double horiz = Math.sqrt(dx * dx + dz * dz);
+        float targetYaw = horiz > 1.0e-4 ? dragonBodyYaw(dx, dz) : base.getYaw();
+        float yaw = lerpYawShortest(base.getYaw(), targetYaw, DRAGON_YAW_LERP);
+        float pitch = clampDragonPitch(dy, horiz);
+        next.setYaw(yaw);
+        next.setPitch(pitch);
+        // Move; commit the tracked position to where the entity ACTUALLY ended up (never advance past a refused
+        // teleport in the fallback path — that drift caused the snap/stall).
+        Location applied = moveMountedDragon(owner, dragon, rider, next);
+        applied.setYaw(yaw);
+        applied.setPitch(pitch);
+        dragonPos.put(owner, applied);
+        // Force the dragon's head rotation to follow (EnderDragon head yaw lags after a move on 1.11+; no-op 1.8).
         try {
             dragon.getClass().getMethod("setRotation", float.class, float.class)
-                .invoke(dragon, Float.valueOf(next.getYaw()), Float.valueOf(next.getPitch()));
+                .invoke(dragon, Float.valueOf(yaw), Float.valueOf(pitch));
         } catch (Throwable ignored) {
         }
-        // Body grief: carve through solid blocks like the Hypixel victory dragon.
-        griefWinDragonBlocks(dragon);
         if (ticks % 5 == 0) {
             Particles.play(null, dragon.getLocation().clone().add(0, 1.5, 0), 6, 0.5, "FLAME", "PORTAL", "SMOKE");
         }
@@ -476,17 +503,42 @@ final class WinEffectController implements Listener {
         }
     }
 
+    /** Bukkit-free body yaw from a horizontal delta (standard Bukkit convention) + the EnderDragon model offset. */
+    public static float dragonBodyYaw(double dx, double dz) {
+        return (float) Math.toDegrees(Math.atan2(-dx, dz)) + DRAGON_MODEL_YAW_OFFSET;
+    }
+
+    /** Bukkit-free pitch from the vertical/horizontal delta, clamped so the model never flips. */
+    public static float clampDragonPitch(double dy, double horizontalDist) {
+        if (horizontalDist <= 1.0e-4 && Math.abs(dy) <= 1.0e-4) return 0f;
+        double pitch = Math.toDegrees(Math.atan2(dy, Math.max(horizontalDist, 1.0e-4)));
+        if (pitch > DRAGON_PITCH_CLAMP) pitch = DRAGON_PITCH_CLAMP;
+        else if (pitch < -DRAGON_PITCH_CLAMP) pitch = -DRAGON_PITCH_CLAMP;
+        return (float) pitch;
+    }
+
+    /** Shortest-arc yaw interpolation (Bukkit-free) so turning eases over a few ticks instead of snapping. */
+    public static float lerpYawShortest(float from, float to, float alpha) {
+        float diff = to - from;
+        while (diff < -180f) diff += 360f;
+        while (diff > 180f) diff -= 360f;
+        return from + diff * alpha;
+    }
+
     /**
-     * Move a mounted win dragon (and its rider) to {@code next}. Teleporting a vehicle is refused on
-     * MC 1.9+ (CraftBukkit returns false when the entity has passengers), so the only portable move
-     * is eject → teleport both → remount. {@link #dragonMoving} suppresses our dismount/exit cancel
-     * handlers so our own programmatic eject is not itself cancelled.
+     * Move a mounted win dragon (and its rider) to {@code next}, returning where the dragon actually ended up.
+     *
+     * Modern (1.9+): teleporting a vehicle WITH passengers is refused by CraftBukkit, and the old
+     * eject→teleport→remount every tick caused the rider rubber-band + 1-2 tick dragon flicker. We instead
+     * relocate the dragon at the NMS level ({@code setLocation}/{@code setPositionRotation}/{@code moveTo}) which
+     * moves it without ejecting — the server repositions the seated rider onto it automatically, so flight is
+     * smooth/Hypixel-like. If no NMS relocation method resolves we fall back to eject→teleport→remount, with
+     * {@link #dragonMoving} suppressing our dismount/exit cancel handlers during our own programmatic eject.
+     *
+     * 1.8: the vehicle-teleport refusal is 1.9+, so a plain teleport carries the rider — keep that shortcut.
      */
-    private void moveMountedDragon(UUID owner, Entity dragon, Player rider, Location next) {
+    private Location moveMountedDragon(UUID owner, Entity dragon, Player rider, Location next) {
         if (!supportsAiToggle()) {
-            // 1.8: the "cannot teleport a vehicle that has passengers" rule is 1.9+, so teleporting the
-            // dragon carries the rider. Skip the per-tick eject→remount packet storm that caused the 1.8
-            // rubberband/lag; only re-seat if the teleport actually dropped the rider.
             boolean seated = isPassengerOf(dragon, rider);
             dragon.teleport(next);
             if (seated && !isPassengerOf(dragon, rider)) {
@@ -497,8 +549,14 @@ final class WinEffectController implements Listener {
                     dragonMoving.remove(owner);
                 }
             }
-            return;
+            return dragon.getLocation();
         }
+        // Modern: relocate at the NMS level so the seated rider is NOT ejected — kills the vehicle-teleport
+        // refusal and the per-tick remount flicker. The destination was already carved to air above.
+        if (nmsRelocate(dragon, next)) {
+            return next.clone();
+        }
+        // Fallback: eject → teleport both → remount (mappings where no NMS relocate method resolved).
         boolean seated = isPassengerOf(dragon, rider);
         if (seated) {
             dragonMoving.put(owner, Boolean.TRUE);
@@ -508,11 +566,58 @@ final class WinEffectController implements Listener {
                 dragonMoving.remove(owner);
             }
         }
-        dragon.teleport(next);
+        boolean moved = dragon.teleport(next);
         if (seated) {
             rider.teleport(next);
             mountPassenger(dragon, rider);
         }
+        // Only commit past a move the server accepted; otherwise report the real spot so dragonPos can't drift.
+        return moved ? next.clone() : dragon.getLocation();
+    }
+
+    /** Cached NMS relocation method (setLocation/setPositionRotation/moveTo) resolved once; null = use fallback. */
+    private static Method nmsSetLocation;
+    private static boolean nmsSetLocationResolved;
+
+    /**
+     * Move the entity at the NMS level so a seated passenger is NOT ejected. Mapping names differ across
+     * versions, so resolve reflectively: {@code setLocation} (Spigot), {@code setPositionRotation} (older CB),
+     * {@code moveTo} (Mojang-mapped Paper). Returns false if none resolve or the call throws → caller falls back.
+     */
+    private static boolean nmsRelocate(Entity entity, Location to) {
+        Method setter = resolveNmsSetLocation(entity);
+        if (setter == null) return false;
+        try {
+            Object handle = entity.getClass().getMethod("getHandle").invoke(entity);
+            setter.invoke(handle, to.getX(), to.getY(), to.getZ(), to.getYaw(), to.getPitch());
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static Method resolveNmsSetLocation(Entity entity) {
+        if (nmsSetLocationResolved) return nmsSetLocation;
+        nmsSetLocationResolved = true;
+        try {
+            Object handle = entity.getClass().getMethod("getHandle").invoke(entity);
+            for (String name : new String[]{"setLocation", "setPositionRotation", "moveTo"}) {
+                Class<?> c = handle.getClass();
+                while (c != null) {
+                    try {
+                        Method m = c.getDeclaredMethod(name, double.class, double.class, double.class,
+                            float.class, float.class);
+                        m.setAccessible(true);
+                        nmsSetLocation = m;
+                        return nmsSetLocation;
+                    } catch (NoSuchMethodException ignored) {
+                    }
+                    c = c.getSuperclass();
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return nmsSetLocation;
     }
 
     /** Blocks/tick the win dragon cruises (≈ winDragonFlightSpeed per ~3 ticks — gentle Hypixel pace). */
@@ -541,14 +646,28 @@ final class WinEffectController implements Listener {
         return 2.8f;
     }
 
-    /** Break solid blocks in a box around the dragon (match reset / pristine restores map). */
-    private static void griefWinDragonBlocks(Entity dragon) {
-        if (dragon == null || dragon.getWorld() == null) return;
-        Location c = dragon.getLocation();
-        World world = c.getWorld();
-        int cx = c.getBlockX();
-        int cy = c.getBlockY();
-        int cz = c.getBlockZ();
+    /**
+     * Carve solid blocks along the swept flight segment (current → destination), radius 2, y−1..y+3 per sampled
+     * cell — so the destination is air BEFORE the move and climbs/dives aren't rejected by terrain (Hypixel
+     * victory dragon tunnels as it flies). Bedrock/barrier/portals are spared (see {@link #isWinDragonBreakable}).
+     */
+    private static void griefWinDragonPath(World world, Location from, Location to) {
+        if (world == null || from == null || to == null) return;
+        double dist = from.distance(to);
+        int steps = Math.max(1, (int) Math.ceil(dist));
+        for (int s = 0; s <= steps; s++) {
+            double t = (double) s / steps;
+            griefWinDragonCell(world,
+                from.getX() + (to.getX() - from.getX()) * t,
+                from.getY() + (to.getY() - from.getY()) * t,
+                from.getZ() + (to.getZ() - from.getZ()) * t);
+        }
+    }
+
+    private static void griefWinDragonCell(World world, double wx, double wy, double wz) {
+        int cx = (int) Math.floor(wx);
+        int cy = (int) Math.floor(wy);
+        int cz = (int) Math.floor(wz);
         int r = 2;
         for (int x = cx - r; x <= cx + r; x++) {
             for (int y = cy - 1; y <= cy + 3; y++) {
@@ -559,6 +678,27 @@ final class WinEffectController implements Listener {
                 }
             }
         }
+    }
+
+    /**
+     * After carving, if the destination cell is still an unbreakable block, project the step onto the horizontal
+     * plane (then try a ≤1-block hop) so the dragon slides along walls / bedrock instead of stalling.
+     */
+    private static Location slideIfBlocked(Location base, Location next) {
+        World world = next.getWorld();
+        if (world == null || winDragonCellPassable(world, next)) return next;
+        Location horizontal = next.clone();
+        horizontal.setY(base.getY());
+        if (winDragonCellPassable(world, horizontal)) return horizontal;
+        Location hop = horizontal.clone().add(0, 1, 0);
+        if (winDragonCellPassable(world, hop)) return hop;
+        return horizontal;
+    }
+
+    /** A cell is flyable if it is air or something the dragon already carved (breakable); unbreakable = blocked. */
+    private static boolean winDragonCellPassable(World world, Location at) {
+        Material type = world.getBlockAt(at.getBlockX(), at.getBlockY(), at.getBlockZ()).getType();
+        return type == Material.AIR || isWinDragonBreakable(type);
     }
 
     static boolean isWinDragonBreakable(Material type) {

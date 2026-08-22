@@ -122,6 +122,16 @@ public final class CosmeticsCheck {
         assertTrue(WinEffectController.isWinDragonBreakable(org.bukkit.Material.STONE));
         assertTrue(!WinEffectController.isWinDragonBreakable(org.bukkit.Material.AIR));
         assertTrue(!WinEffectController.isWinDragonBreakable(org.bukkit.Material.BEDROCK));
+        // Dragon facing derives from displacement (never a hardcoded guess): +Z motion faces the model offset,
+        // and opposite deltas face 180 apart — so head-first flight holds on every version.
+        assertTrue(Math.abs(WinEffectController.dragonBodyYaw(0, 1) - 180f) < 0.001f);
+        assertTrue(Math.abs(WinEffectController.dragonBodyYaw(1, 0) - 90f) < 0.001f);
+        assertTrue(WinEffectController.clampDragonPitch(100, 1) <= 40.0f);
+        assertTrue(WinEffectController.clampDragonPitch(-100, 1) >= -40.0f);
+        assertTrue(WinEffectController.clampDragonPitch(0, 0) == 0f);
+        // Shortest-arc yaw lerp wraps across ±180 (170 → -170 eases toward 180, not back through 0).
+        assertTrue(Math.abs(WinEffectController.lerpYawShortest(170f, -170f, 0.5f) - 180f) < 0.001f);
+        assertTrue(Math.abs(WinEffectController.lerpYawShortest(0f, 90f, 0.5f) - 45f) < 0.001f);
         assertEquals("Unlocked: 3/29 (10%)", CosmeticsService.unlockProgress(3, 29));
         assertEquals("Unlocked: 0/0 (0%)", CosmeticsService.unlockProgress(0, 0));
         assertEquals("Currently Selected: NONE", CosmeticsService.selectedLabel(null));
