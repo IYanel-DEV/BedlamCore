@@ -199,12 +199,30 @@ public final class EntityVisibility {
         return packetsOk;
     }
 
-    private static String nmsVersion() {
+    public static String nmsVersion() {
         try {
             String name = Bukkit.getServer().getClass().getPackage().getName();
             return name.substring(name.lastIndexOf('.') + 1);
         } catch (Exception ignored) {
             return null;
+        }
+    }
+
+    /** True when the reflective 1.8-style packet plumbing (connection + sendPacket) resolved for this server. */
+    public static boolean packetsAvailable() {
+        return resolvePackets();
+    }
+
+    /**
+     * Send a pre-built NMS packet to one viewer, reusing the resolved connection plumbing (getHandle →
+     * playerConnection → sendPacket). No-op when packet reflection is unavailable (e.g. Mojang-mapped Paper).
+     * Never throws — callers fall back per-viewer.
+     */
+    public static void sendRaw(Player viewer, Object packet) {
+        if (viewer == null || packet == null || !resolvePackets()) return;
+        try {
+            send(viewer, packet);
+        } catch (Exception ignored) {
         }
     }
 

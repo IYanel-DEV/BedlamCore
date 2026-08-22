@@ -1,6 +1,7 @@
 package dev.iyanel.bedlamcore.cosmetics;
 
 import dev.iyanel.bedlamcore.BedlamCore;
+import dev.iyanel.bedlamcore.compat.EntityVisibility;
 import dev.iyanel.bedlamcore.compat.Items;
 import dev.iyanel.bedlamcore.compat.Particles;
 import dev.iyanel.bedlamcore.compat.Sounds;
@@ -41,6 +42,7 @@ import org.bukkit.plugin.EventExecutor;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -489,6 +491,11 @@ final class WinEffectController implements Listener {
         applied.setYaw(yaw);
         applied.setPitch(pitch);
         dragonPos.put(owner, applied);
+        if (DRAGON_DEBUG && ticks % 20 == 0) {
+            plugin.getLogger().info("[windragon] mode=" + (planADisabled ? "B" : "A")
+                + " pos=" + applied.getBlockX() + "," + applied.getBlockY() + "," + applied.getBlockZ()
+                + " seated=" + isPassengerOf(dragon, rider));
+        }
         // Force the dragon's head rotation to follow (EnderDragon head yaw lags after a move on 1.11+; no-op 1.8).
         try {
             dragon.getClass().getMethod("setRotation", float.class, float.class)
@@ -551,12 +558,21 @@ final class WinEffectController implements Listener {
             }
             return dragon.getLocation();
         }
-        // Modern: relocate at the NMS level so the seated rider is NOT ejected — kills the vehicle-teleport
-        // refusal and the per-tick remount flicker. The destination was already carved to air above.
-        if (nmsRelocate(dragon, next)) {
-            return next.clone();
+        // Modern (Plan A): relocate at the NMS level (no rider eject) then BROADCAST a teleport packet so clients
+        // actually SEE the move. On 1.12.2, setLocation only mutates server-side position fields — the entity
+        // tracker does not reliably broadcast raw mutations for a noAI flyer, so without the explicit packet the
+        // dragon advances server-side while the client renders it frozen at spawn (the f4ce1c6 regression). If
+        // relocate or the broadcast can't work, fall through to Plan B; after a few misses latch Plan B so we
+        // don't repeat failed reflection every tick.
+        if (!planADisabled) {
+            if (nmsRelocate(dragon, next) && broadcastDragonMove(dragon, next.getYaw())) {
+                planAConsecutiveFailures = 0;
+                return next.clone();
+            }
+            if (++planAConsecutiveFailures >= 3) planADisabled = true;
         }
-        // Fallback: eject → teleport both → remount (mappings where no NMS relocate method resolved).
+        // Plan B: eject → teleport both → remount (provably flew on 1.12.2 before f4ce1c6). Bukkit teleport marks
+        // the entity moved for its tracker, so clients see it; minor per-tick flicker is acceptable here.
         boolean seated = isPassengerOf(dragon, rider);
         if (seated) {
             dragonMoving.put(owner, Boolean.TRUE);
@@ -618,6 +634,71 @@ final class WinEffectController implements Listener {
         } catch (Throwable ignored) {
         }
         return nmsSetLocation;
+    }
+
+    /** Once-per-second flight diagnostics (Plan A/B, position delta, seat). Off in release builds. */
+    private static final boolean DRAGON_DEBUG = false;
+    /** Consecutive Plan-A (relocate+broadcast) misses; after {@code >=3} we latch to Plan B for the JVM. */
+    private static int planAConsecutiveFailures;
+    private static boolean planADisabled;
+    private static Constructor<?> teleportPacketCtor;
+    private static Constructor<?> headRotPacketCtor;
+    private static boolean movePacketsResolved;
+
+    /**
+     * Broadcast the dragon's post-relocate position to nearby clients so the NMS setLocation is actually visible.
+     * Sends PacketPlayOutEntityTeleport (reads the handle's just-updated position) + PacketPlayOutEntityHeadRotation
+     * (EnderDragon head yaw lags otherwise) to every non-spectator within ~160 blocks. Returns false when the
+     * packet classes / send plumbing are unavailable (e.g. Mojang-mapped Paper) so the caller uses Plan B.
+     */
+    private boolean broadcastDragonMove(Entity dragon, float yaw) {
+        if (!resolveMovePackets() || !EntityVisibility.packetsAvailable()) return false;
+        Object handle;
+        try {
+            handle = dragon.getClass().getMethod("getHandle").invoke(dragon);
+        } catch (Throwable t) {
+            return false;
+        }
+        Object tpPacket;
+        try {
+            tpPacket = teleportPacketCtor.newInstance(handle);
+        } catch (Throwable t) {
+            return false;
+        }
+        Object headPacket = null;
+        try {
+            headPacket = headRotPacketCtor.newInstance(handle, (byte) ((int) (yaw * 256.0F / 360.0F)));
+        } catch (Throwable ignored) {
+        }
+        World world = dragon.getWorld();
+        if (world == null) return false;
+        Location at = dragon.getLocation();
+        for (Player viewer : world.getPlayers()) {
+            if (EntityVisibility.isSpectator(viewer)) continue;
+            if (viewer.getLocation().distanceSquared(at) > 160.0 * 160.0) continue;
+            EntityVisibility.sendRaw(viewer, tpPacket);
+            if (headPacket != null) EntityVisibility.sendRaw(viewer, headPacket);
+        }
+        return true;
+    }
+
+    /** Resolve the versioned move-packet constructors once; unavailable on Mojang-mapped builds (→ Plan B). */
+    private static boolean resolveMovePackets() {
+        if (movePacketsResolved) return teleportPacketCtor != null;
+        movePacketsResolved = true;
+        try {
+            String v = EntityVisibility.nmsVersion();
+            if (v == null) return false;
+            Class<?> nmsEntity = Class.forName("net.minecraft.server." + v + ".Entity");
+            teleportPacketCtor = Class.forName("net.minecraft.server." + v + ".PacketPlayOutEntityTeleport")
+                .getConstructor(nmsEntity);
+            headRotPacketCtor = Class.forName("net.minecraft.server." + v + ".PacketPlayOutEntityHeadRotation")
+                .getConstructor(nmsEntity, byte.class);
+        } catch (Throwable ignored) {
+            teleportPacketCtor = null;
+            headRotPacketCtor = null;
+        }
+        return teleportPacketCtor != null;
     }
 
     /** Blocks/tick the win dragon cruises (≈ winDragonFlightSpeed per ~3 ticks — gentle Hypixel pace). */
