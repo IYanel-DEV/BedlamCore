@@ -52,7 +52,13 @@ public final class Skins {
         try {
             Class<?> profileClass = Class.forName("com.mojang.authlib.GameProfile");
             Object profile = profileClass.getConstructor(UUID.class, String.class).newInstance(UUID.randomUUID(), null);
-            Object properties = profileClass.getMethod("getProperties").invoke(profile);
+            Method propsMethod;
+            try {
+                propsMethod = profileClass.getMethod("getProperties");
+            } catch (NoSuchMethodException e) {
+                propsMethod = profileClass.getMethod("properties"); // record accessor, authlib 9.x
+            }
+            Object properties = propsMethod.invoke(profile);
             String json = "{\"textures\":{\"SKIN\":{\"url\":\"" + url + "\"}}}";
             String value = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
             Class<?> propertyClass = Class.forName("com.mojang.authlib.properties.Property");

@@ -55,6 +55,7 @@ public final class PacketNpcs {
     private static Constructor<?> propertyCtor;
     private static Constructor<?> propertyCtor3;   // (name, value, signature) — SIGNED textures
     private static Method propertiesPut;
+    private static Method getPropertiesMethod;     // GameProfile getProperties() (legacy) or properties() (record, authlib 9.x)
 
     // EntityPlayer construction path
     private static Method serverGetter;
@@ -599,10 +600,10 @@ public final class PacketNpcs {
      *  NPC's tab-list identity unique so same-skin NPCs don't fight over one entry. Returns the input on failure. */
     private static Object withRandomUuid(Object profile) {
         try {
-            Object name = profile.getClass().getMethod("getName").invoke(profile);
+            Object name = profileNameAccessor().invoke(profile);
             Object clone = profileCtor.newInstance(UUID.randomUUID(), name == null ? "§7§7" : name);
-            Object srcProps = profileClass().getMethod("getProperties").invoke(profile);
-            Object dstProps = profileClass().getMethod("getProperties").invoke(clone);
+            Object srcProps = getPropertiesMethod.invoke(profile);
+            Object dstProps = getPropertiesMethod.invoke(clone);
             Object textures = srcProps.getClass().getMethod("get", Object.class).invoke(srcProps, "textures");
             if (textures instanceof Iterable) {
                 for (Object property : (Iterable<?>) textures) propertiesPut.invoke(dstProps, "textures", property);
@@ -610,6 +611,25 @@ public final class PacketNpcs {
             return clone;
         } catch (Throwable ignored) {
             return profile;
+        }
+    }
+
+    /** GameProfile property accessor across authlib versions: {@code getProperties()} (legacy) or
+     *  {@code properties()} (record accessor, authlib 9.x — Paper 1.21+/26.x). */
+    private static Method profilePropertiesAccessor() throws Exception {
+        try {
+            return profileClass().getMethod("getProperties");
+        } catch (NoSuchMethodException e) {
+            return profileClass().getMethod("properties");
+        }
+    }
+
+    /** GameProfile display-name accessor: {@code getName()} (legacy) or {@code name()} (record accessor, authlib 9.x). */
+    private static Method profileNameAccessor() throws Exception {
+        try {
+            return profileClass().getMethod("getName");
+        } catch (NoSuchMethodException e) {
+            return profileClass().getMethod("name");
         }
     }
 
@@ -625,7 +645,7 @@ public final class PacketNpcs {
         if (textureValue != null && !cape && signature == null) textureValue = stripCape(textureValue);
         Object profile = profileCtor.newInstance(uuid, "\u00A77\u00A77");
         if (textureValue != null) {
-            Object properties = profileClass().getMethod("getProperties").invoke(profile);
+            Object properties = getPropertiesMethod.invoke(profile);
             Object property = (signature != null && propertyCtor3 != null)
                 ? propertyCtor3.newInstance("textures", textureValue, signature)
                 : propertyCtor.newInstance("textures", textureValue);
@@ -740,7 +760,8 @@ public final class PacketNpcs {
                     .getConstructor(String.class, String.class, String.class);
             } catch (Throwable ignored) {
             }
-            Method getProps = profileClass().getMethod("getProperties");
+            Method getProps = profilePropertiesAccessor();
+            getPropertiesMethod = getProps;
             propertiesPut = getProps.getReturnType().getMethod("put", Object.class, Object.class);
 
             // send plumbing

@@ -89,6 +89,9 @@ public final class GuiController {
     /** Hypixel flow: sneak-click an offer, then click its destination in Quick Buy. */
     private final Map<UUID, String> favoritePendingItem = new HashMap<UUID, String>();
     private final Set<UUID> guiBusy = new HashSet<UUID>();
+    /** Current cosmetics-category + page per player (pagination for large catalogs). */
+    private final Map<UUID, String> cosmeticCategory = new HashMap<UUID, String>();
+    private final Map<UUID, Integer> cosmeticPage = new HashMap<UUID, Integer>();
     /** Previous WorldBorder per world name while any setup draft overrides it. */
     private final Map<String, BorderSnapshot> savedBorders = new HashMap<String, BorderSnapshot>();
     /** Setup-only hologram markers keyed by draft owner. */
@@ -1358,19 +1361,39 @@ public final class GuiController {
         return cosmetic == null ? null : ChatColor.stripColor(cosmetic.name);
     }
 
+    /** Number of cosmetic items we fit per category page (slots 9..44). */
+    private static final int COSMETICS_PER_PAGE = 36;
+
     private void openCosmeticsCategory(Player player, String category) {
         String key = CosmeticsService.normalizeCategory(category);
         if (key == null) { openCosmetics(player); return; }
-        StatsStore.Record stats = plugin.stats().get(player.getUniqueId());
+        UUID uuid = player.getUniqueId();
+        String prevKey = cosmeticCategory.get(uuid);
+        if (!key.equals(prevKey)) {
+            cosmeticCategory.put(uuid, key);
+            cosmeticPage.put(uuid, 0);
+        }
+        StatsStore.Record stats = plugin.stats().get(uuid);
+        List<CosmeticsService.Cosmetic> all = plugin.cosmetics().category(key);
+        int pages = Math.max(1, (int) Math.ceil(all.size() / (double) COSMETICS_PER_PAGE));
+        int page = Math.max(0, Math.min(cosmeticPage.get(uuid) == null ? 0 : cosmeticPage.get(uuid), pages - 1));
+        cosmeticPage.put(uuid, page);
         Inventory inventory = chest(54, ChatColor.DARK_GRAY + CosmeticsService.categoryDisplay(key));
         inventory.setItem(4, Items.named(new ItemStack(Material.EMERALD),
             ChatColor.GREEN + "Tokens: " + ChatColor.YELLOW + GameRules.commas(stats.tokens),
             ChatColor.GRAY + CosmeticsService.categoryDisplay(key)));
         inventory.setItem(45, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
+        int start = page * COSMETICS_PER_PAGE;
         int slot = 9;
-        for (CosmeticsService.Cosmetic cosmetic : plugin.cosmetics().category(key)) {
-            if (slot >= 45) break;
-            inventory.setItem(slot++, cosmeticsIcon(player, cosmetic));
+        for (int i = start; i < all.size() && slot < 45; i++) {
+            inventory.setItem(slot++, cosmeticsIcon(player, all.get(i)));
+        }
+        if (pages > 1) {
+            inventory.setItem(49, Items.named(new ItemStack(Material.PAPER),
+                ChatColor.YELLOW + "Page " + (page + 1) + "/" + pages,
+                ChatColor.GRAY + "" + all.size() + " items"));
+            if (page > 0) inventory.setItem(46, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Previous Page"));
+            if (page + 1 < pages) inventory.setItem(52, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Next Page"));
         }
         openGui(player, inventory);
     }
@@ -1480,6 +1503,13 @@ public final class GuiController {
         String name = Items.name(clicked);
         if (name.equals("Back") || name.startsWith("Tokens:")) {
             openCosmetics(player);
+            return;
+        }
+        UUID uuid = player.getUniqueId();
+        if (name.equals("Next Page") || name.equals("Previous Page")) {
+            int page = cosmeticPage.get(uuid) == null ? 0 : cosmeticPage.get(uuid);
+            cosmeticPage.put(uuid, name.equals("Next Page") ? page + 1 : Math.max(0, page - 1));
+            openCosmeticsCategory(player, title);
             return;
         }
         String id = cosmeticId(clicked);
