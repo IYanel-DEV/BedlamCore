@@ -1,12 +1,12 @@
 package dev.iyanel.bedlamcore.arena;
 
 import dev.iyanel.bedlamcore.compat.InvisArmor;
+import dev.iyanel.bedlamcore.compat.Particles;
 import dev.iyanel.bedlamcore.compat.Sounds;
 import dev.iyanel.bedlamcore.game.GameRules;
 import dev.iyanel.bedlamcore.util.Locations;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.Effect;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
@@ -41,13 +41,15 @@ final class MatchEffectsService {
                     if (!arena.healPool(team)) continue;
                     Location spawn = arena.settings().team(team).spawn();
                     if (spawn == null || spawn.getWorld() == null) continue;
-                    // Green heal-pool particles around the island (Hypixel-like).
-                    for (int i = 0; i < 12; i++) {
-                        double angle = (Math.PI * 2 * i) / 12.0;
-                        Location particle = spawn.clone().add(Math.cos(angle) * 3.5, 0.4 + (i % 3) * 0.35, Math.sin(angle) * 3.5);
-                        spawn.getWorld().playEffect(particle, Effect.HAPPY_VILLAGER, 0);
+                    // Dense green happy-villager cloud around the island (Hypixel-like heal pool).
+                    for (int i = 0; i < 20; i++) {
+                        double angle = (Math.PI * 2 * i) / 20.0;
+                        double radius = 2.5 + (i % 4) * 0.6;
+                        Location particle = spawn.clone().add(
+                            Math.cos(angle) * radius, 0.3 + (i % 5) * 0.4, Math.sin(angle) * radius);
+                        Particles.play(null, particle, 3, 0.25, "HAPPY_VILLAGER", "VILLAGER_HAPPY");
                     }
-                    spawn.getWorld().playEffect(spawn.clone().add(0, 1.0, 0), Effect.HAPPY_VILLAGER, 0);
+                    Particles.play(null, spawn.clone().add(0, 1.0, 0), 6, 0.5, "HAPPY_VILLAGER", "VILLAGER_HAPPY");
                 }
                 for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
                     if (arena.eliminated().contains(entry.getKey()) || !arena.healPool(entry.getValue())) continue;

@@ -23,6 +23,10 @@ import java.util.zip.ZipInputStream;
 /**
  * Bundled map templates (JAR resources → plugin data → server world container).
  * ponytail: one hardcoded template for now; catalog grows when more zips ship.
+ * <p>
+ * {@code bedwars-e2560} is a 1.8-era anvil world. Paper 1.13+ converts regions on first
+ * load; we strip {@code session.lock}/{@code entities}/{@code poi} before createWorld so
+ * conversion does not freeze the main thread. Dual {@code .mca}/{@code .mcr} in the zip is fine.
  */
 public final class MapTemplates {
     public static final String BEDWARS_E2560 = "bedwars-e2560";
@@ -78,10 +82,14 @@ public final class MapTemplates {
         if (plugin.games().byId(worldName) != null || plugin.games().arenaInWorld(worldName) != null) {
             throw new IOException(worldName + " already has an arena configured.");
         }
+        // Not a live arena → clear any stale classic/dimension leftovers so the fresh template copy wins.
+        // On 26.2 a lingering managed dimension would otherwise shadow the copy and null out the setup.
+        GameWorlds.purgeWorldFolders(worldName);
         Path dest = Bukkit.getWorldContainer().toPath().resolve(worldName);
         if (!Files.isDirectory(dest) || !Files.isRegularFile(dest.resolve("level.dat"))) {
             AtomicFiles.replaceDirectoryFromCopy(templateDir, dest, SKIP_COPY);
         }
+        GameWorlds.prepareCopiedWorldFolder(dest.toFile());
         return plugin.arenas().readTemplatePreset(
             templateDir.resolve("arena.yml").toFile(), worldName, type, worldName);
     }

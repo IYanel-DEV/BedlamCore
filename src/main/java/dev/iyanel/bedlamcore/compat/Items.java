@@ -21,6 +21,13 @@ public final class Items {
 
     public static Material material(String... names) {
         for (String name : names) {
+            // 1. Direct enum lookup — most reliable on every server version
+            try {
+                @SuppressWarnings("deprecation")
+                Material exact = Material.valueOf(name);
+                return exact;
+            } catch (IllegalArgumentException ignored) { }
+            // 2. matchMaterial — handles legacy names, case-insensitive, "minecraft:" prefix, etc.
             Material material = Material.matchMaterial(name);
             if (material != null) {
                 return material;
@@ -92,22 +99,55 @@ public final class Items {
     @SuppressWarnings("deprecation")
     public static ItemStack drinkPotion(PotionEffectType type, int durationTicks, int amplifier, short legacyData) {
         Material potionMat = material("POTION");
-        ItemStack item = new ItemStack(potionMat, 1, legacyData);
-        if (type == null) return item;
-        try {
+        if (type == null) return new ItemStack(potionMat, 1, legacyData);
+        // Detect modern API: PotionMeta.setBasePotionType(PotionType)
+        if (hasModernPotion()) {
+            ItemStack item = new ItemStack(potionMat, 1);
             ItemMeta meta = item.getItemMeta();
-            if (!(meta instanceof PotionMeta)) return item;
+            if (!(meta instanceof PotionMeta)) return new ItemStack(potionMat, 1, legacyData);
             PotionMeta potion = (PotionMeta) meta;
-            try {
-                potion.setMainEffect(type);
-            } catch (Throwable ignored) {
-            }
+            applyBasePotionType(potion, type);
             potion.addCustomEffect(new PotionEffect(type, durationTicks, amplifier), true);
             item.setItemMeta(potion);
-        } catch (Throwable ignored) {
-            // 1.8 edge: keep colored bottle even if PotionMeta path fails
+            return item;
         }
+        // Legacy 1.8: damage-based bottle color + custom effect
+        ItemStack item = new ItemStack(potionMat, 1, legacyData);
+        ItemMeta meta = item.getItemMeta();
+        if (!(meta instanceof PotionMeta)) return item;
+        PotionMeta potion = (PotionMeta) meta;
+        try { potion.setMainEffect(type); } catch (Throwable ignored) { }
+        potion.addCustomEffect(new PotionEffect(type, durationTicks, amplifier), true);
+        item.setItemMeta(potion);
         return item;
+    }
+
+    private static Boolean modernPotion;
+
+    private static boolean hasModernPotion() {
+        if (modernPotion != null) return modernPotion;
+        try {
+            Class<?> ptClass = Class.forName("org.bukkit.potion.PotionType");
+            org.bukkit.inventory.meta.PotionMeta.class.getMethod("setBasePotionType", ptClass);
+            modernPotion = Boolean.TRUE;
+        } catch (Throwable t) {
+            modernPotion = Boolean.FALSE;
+        }
+        return modernPotion;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void applyBasePotionType(PotionMeta potion, PotionEffectType type) {
+        try {
+            String name = type.getName();
+            String baseName = name;
+            if ("SPEED".equals(name)) baseName = "SWIFTNESS";
+            else if ("JUMP_BOOST".equals(name)) baseName = "LEAPING";
+            Class<?> ptClass = Class.forName("org.bukkit.potion.PotionType");
+            Object baseType = Enum.valueOf((Class<Enum>) ptClass, baseName);
+            potion.getClass().getMethod("setBasePotionType", ptClass).invoke(potion, baseType);
+        } catch (Throwable ignored) {
+        }
     }
 
     public static PotionEffectType potionType(String... names) {

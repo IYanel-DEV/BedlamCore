@@ -63,22 +63,27 @@ public final class BedlamCore extends JavaPlugin {
         PluginCommand leave = getCommand("leave");
         if (leave != null) leave.setExecutor(new BedlamCommand(this));
         npcs.respawnAll();
-        boolean citizens = getServer().getPluginManager().isPluginEnabled("Citizens");
+        // No JVM shutdown hook: onDisable() already saves while worlds are loaded. A second save from a
+        // shutdown-hook thread runs after (or races) world unload, so Locations.encode() sees null worlds
+        // and overwrites arenas.yml with null spawns/beds/gens — wiping every arena setup on restart.
         getLogger().info("BedlamCore " + getDescription().getVersion() + " enabled on " + getServer().getVersion()
             + " | Java " + System.getProperty("java.version")
             + " | visibility: " + EntityVisibility.compatibilityMode()
             + " | NPC silence: " + NpcSoundListener.compatibilityMode()
-            + " | Citizens: " + (citizens ? "enabled" : "fallback entities"));
+            + " | NPCs: built-in entities");
     }
 
     @Override
     public void onDisable() {
-        if (gui != null) gui.restoreAllSetupBorders();
-        if (npcs != null) npcs.removeAll();
+        if (gui != null) try { gui.restoreAllSetupBorders(); } catch (Throwable ignored) { }
+        if (npcs != null) try { npcs.removeAll(); } catch (Throwable ignored) { }
+        // Save settings FIRST — worlds must still be loaded so Locations.encode() can read world names.
+        if (repository != null && lobby != null && games != null) {
+            try { saveSettings(); } catch (Throwable ignored) { }
+        }
         // Unload arena worlds without save (clears win-dragon grief from memory; disk pristine untouched).
-        if (games != null) games.shutdown();
-        if (stats != null) stats.save();
-        if (repository != null && lobby != null && games != null) saveSettings();
+        try { if (games != null) games.shutdown(); } catch (Throwable ignored) { }
+        if (stats != null) try { stats.save(); } catch (Throwable ignored) { }
     }
 
     public LobbySettings lobby() { return lobby; }

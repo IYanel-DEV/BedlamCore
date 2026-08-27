@@ -1,5 +1,7 @@
 package dev.iyanel.bedlamcore.world;
 
+import dev.iyanel.bedlamcore.util.AtomicFiles;
+
 import java.util.Arrays;
 
 /** Dependency-free smoke check for template world-name remapping. */
@@ -7,7 +9,7 @@ public final class MapTemplatesCheck {
     private MapTemplatesCheck() {
     }
 
-    public static void run() {
+    public static void run() throws Exception {
         String yaml = ""
             + "arena:\n"
             + "  mode: SOLO\n"
@@ -20,6 +22,54 @@ public final class MapTemplatesCheck {
         assertEquals("bedwars-e2560", preferredWorld("bedwars-e2560", false));
         assertEquals("bedwars-e2560_doubles", preferredWorld("bedwars-e2560", true));
         assertTrue(Arrays.asList("bedwars-e2560").contains(MapTemplates.BEDWARS_E2560));
+        // prepareCopiedWorldFolder: drop locks + modern entity trees before Paper converts 1.8 anvil.
+        java.nio.file.Path tmp = java.nio.file.Files.createTempDirectory("bedlam-tmpl");
+        try {
+            java.nio.file.Files.write(tmp.resolve("session.lock"), new byte[] {1});
+            java.nio.file.Files.write(tmp.resolve("uid.dat"), new byte[] {2});
+            java.nio.file.Files.createDirectory(tmp.resolve("entities"));
+            java.nio.file.Files.createDirectory(tmp.resolve("poi"));
+            GameWorlds.prepareCopiedWorldFolder(tmp.toFile());
+            assertFalse(java.nio.file.Files.exists(tmp.resolve("session.lock")));
+            assertFalse(java.nio.file.Files.exists(tmp.resolve("uid.dat")));
+            assertFalse(java.nio.file.Files.exists(tmp.resolve("entities")));
+            assertFalse(java.nio.file.Files.exists(tmp.resolve("poi")));
+        } finally {
+            AtomicFiles.deleteTree(tmp);
+        }
+        // Paper 26 conflict: classic region + world/dimensions/minecraft/<name>/region both present.
+        // The migrated dimension holds live setup edits, so keep it and retire the stale classic source;
+        // re-importing the classic folder would wipe the player's arena setup on every restart.
+        java.nio.file.Path container = java.nio.file.Files.createTempDirectory("bedlam-dim");
+        try {
+            java.nio.file.Path classic = container.resolve("bedwars-e2560");
+            java.nio.file.Files.createDirectories(classic.resolve("region"));
+            java.nio.file.Files.write(classic.resolve("region").resolve("r.0.0.mca"), new byte[] {1});
+            java.nio.file.Path dim = container.resolve("world").resolve("dimensions")
+                .resolve("minecraft").resolve("bedwars-e2560");
+            java.nio.file.Files.createDirectories(dim.resolve("region"));
+            java.nio.file.Files.write(dim.resolve("region").resolve("r.0.0.mca"), new byte[] {2});
+            GameWorlds.clearPaperDimensionMigrationConflict(classic.toFile());
+            assertTrue(java.nio.file.Files.exists(dim.resolve("region").resolve("r.0.0.mca")));
+            assertFalse(java.nio.file.Files.exists(classic));
+        } finally {
+            AtomicFiles.deleteTree(container);
+        }
+        // Reserved worlds (primary level + vanilla dimensions) are never touched by folder surgery.
+        java.nio.file.Path guard = java.nio.file.Files.createTempDirectory("bedlam-guard");
+        try {
+            java.nio.file.Path world = guard.resolve("world");
+            java.nio.file.Files.createDirectories(world.resolve("region"));
+            java.nio.file.Files.write(world.resolve("region").resolve("r.0.0.mca"), new byte[] {1});
+            java.nio.file.Path dim = guard.resolve("world").resolve("dimensions")
+                .resolve("minecraft").resolve("world");
+            java.nio.file.Files.createDirectories(dim.resolve("region"));
+            java.nio.file.Files.write(dim.resolve("region").resolve("r.0.0.mca"), new byte[] {2});
+            GameWorlds.clearPaperDimensionMigrationConflict(world.toFile());
+            assertTrue(java.nio.file.Files.exists(world.resolve("region").resolve("r.0.0.mca")));
+        } finally {
+            AtomicFiles.deleteTree(guard);
+        }
     }
 
     /** Shared remap used by ArenaRepository; kept here so coreCheck can assert without Bukkit. */

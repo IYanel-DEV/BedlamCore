@@ -19,6 +19,9 @@ import org.bukkit.inventory.ItemStack;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -29,6 +32,33 @@ import java.util.UUID;
 public final class WaitingTemplateService {
     private static final String TOOL_NAME = "Waiting Build Selector";
     private static final int MAX_BLOCKS = 100000;
+    private static final String DEFAULT_RESOURCE = "waiting-build.yml";
+
+    /** 1.8 block name → modern variants indexed by the legacy data byte (color/type lives in data). */
+    private static final Map<String, String[]> LEGACY_VARIANTS = new HashMap<String, String[]>();
+    /** 1.8 block name → single modern material; data only held facing/color that modern drops. */
+    private static final Map<String, String> LEGACY_RENAMES = new HashMap<String, String>();
+
+    static {
+        LEGACY_RENAMES.put("IRON_FENCE", "IRON_BARS");
+        LEGACY_RENAMES.put("DOUBLE_STEP", "SMOOTH_STONE");
+        LEGACY_RENAMES.put("WALL_BANNER", "WHITE_WALL_BANNER");
+        LEGACY_VARIANTS.put("WOOD", new String[] {"OAK_PLANKS", "SPRUCE_PLANKS", "BIRCH_PLANKS", "JUNGLE_PLANKS", "ACACIA_PLANKS", "DARK_OAK_PLANKS"});
+        LEGACY_VARIANTS.put("LOG", new String[] {"OAK_LOG", "SPRUCE_LOG", "BIRCH_LOG", "JUNGLE_LOG"});
+        LEGACY_VARIANTS.put("STEP", new String[] {"STONE_SLAB", "SANDSTONE_SLAB", "OAK_SLAB", "COBBLESTONE_SLAB", "BRICK_SLAB", "STONE_BRICK_SLAB", "NETHER_BRICK_SLAB", "QUARTZ_SLAB"});
+        LEGACY_VARIANTS.put("STAINED_GLASS", new String[] {
+            "WHITE_STAINED_GLASS", "ORANGE_STAINED_GLASS", "MAGENTA_STAINED_GLASS", "LIGHT_BLUE_STAINED_GLASS",
+            "YELLOW_STAINED_GLASS", "LIME_STAINED_GLASS", "PINK_STAINED_GLASS", "GRAY_STAINED_GLASS",
+            "LIGHT_GRAY_STAINED_GLASS", "CYAN_STAINED_GLASS", "PURPLE_STAINED_GLASS", "BLUE_STAINED_GLASS",
+            "BROWN_STAINED_GLASS", "GREEN_STAINED_GLASS", "RED_STAINED_GLASS", "BLACK_STAINED_GLASS"
+        });
+        LEGACY_VARIANTS.put("CARPET", new String[] {
+            "WHITE_CARPET", "ORANGE_CARPET", "MAGENTA_CARPET", "LIGHT_BLUE_CARPET",
+            "YELLOW_CARPET", "LIME_CARPET", "PINK_CARPET", "GRAY_CARPET",
+            "LIGHT_GRAY_CARPET", "CYAN_CARPET", "PURPLE_CARPET", "BLUE_CARPET",
+            "BROWN_CARPET", "GREEN_CARPET", "RED_CARPET", "BLACK_CARPET"
+        });
+    }
 
     private final BedlamCore plugin;
     private final File file;
@@ -71,7 +101,7 @@ public final class WaitingTemplateService {
         Location origin = waitingSpawn.getBlock().getLocation().add(0, -1, 0);
         for (BlockSpec spec : blocks) {
             Block block = origin.clone().add(spec.x, spec.y, spec.z).getBlock();
-            Material material = pasteMaterial(spec.material);
+            Material material = pasteMaterial(spec.material, spec.data);
             replaced.add(BlockSnap.original(block, material, spec.data));
             setSilent(block, material, spec.data);
         }
@@ -129,7 +159,9 @@ public final class WaitingTemplateService {
             if ((x == c1x && y == c1y && z == c1z) || (x == c2x && y == c2y && z == c2z)) continue;
             Block block = one.getWorld().getBlockAt(x, y, z);
             String material = block.getType().name();
-            byte data = block.getData();
+            // getData() triggers the CraftLegacy DataFixer on 1.13+ (server-freezing); the flattened
+            // Material name already captures the variant, so store 0 there.
+            byte data = isFlattened() ? 0 : block.getData();
             captured.add(new BlockSpec(x - anchor.getBlockX(), y - anchor.getBlockY(), z - anchor.getBlockZ(), material, data));
         }
         blocks = captured;
@@ -142,13 +174,26 @@ public final class WaitingTemplateService {
     }
 
     private void load() {
-        if (!file.isFile()) return;
-        for (Map<?, ?> entry : YamlConfiguration.loadConfiguration(file).getMapList("blocks")) {
+        YamlConfiguration yaml = file.isFile() ? YamlConfiguration.loadConfiguration(file) : null;
+        if (yaml == null || yaml.getMapList("blocks").isEmpty()) yaml = defaultYaml();
+        if (yaml == null) return;
+        for (Map<?, ?> entry : yaml.getMapList("blocks")) {
             Object material = entry.get("material");
             if (material == null) continue;
             String name = material.toString();
             byte data = (byte) number(entry.get("data"));
             blocks.add(new BlockSpec(number(entry.get("x")), number(entry.get("y")), number(entry.get("z")), name, data));
+        }
+    }
+
+    /** Built-in default build (captured on 1.8) used until the operator selects their own via the axe tool. */
+    private YamlConfiguration defaultYaml() {
+        try {
+            InputStream stream = plugin.getResource(DEFAULT_RESOURCE);
+            if (stream == null) return null;
+            return YamlConfiguration.loadConfiguration(new InputStreamReader(stream, StandardCharsets.UTF_8));
+        } catch (Throwable ignored) {
+            return null;
         }
     }
 
@@ -181,8 +226,23 @@ public final class WaitingTemplateService {
         }
     }
 
-    private static Material pasteMaterial(String name) {
+    /** Maps 1.8-named blocks (the bundled default) onto the running version; modern colors/types come from data. */
+    private static Material pasteMaterial(String name, byte data) {
         if (name == null) return Material.AIR;
+        String[] variants = LEGACY_VARIANTS.get(name);
+        if (variants != null) {
+            int index = data & 0xff;
+            if (index < variants.length) {
+                Material material = Material.matchMaterial(variants[index]);
+                if (material != null) return material;
+            }
+        } else {
+            String renamed = LEGACY_RENAMES.get(name);
+            if (renamed != null) {
+                Material material = Material.matchMaterial(renamed);
+                if (material != null) return material;
+            }
+        }
         Material material = Material.matchMaterial(name);
         return material == null ? Material.AIR : material;
     }
@@ -225,15 +285,38 @@ public final class WaitingTemplateService {
         }
     }
 
+    private static Boolean flattened;
+
+    /**
+     * True on 1.13+ ("the flattening"), where byte block-data is deprecated. Calling legacy data APIs
+     * ({@code Block.getData}, {@code Material.getId}, {@code setTypeIdAndData}) there routes through
+     * {@code CraftLegacy}'s {@code DataFixerUpper}, whose first-call init blocks the server thread for
+     * many seconds (Paper watchdog freeze during arena setup). Detect via the {@code LEGACY_*} enum
+     * constants that only exist post-flattening. Pre-flattening (1.8–1.12) byte data stays valid/cheap.
+     */
+    static boolean isFlattened() {
+        if (flattened != null) return flattened;
+        try {
+            flattened = Material.getMaterial("LEGACY_STONE") != null;
+        } catch (Throwable ignored) {
+            flattened = Boolean.FALSE;
+        }
+        return flattened;
+    }
+
     @SuppressWarnings("deprecation")
     static void setSilent(Block block, Material type, byte data) {
         if (block == null) return;
         if (type == null) type = Material.AIR;
-        try {
-            block.getClass().getMethod("setTypeIdAndData", int.class, byte.class, boolean.class)
-                .invoke(block, Integer.valueOf(type.getId()), Byte.valueOf(data), Boolean.FALSE);
-            return;
-        } catch (Throwable ignored) { }
+        if (!isFlattened()) {
+            // Pre-flattening (1.8–1.12): legacy id+data places the sub-type (wool color, log axis, …).
+            try {
+                block.getClass().getMethod("setTypeIdAndData", int.class, byte.class, boolean.class)
+                    .invoke(block, Integer.valueOf(type.getId()), Byte.valueOf(data), Boolean.FALSE);
+                return;
+            } catch (Throwable ignored) { }
+        }
+        // Flattened (1.13+): the Material already encodes the variant; never touch legacy id/data here.
         try {
             block.getClass().getMethod("setType", Material.class, boolean.class).invoke(block, type, Boolean.FALSE);
             return;
@@ -265,8 +348,10 @@ public final class WaitingTemplateService {
         @SuppressWarnings("deprecation")
         static BlockSnap original(Block block, Material pasteType, byte pasteData) {
             Material type = block.getType();
-            byte data = block.getData();
-            boolean baked = type == pasteType && data == pasteData;
+            // getData() triggers the CraftLegacy DataFixer on 1.13+ (server-freezing); the flattened
+            // Material already identifies the block, so skip legacy data there.
+            byte data = isFlattened() ? 0 : block.getData();
+            boolean baked = type == pasteType && (isFlattened() || data == pasteData);
             return baked ? new BlockSnap(block, Material.AIR, (byte) 0) : new BlockSnap(block, type, data);
         }
 

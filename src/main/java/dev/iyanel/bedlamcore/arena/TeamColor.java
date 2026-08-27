@@ -63,7 +63,7 @@ public enum TeamColor {
     public void placeAsBlock(Block block) {
         ItemStack stack = wool(1);
         block.setType(stack.getType());
-        if (stack.getDurability() != 0) block.setData((byte) stack.getDurability());
+        if (stack.getDurability() != 0) dev.iyanel.bedlamcore.compat.Blocks.setLegacyData(block, (byte) stack.getDurability());
     }
 
     /** Colored bed on modern; BED_BLOCK/BED on 1.8. Aqua → CYAN_BED. */

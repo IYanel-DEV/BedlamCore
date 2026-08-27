@@ -15,6 +15,9 @@ import java.util.Map;
 public final class GameService {
     private final BedlamCore plugin;
     private final Map<String, ArenaManager> arenas = new LinkedHashMap<String, ArenaManager>();
+    /** Settings whose ArenaManager failed to construct (e.g. a flaky world load). Retained so a
+     *  transient failure never drops the arena from {@link #settings()} and overwrites arenas.yml. */
+    private final Map<String, ArenaSettings> unloaded = new LinkedHashMap<String, ArenaSettings>();
 
     public GameService(BedlamCore plugin, Map<String, ArenaSettings> settings) {
         this.plugin = plugin;
@@ -26,6 +29,7 @@ public final class GameService {
     public Collection<ArenaSettings> settings() {
         java.util.List<ArenaSettings> result = new java.util.ArrayList<ArenaSettings>();
         for (ArenaManager manager : arenas.values()) result.add(manager.arena().settings());
+        result.addAll(unloaded.values());
         return result;
     }
 
@@ -46,15 +50,20 @@ public final class GameService {
     public void register(ArenaSettings settings) {
         ArenaManager old = arenas.remove(settings.id());
         if (old != null) old.shutdown();
+        unloaded.remove(settings.id());
         try {
             arenas.put(settings.id(), new ArenaManager(plugin, settings));
         } catch (RuntimeException e) {
-            plugin.getLogger().severe("Failed to load arena " + settings.id() + ": " + e.getMessage());
+            // Keep the config so saveSettings() never writes an empty arenas.yml over a good one.
+            unloaded.put(settings.id(), settings);
+            plugin.getLogger().severe("Failed to load arena " + settings.id()
+                + " (config preserved, world will retry next load): " + e.getMessage());
             e.printStackTrace();
         }
     }
 
     public ArenaSettings remove(String id) {
+        unloaded.remove(id);
         ArenaManager manager = arenas.remove(id);
         if (manager == null) return null;
         manager.shutdown();

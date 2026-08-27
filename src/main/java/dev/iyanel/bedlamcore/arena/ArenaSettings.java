@@ -46,9 +46,22 @@ public final class ArenaSettings {
     /** Border needs waiting spawn + spectator; radius always defaults. */
     public boolean hasBuildBorder() { return waitingSpawn != null && spectator != null; }
 
+    /**
+     * Paper 26.2 CraftWorldBorder max (5.9999968E7). Legacy hide used 6e7 and crashed cancel/setup.
+     * Same clamp is valid on 1.8.8 (just a slightly smaller “hidden” diameter).
+     */
+    public static final double MAX_WORLD_BORDER_SIZE = 59_999_968.0;
+
     /** Bukkit WorldBorder.setSize is diameter; GUI/mayPlace use radius (center→edge). */
     public static int worldBorderDiameter(int radius) {
         return Math.max(1, radius) * 2;
+    }
+
+    /** Clamp diameter for WorldBorder.setSize (Paper rejects outside 1.0 .. MAX). */
+    public static double clampWorldBorderSize(double size) {
+        if (size < 1.0) return 1.0;
+        if (size > MAX_WORLD_BORDER_SIZE) return MAX_WORLD_BORDER_SIZE;
+        return size;
     }
 
     /**
@@ -119,7 +132,7 @@ public final class ArenaSettings {
         int cz = (box[2] + box[5]) / 2;
         WorldBorder border = world.getWorldBorder();
         border.setCenter(cx + 0.5, cz + 0.5);
-        border.setSize(worldBorderDiameter(buildBorderRadius));
+        border.setSize(clampWorldBorderSize(worldBorderDiameter(buildBorderRadius)));
         border.setWarningDistance(0);
         border.setDamageAmount(0.0);
     }
@@ -128,7 +141,7 @@ public final class ArenaSettings {
     public static void hideWorldBorder(World world) {
         if (world == null) return;
         WorldBorder border = world.getWorldBorder();
-        border.setSize(6.0E7);
+        border.setSize(MAX_WORLD_BORDER_SIZE);
         border.setWarningDistance(0);
         border.setDamageAmount(0.0);
     }

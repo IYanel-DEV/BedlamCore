@@ -3,11 +3,19 @@ version: ${version}
 main: dev.iyanel.bedlamcore.BedlamCore
 author: Youniss
 description: GUI-first Bed Wars game engine for Spigot and Paper.
+# Modern (post-Flattening) plugin. Without this, Paper 1.13+/26.x runs BedlamCore in legacy
+# material mode, which strips colored ItemStacks (RED_WOOL, etc.) down to white legacy WOOL.
+# Ignored by Spigot 1.8.8, so the same jar still runs on the legacy server.
+api-version: "1.13"
+# Optional soft-depend only for users who also install Citizens: BedlamCore has its own built-in
+# Citizens-free packet NPC system (real player-model fake-players with skins + look-at), so Citizens
+# is NOT required. When Citizens is the plugin still picks it up for nicer NPC bodies; otherwise the
+# built-in packet system handles everything. softdepend keeps load order correct when both are present.
 softdepend: [Citizens]
 commands:
   bedlam:
     description: BedlamCore fallback controls.
-    usage: /bedlam [menu|solo|doubles|leave|spawnbuild|forcestart|reload]
+    usage: /bedlam [menu|solo|doubles|leave|spawnbuild|forcestart|reload|token|xp]
     aliases: [bc]
   leave:
     description: Leave the current BedlamCore game.
@@ -15,6 +23,15 @@ commands:
 permissions:
   bedlam.admin:
     description: Configure and control BedlamCore arenas.
+    default: op
+    children:
+      bedlam.token.add: true
+      bedlam.xp.add: true
+  bedlam.token.add:
+    description: Add tokens to a player via /bc token add.
+    default: op
+  bedlam.xp.add:
+    description: Add XP to a player via /bc xp add.
     default: op
   bedlam.lobby.build:
     description: Break and place blocks in the BedlamCore lobby world.

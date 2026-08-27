@@ -44,6 +44,10 @@ public final class GameRulesCheck {
         assertEquals(70.0, GameRules.voidKillY(100.0, 30.0));
         // Border: GUI radius → WB diameter 2r; mayPlace XZ = center ± radius
         assertEquals(160, ArenaSettings.worldBorderDiameter(80));
+        assertEquals(ArenaSettings.MAX_WORLD_BORDER_SIZE, ArenaSettings.clampWorldBorderSize(6.0E7));
+        assertEquals(ArenaSettings.MAX_WORLD_BORDER_SIZE, ArenaSettings.clampWorldBorderSize(ArenaSettings.MAX_WORLD_BORDER_SIZE));
+        assertEquals(1.0, ArenaSettings.clampWorldBorderSize(0.5));
+        assertEquals(1024.0, ArenaSettings.clampWorldBorderSize(1024.0));
         int[] box = ArenaSettings.borderBox(0, 64, 0, 100, 80, 0, 80);
         assertEquals(-30, box[0]); // cx=50 → 50-80
         assertEquals(130, box[3]);

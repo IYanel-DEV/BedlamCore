@@ -464,6 +464,12 @@ cosmetics:
       cost: 500
       effect: dragon
       particles: [FLAME, PORTAL, SMOKE, CRIT]
+    we_wither:
+      category: WIN_EFFECT
+      name: "&8Wither"
+      cost: 500
+      effect: wither
+      particles: [SMOKE, LARGE_SMOKE, CRIT]
 generator-periods:
   iron: 20
   gold: 80

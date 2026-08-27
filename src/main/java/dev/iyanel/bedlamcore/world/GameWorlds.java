@@ -8,6 +8,7 @@ import dev.iyanel.bedlamcore.game.GameRules;
 import dev.iyanel.bedlamcore.util.AtomicFiles;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.Material;
@@ -76,8 +77,8 @@ public final class GameWorlds {
 
     public boolean delete(ArenaSettings settings, Player operator) {
         String name = settings.worldName();
-        if (!managedName(name)) {
-            operator.sendMessage(ChatColor.RED + "Only BedlamCore-created worlds can be deleted.");
+        if (name == null || name.isEmpty()) {
+            operator.sendMessage(ChatColor.RED + "No world name to delete.");
             return false;
         }
         World world = Bukkit.getWorld(name);
@@ -91,6 +92,10 @@ public final class GameWorlds {
                 return false;
             }
         }
+        if (isReservedWorldName(name)) {
+            operator.sendMessage(ChatColor.RED + "Refusing to delete reserved world " + name + ".");
+            return false;
+        }
         File folder = new File(Bukkit.getWorldContainer(), name);
         try {
             if (!folder.getCanonicalFile().getParentFile().equals(Bukkit.getWorldContainer().getCanonicalFile())) return false;
@@ -103,6 +108,17 @@ public final class GameWorlds {
             operator.sendMessage(ChatColor.RED + "Could not completely delete " + name + ". Check server file permissions.");
             return false;
         }
+        // Paper 26+ keeps the live world at world/dimensions/minecraft/<name>. Deleting only the classic
+        // top-level folder leaves that stale build on disk; recreating the same template then reloads the
+        // OLD build (clearPaperDimensionMigrationConflict keeps the dimension) and its blocks no longer
+        // match the fresh arena.yml → "setups missing". Remove the migrated dimension folder too.
+        File dimension = new File(Bukkit.getWorldContainer(), "world" + File.separator + "dimensions"
+            + File.separator + "minecraft" + File.separator + name);
+        if (dimension.exists() && !deleteRecursively(dimension)) {
+            operator.sendMessage(ChatColor.RED + "Could not delete the migrated world data for " + name
+                + " (world/dimensions/minecraft/" + name + "). Check server file permissions.");
+            return false;
+        }
         return true;
     }
 
@@ -111,26 +127,32 @@ public final class GameWorlds {
         World world = Bukkit.getWorld(name);
         if (world != null) {
             // Crash/reload path: never keep in-memory match dirt; discard without save first.
-            for (Item item : new java.util.ArrayList<Item>(world.getEntitiesByClass(Item.class))) item.remove();
+            clearLooseItemsNearSpawn(world);
             LocationFallback teleport = new LocationFallback(plugin);
             for (Player player : new java.util.ArrayList<Player>(world.getPlayers())) teleport.toLobby(player);
             world.setAutoSave(false);
             Bukkit.unloadWorld(world, false);
         }
-        File pristine = pristineDir(name);
-        if (pristine.isDirectory()) {
-            restorePristine(name);
-        } else {
-            plugin.getLogger().warning("No pristine snapshot for " + name
-                + " — Apply the arena once to create plugins/BedlamCore/pristine/" + name
-                + ". Loading disk world without restore (match builds may linger after crashes).");
+        // Paper 26+ keeps this world under world/dimensions/minecraft/<name> and manages its files.
+        // Copying a snapshot over that live folder fights Paper's storage and corrupts region headers,
+        // so on managed servers we let Paper reload the on-disk world (Apply saved the setup there).
+        if (!usesManagedDimensions()) {
+            File pristine = pristineDir(name);
+            if (pristine.isDirectory()) {
+                restorePristine(name);
+            } else {
+                plugin.getLogger().warning("No pristine snapshot for " + name
+                    + " — Apply the arena once to create plugins/BedlamCore/pristine/" + name
+                    + ". Loading disk world without restore (match builds may linger after crashes).");
+            }
         }
+        prepareCopiedWorldFolder(new File(Bukkit.getWorldContainer(), name));
         WorldCreator creator = new WorldCreator(name);
         if (managedName(name)) creator.generator(oneBlockGenerator());
         world = creator.createWorld();
         if (world != null) {
             disableAutoSave(world);
-            for (Item item : new java.util.ArrayList<Item>(world.getEntitiesByClass(Item.class))) item.remove();
+            clearLooseItemsNearSpawn(world);
         }
         return world;
     }
@@ -158,10 +180,14 @@ public final class GameWorlds {
         } catch (Throwable ignored) { }
     }
 
-    /** Remove hostile mobs that are not plugin NPCs / pets. */
+    /** Remove hostile mobs near spawn that are not plugin NPCs / pets.
+     * Nearby only — full world.getEntities freezes Paper 26.x on large/converted maps. */
     public void clearWildMonsters(World world) {
         if (world == null) return;
-        for (org.bukkit.entity.Entity entity : new ArrayList<org.bukkit.entity.Entity>(world.getEntities())) {
+        Location spawn = world.getSpawnLocation();
+        if (spawn == null) return;
+        // ponytail: 96-block box; far leftovers despawn with spawn flags off. Full scan if maps ship dungeon mobs far from spawn.
+        for (org.bukkit.entity.Entity entity : world.getNearbyEntities(spawn, 96, 96, 96)) {
             if (!(entity instanceof Monster)) continue;
             if (LobbyNpcService.isPluginNpc(entity) || LobbyNpcService.isPet(entity)) continue;
             entity.remove();
@@ -204,9 +230,156 @@ public final class GameWorlds {
         if (world == null) return;
         LocationFallback teleport = new LocationFallback(plugin);
         for (Player player : new java.util.ArrayList<Player>(world.getPlayers())) teleport.toLobby(player);
-        for (Item item : world.getEntitiesByClass(Item.class)) item.remove();
+        clearLooseItemsNearSpawn(world);
         world.setAutoSave(false);
         Bukkit.unloadWorld(world, false);
+    }
+
+    /**
+     * After copying a 1.8 (or any) template: drop locks and modern entity/poi trees so first
+     * {@code createWorld} lets Paper convert anvil without a sync entity-wipe storm.
+     * Region may ship dual {@code .mca}/{@code .mcr}; Paper upgrades on load.
+     * Paper 26.x migrates {@code <world>/region} → {@code world/dimensions/minecraft/<world>/region};
+     * a partial migrate leaves both and {@code createWorld} throws "Refusing to overwrite".
+     */
+    public static void prepareCopiedWorldFolder(File folder) {
+        if (folder == null || !folder.isDirectory()) return;
+        new File(folder, "session.lock").delete();
+        new File(folder, "uid.dat").delete();
+        deleteRecursively(new File(folder, "entities"));
+        deleteRecursively(new File(folder, "poi"));
+        clearPaperDimensionMigrationConflict(folder);
+    }
+
+    /**
+     * Paper 26+ stores each custom world at {@code world/dimensions/minecraft/<name>/}. The classic
+     * top-level {@code <container>/<name>} folder is only the initial import/template source; once Paper
+     * migrates it, that dimension folder holds every setup edit and {@code world.save()}. If BOTH still
+     * carry region files, {@code createWorld} refuses to overwrite — and re-importing the stale top-level
+     * would wipe the player's setup. So we keep the migrated dimension (live data) and retire the stale
+     * top-level source. No-op on 1.8.8 (craft package {@code v1_8*}) and when either side lacks region files.
+     */
+    static void clearPaperDimensionMigrationConflict(File classicFolder) {
+        if (classicFolder == null || isLegacy18CraftPackage()) return;
+        String name = classicFolder.getName();
+        if (isReservedWorldName(name)) return;
+        File classicRegion = new File(classicFolder, "region");
+        if (!hasRegionFiles(classicRegion)) return;
+        File container = classicFolder.getParentFile();
+        if (container == null) return;
+        File dimRoot = new File(container, "world" + File.separator + "dimensions"
+            + File.separator + "minecraft" + File.separator + name);
+        // Only retire the stale source once the migrated dimension is proven to hold this world's region
+        // data — never delete the sole copy.
+        if (!hasRegionFiles(new File(dimRoot, "region"))) return;
+        deleteRecursively(classicFolder);
+    }
+
+    /** Never let world-folder surgery touch the primary level or vanilla dimensions. */
+    private static boolean isReservedWorldName(String name) {
+        if (name == null || name.isEmpty()) return true;
+        return name.equalsIgnoreCase("world")
+            || name.equalsIgnoreCase("world_nether")
+            || name.equalsIgnoreCase("world_the_end")
+            || name.equalsIgnoreCase("overworld")
+            || name.equalsIgnoreCase("the_nether")
+            || name.equalsIgnoreCase("the_end");
+    }
+
+    /**
+     * On-disk folder that actually holds a world's live data: the Paper 26+ migrated dimension
+     * ({@code world/dimensions/minecraft/<name>}) when it carries region files, otherwise the legacy
+     * top-level {@code <container>/<name>} folder used on 1.8.x and before first migration.
+     */
+    static File liveWorldFolder(String name) {
+        File dimension = new File(Bukkit.getWorldContainer(), "world" + File.separator + "dimensions"
+            + File.separator + "minecraft" + File.separator + name);
+        if (hasRegionFiles(new File(dimension, "region"))) return dimension;
+        return new File(Bukkit.getWorldContainer(), name);
+    }
+
+    /**
+     * True when a world's live data exists under the Paper 26+ managed dimension
+     * ({@code world/dimensions/minecraft/<name>}). After a match+save the classic top-level folder is
+     * retired (see {@link #clearPaperDimensionMigrationConflict}), so this is the only on-disk proof the
+     * world still exists — {@code ArenaRepository.loadExistingWorld} must consult it or every team
+     * Location decodes to null on restart ("setup missing").
+     */
+    /**
+     * Remove any stale on-disk copies (classic top-level {@code <container>/<name>} and the Paper 26+
+     * managed dimension {@code world/dimensions/minecraft/<name>}) of a world that is not a live arena.
+     * Used before materializing a fresh template so a leftover dimension can't shadow the fresh copy —
+     * on 26.2 {@code clearPaperDimensionMigrationConflict} would otherwise delete the fresh classic copy
+     * in favour of the stale dimension, and the arena would load with null coords ("setup missing").
+     */
+    public static void purgeWorldFolders(String name) {
+        if (name == null || name.isEmpty() || isReservedWorldName(name)) return;
+        if (Bukkit.getWorld(name) != null) return; // never touch a loaded world's files
+        deleteRecursively(new File(Bukkit.getWorldContainer(), name));
+        deleteRecursively(new File(Bukkit.getWorldContainer(), "world" + File.separator + "dimensions"
+            + File.separator + "minecraft" + File.separator + name));
+    }
+
+    public static boolean managedDimensionExists(String name) {
+        if (name == null || name.isEmpty() || isReservedWorldName(name)) return false;
+        File dimension = new File(Bukkit.getWorldContainer(), "world" + File.separator + "dimensions"
+            + File.separator + "minecraft" + File.separator + name);
+        return hasRegionFiles(new File(dimension, "region")) || new File(dimension, "level.dat").isFile();
+    }
+
+    private static boolean hasRegionFiles(File regionDir) {
+        if (regionDir == null || !regionDir.isDirectory()) return false;
+        File[] files = regionDir.listFiles();
+        if (files == null) return false;
+        for (File file : files) {
+            String name = file.getName();
+            if (name.endsWith(".mca") || name.endsWith(".mcr")) return true;
+        }
+        return false;
+    }
+
+    private static Boolean managedDimensions;
+
+    /**
+     * True on Paper 26+ where every world lives under {@code world/dimensions/minecraft/<name>} and the
+     * server owns those files. The plugin's copy-based pristine snapshot/restore is unsafe there (it
+     * races Paper's chunk storage and corrupts region headers), so those servers persist worlds natively:
+     * Apply writes the setup with {@code world.save()}, matches run with autosave off, and a crash/stop
+     * unload-without-save discards match dirt while the last saved (setup) state stays on disk.
+     */
+    static boolean usesManagedDimensions() {
+        if (managedDimensions != null) return managedDimensions;
+        if (isLegacy18CraftPackage()) return managedDimensions = Boolean.FALSE;
+        try {
+            File dims = new File(Bukkit.getWorldContainer(),
+                "world" + File.separator + "dimensions" + File.separator + "minecraft");
+            managedDimensions = dims.isDirectory();
+        } catch (Throwable ignored) {
+            managedDimensions = Boolean.FALSE;
+        }
+        return managedDimensions;
+    }
+
+    /** True only when running on Spigot/Paper 1.8.x (craft package {@code v1_8*}). */
+    private static boolean isLegacy18CraftPackage() {
+        try {
+            String pkg = Bukkit.getServer().getClass().getPackage().getName();
+            int dot = pkg.lastIndexOf('.');
+            String ver = dot < 0 ? pkg : pkg.substring(dot + 1);
+            return ver.startsWith("v1_8");
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** Match dirt near spawn only — avoid world-wide entity iteration on Paper 26.x. */
+    private static void clearLooseItemsNearSpawn(World world) {
+        if (world == null) return;
+        Location spawn = world.getSpawnLocation();
+        if (spawn == null) return;
+        for (org.bukkit.entity.Entity entity : world.getNearbyEntities(spawn, 128, 128, 128)) {
+            if (entity instanceof Item) entity.remove();
+        }
     }
 
     private File pristineDir(String worldName) {
@@ -214,7 +387,9 @@ public final class GameWorlds {
     }
 
     private void snapshotPristine(String worldName) {
-        File src = new File(Bukkit.getWorldContainer(), worldName);
+        // Managed-dimension servers persist natively (see usesManagedDimensions); no folder copy.
+        if (usesManagedDimensions()) return;
+        File src = liveWorldFolder(worldName);
         if (!src.isDirectory()) return;
         File dst = pristineDir(worldName);
         try {
@@ -226,10 +401,12 @@ public final class GameWorlds {
     }
 
     private void restorePristine(String worldName) {
+        // Managed-dimension servers persist natively; copying over the live folder corrupts it.
+        if (usesManagedDimensions()) return;
         if (Bukkit.getWorld(worldName) != null) return;
         File src = pristineDir(worldName);
         if (!src.isDirectory()) return;
-        File dst = new File(Bukkit.getWorldContainer(), worldName);
+        File dst = liveWorldFolder(worldName);
         try {
             AtomicFiles.replaceDirectoryFromCopy(src.toPath(), dst.toPath(), TRANSIENT_WORLD_FILES);
             plugin.getLogger().info("Restored pristine world " + worldName);

@@ -17,7 +17,7 @@ import org.bukkit.plugin.Plugin;
 import java.lang.reflect.Method;
 
 /**
- * Shop / upgrade / lobby / Citizens NPCs: no idle, hurt, death, or step sounds.
+ * Shop / upgrade / lobby NPCs: no idle, hurt, death, or step sounds.
  * Prefer metadata + EntitySoundEvent cancel; NMS Entity.b(true) only on spawn/remount (1.8).
  */
 public final class NpcSoundListener implements Listener {
@@ -30,8 +30,7 @@ public final class NpcSoundListener implements Listener {
         this.plugin = plugin;
         Bukkit.getPluginManager().registerEvents(this, plugin);
         registerEntitySoundCancel();
-        registerCitizensSpawnRemute();
-        // Five-second safety net if a Citizens remount skips its event; tracked entities only.
+        // Five-second safety net if a spawn/remount skips its event; tracked entities only.
         Bukkit.getScheduler().runTaskTimer(plugin, new Runnable() {
             @Override public void run() { remuteTagged(); }
         }, 100L, 100L);
@@ -109,55 +108,10 @@ public final class NpcSoundListener implements Listener {
         } catch (ClassNotFoundException ignored) { }
     }
 
-    /** Soft-dep: remount/spawn clears NMS silent — remute when Citizens fires NPCSpawnEvent. */
-    @SuppressWarnings("unchecked")
-    private void registerCitizensSpawnRemute() {
-        try {
-            final Class<? extends Event> spawnEvent = (Class<? extends Event>) Class.forName("net.citizensnpcs.api.event.NPCSpawnEvent");
-            Bukkit.getPluginManager().registerEvent(spawnEvent, this, EventPriority.MONITOR, new EventExecutor() {
-                @Override
-                public void execute(Listener listener, Event event) {
-                    try {
-                        Object npc = spawnEvent.getMethod("getNPC").invoke(event);
-                        Entity entity = (Entity) npc.getClass().getMethod("getEntity").invoke(npc);
-                        if (entity == null) return;
-                        if (LobbyNpcService.isPluginNpc(entity) || citizensMarkedSilent(npc)) {
-                            LobbyNpcService.mute(entity);
-                        }
-                    } catch (Exception ignored) { }
-                }
-            }, plugin, true);
-        } catch (ClassNotFoundException ignored) { }
-    }
-
-    private static boolean citizensMarkedSilent(Object npc) {
-        try {
-            Class<?> npcClass = Class.forName("net.citizensnpcs.api.npc.NPC");
-            Object key = npcClass.getField("SILENT_METADATA").get(null);
-            Object data = npc.getClass().getMethod("data").invoke(npc);
-            try {
-                return Boolean.TRUE.equals(data.getClass().getMethod("get", Object.class).invoke(data, key));
-            } catch (NoSuchMethodException ignored) {
-                return Boolean.TRUE.equals(data.getClass().getMethod("get", Object.class, Object.class).invoke(data, key, Boolean.FALSE));
-            }
-        } catch (Throwable ignored) { }
-        return false;
-    }
-
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onCreatureSpawn(CreatureSpawnEvent event) {
         Entity entity = event.getEntity();
-        if (LobbyNpcService.isPluginNpc(entity)) {
-            silence(entity);
-            return;
-        }
-        // Citizens remount tags "NPC" before our META_* may be re-applied — remute next tick if tagged.
-        if (!entity.hasMetadata("NPC")) return;
-        Bukkit.getScheduler().runTask(plugin, new Runnable() {
-            @Override public void run() {
-                if (LobbyNpcService.isPluginNpc(entity)) LobbyNpcService.mute(entity);
-            }
-        });
+        if (LobbyNpcService.isPluginNpc(entity)) silence(entity);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)

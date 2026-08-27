@@ -3,6 +3,7 @@ package dev.iyanel.bedlamcore.lobby;
 import dev.iyanel.bedlamcore.BedlamCore;
 import dev.iyanel.bedlamcore.arena.GameType;
 import dev.iyanel.bedlamcore.compat.EntityVisibility;
+import dev.iyanel.bedlamcore.compat.PacketNpcs;
 import dev.iyanel.bedlamcore.compat.Skins;
 import dev.iyanel.bedlamcore.game.GameRules;
 import dev.iyanel.bedlamcore.game.NpcSoundListener;
@@ -12,6 +13,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.entity.Ageable;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
@@ -21,6 +23,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.Zombie;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.ItemStack;
@@ -103,6 +106,12 @@ public final class LobbyNpcService implements Listener {
     private final Map<GameType, Long> queueLastSpawn = new EnumMap<GameType, Long>(GameType.class);
     /** Last applied yaw/pitch per entity — only push a rotation packet when it actually changed. */
     private final Map<UUID, float[]> lastLook = new HashMap<UUID, float[]>();
+    /** Citizens-free packet player-models keyed by their (invisible) body uuid — see {@link PacketNpcs}. */
+    private final Map<UUID, PacketNpcs.Model> packetModels = new HashMap<UUID, PacketNpcs.Model>();
+    /** Requested skin per body — retried once the async Mojang fetch lands in the cache. */
+    private final Map<UUID, String> packetSkinKeys = new HashMap<UUID, String>();
+    /** Cape flag per body (parallel to {@link #packetSkinKeys}) so the async retry rebuilds the right profile. */
+    private final Map<UUID, Boolean> packetCapes = new HashMap<UUID, Boolean>();
     private static final float LOOK_PITCH_CLAMP = 30f;
     /** Kept for legacy checks; profile is now a single shared NPC ensured every tick like cosmetics. */
     public static final int PROFILE_ENSURE_INTERVAL = 20;
@@ -116,10 +125,14 @@ public final class LobbyNpcService implements Listener {
                 ensureQueueNpcsAlive();
                 pinEntities();
                 updateProfileDisplay();
+                long now = System.currentTimeMillis();
+                if (now - lastSweepTick >= 10000L) { lastSweepTick = now; sweepStrayLobbyMobs(); }
                 if (++visibilityTick % GameRules.DISPLAY_VISIBILITY_INTERVAL == 0) updateHologramVisibility();
             }
         }.runTaskTimer(plugin, 1L, 1L);
     }
+
+    private long lastSweepTick;
 
     /** Log a respawn failure at most once per 10s per subsystem — a broken spawn must retry, not spam the console. */
     private void warnRespawnFailure(String what, Throwable t) {
@@ -132,6 +145,7 @@ public final class LobbyNpcService implements Listener {
 
     public void respawnAll() {
         removeAll();
+        sweepStrayLobbyMobs();
         // Lobby holograms are marker armor stands saved into the (autosaving) lobby world. On restart they
         // reload WITHOUT their runtime metadata, so META_HOLO scrubbing misses them and fresh ones spawn on
         // top → old holograms left floating. Purge reloaded orphans around each pin before respawning.
@@ -149,6 +163,46 @@ public final class LobbyNpcService implements Listener {
         }
         spawnCosmetics(plugin.lobby().cosmeticsNpc());
         spawnProfile(plugin.lobby().profileNpc());
+    }
+
+    /** Lobby world anchor for cleanup sweeps: live pins first, then saved config locations. */
+    private Location lobbyAnchor() {
+        if (profilePin != null) return profilePin;
+        if (cosmeticsPin != null) return cosmeticsPin;
+        if (plugin.lobby() == null) return null;
+        if (plugin.lobby().spawn() != null) return plugin.lobby().spawn();
+        if (plugin.lobby().cosmeticsNpc() != null) return plugin.lobby().cosmeticsNpc();
+        if (plugin.lobby().profileNpc() != null) return plugin.lobby().profileNpc();
+        for (GameType type : GameType.values()) {
+            Location pin = plugin.lobby().npc(type).location();
+            if (pin != null) return pin;
+        }
+        return null;
+    }
+
+    /**
+     * Remove stray mobs/villagers from the LOBBY world's loaded chunks — leftover NPC bodies from old spawns
+     * or relocations (the "invisible villager" clutter). Loaded chunks only (a full-world scan freezes Paper
+     * 26.x); lobby worlds are tiny so this is cheap. Players, Citizens NPCs, pets and decorative armor stands
+     * are spared; arena worlds are never touched. Runs at respawnAll AND periodically (leaks from relocations
+     * or late-loading chunks must die mid-session, not wait for a restart).
+     */
+    private void sweepStrayLobbyMobs() {
+        Location anchor = lobbyAnchor();
+        if (anchor == null || anchor.getWorld() == null) return;
+        World world = anchor.getWorld();
+        int removed = 0;
+        for (Chunk chunk : world.getLoadedChunks()) {
+            for (Entity entity : chunk.getEntities()) {
+                if (!(entity instanceof LivingEntity) || entity instanceof Player) continue;
+                if (entity instanceof ArmorStand) continue;
+                if (tracked.containsKey(entity.getUniqueId())) continue;
+                if (entity.hasMetadata("NPC") || entity.hasMetadata(META_PET)) continue;
+                entity.remove();
+                removed++;
+            }
+        }
+        if (removed > 0) plugin.getLogger().info("Lobby cleanup: removed " + removed + " stray mob(s)/villager(s).");
     }
 
     /**
@@ -184,6 +238,7 @@ public final class LobbyNpcService implements Listener {
     private void scrubReloadedBodies(Location around) {
         if (around == null || around.getWorld() == null) return;
         around.getWorld().getChunkAt(around).load();
+        int scrubbed = 0;
         for (Entity entity : around.getWorld().getNearbyEntities(around, 1.2, 2.0, 1.2)) {
             if (tracked.containsKey(entity.getUniqueId())) continue;
             if (!(entity instanceof LivingEntity) || entity instanceof Player) continue;
@@ -193,7 +248,84 @@ public final class LobbyNpcService implements Listener {
             // reloaded orphan is always a plain world mob and never carries the "NPC" metadata.
             if (entity.hasMetadata("NPC")) continue;
             entity.remove();
+            scrubbed++;
         }
+    }
+
+    /**
+     * Citizens-free player-model NPC: hide the real body (it stays the click hitbox) and render a packet
+     * player model with a real skin on top. No-op when the packet stack is unavailable (keeps the old look).
+     */
+    /** Rate-limited once-per-JVM notice when the packet model stack is unavailable. */
+    private static boolean packetModelUnavailableLogged;
+
+    /**
+     * @param faceLocation the ORIGINAL placement location whose yaw determines which way the packet model
+     *                     faces. On 1.12.2 villager entities return yaw=0 from getLocation() regardless of
+     *                     spawn location, so using the body's location would always face south. Passing the
+     *                     admin-placed location preserves the intended facing.
+     */
+    private void attachPacketModel(Entity body, String skinKey, boolean cape, Location faceLocation) {
+        if (body == null) return;
+        // Destroy any model already attached to this body FIRST — an orphaned old model keeps rendering at its
+        // last position forever (stacked/duplicate player models).
+        detachPacketModel(body.getUniqueId());
+        if (!PacketNpcs.available()) {
+            if (!packetModelUnavailableLogged) {
+                packetModelUnavailableLogged = true;
+                plugin.getLogger().info("Packet NPC models unsupported on this server — using armor-stand NPCs.");
+            }
+            return;
+        }
+        if (skinKey != null && !skinKey.isEmpty()) {
+            packetSkinKeys.put(body.getUniqueId(), skinKey);
+            packetCapes.put(body.getUniqueId(), cape);
+        }
+        if (body instanceof ArmorStand) {
+            ArmorStand stand = (ArmorStand) body;
+            stand.setVisible(false);
+            // Clear EVERYTHING — held items still render on an invisible stand (the floating paper bug).
+            EntityEquipment gear = stand.getEquipment();
+            if (gear != null) {
+                gear.setHelmet(null);
+                gear.setChestplate(null);
+                gear.setLeggings(null);
+                gear.setBoots(null);
+                gear.setItemInHand(null);
+            }
+        } else if (body instanceof LivingEntity) {
+            // setInvisible doesn't exist in older Bukkit APIs — an infinite no-particle invisibility
+            // potion hides mobs on every version (the reflective call silently no-opped on 1.12).
+            try {
+                ((LivingEntity) body).removePotionEffect(PotionEffectType.INVISIBILITY);
+            } catch (Throwable ignored) {
+            }
+            try {
+                ((LivingEntity) body).addPotionEffect(new PotionEffect(
+                    PotionEffectType.INVISIBILITY, Integer.MAX_VALUE, 0, false, false), true);
+            } catch (Throwable ignored) {
+                invokeBoolean(body, "setInvisible", true);
+            }
+        }
+        PacketNpcs.fetchSkin(plugin, skinKey, cape);
+        Object profile = PacketNpcs.cachedProfile(skinKey, cape);
+        if (profile == null) return; // skin still downloading — retried from the pin loop once cached
+        String name = skinKey != null && skinKey.matches("[A-Za-z0-9_]{1,16}") ? skinKey : "NPC";
+        // Use the original placement location for yaw — body.getLocation() returns yaw=0 on 1.12.2 villagers.
+        Location useLoc = faceLocation != null ? faceLocation : body.getLocation();
+        PacketNpcs.Model model = PacketNpcs.create(plugin, useLoc, name, profile);
+        if (model != null) {
+            packetModels.put(body.getUniqueId(), model);
+            PacketNpcs.ensureViewers(model, 48.0);
+        }
+    }
+
+    private void detachPacketModel(UUID bodyUuid) {
+        if (bodyUuid == null) return;
+        packetSkinKeys.remove(bodyUuid);
+        packetCapes.remove(bodyUuid);
+        PacketNpcs.Model model = packetModels.remove(bodyUuid);
+        if (model != null) PacketNpcs.destroy(model);
     }
 
     /** Spawn the single shared profile NPC + its static hologram stack. */
@@ -207,18 +339,29 @@ public final class LobbyNpcService implements Listener {
         if (location == null || location.getWorld() == null) return null;
         // Kill any reloaded orphan body sitting on the pin before spawning — the exact cause of duplicate NPCs.
         scrubReloadedBodies(location);
-        // Citizens present -> real player-model NPC (fixed skin). Else the head-showing armor stand.
-        Entity body = spawnCitizenProfile(location);
+        // Own packet fake-player first (Citizens-free). Use a villager body (like cosmetics/queue NPCs)
+        // so the client raycast reaches the real entity through the packet model — armor-stand bodies
+        // are invisible to the client's interaction ray when a packet player model sits on top.
+        Entity body = null;
+        if (PacketNpcs.available()) body = location.getWorld().spawnEntity(location, EntityType.VILLAGER);
+        if (body == null) body = spawnCitizenProfile(location);
+        // Fallback: visible armor stand with head (no packet model, no right-click)
         if (body == null) body = spawnProfileStand(location);
+        String profileSkin = plugin.lobby() != null && plugin.lobby().profileSkin() != null ? plugin.lobby().profileSkin() : PROFILE_SKIN;
+        boolean profileCape = plugin.lobby() != null && plugin.lobby().profileCape();
+        if (body != null && !body.hasMetadata("NPC")) attachPacketModel(body, profileSkin, profileCape, location);
         body.setMetadata(META_PROFILE, new FixedMetadataValue(plugin, true));
         hideBodyName(body);
         freeze(body, false);
+        // Hittable so shift-left-click opens the skin editor (onNpcHit); damage is cancelled in onQueueNpcDamage.
+        invokeBoolean(body, "setInvulnerable", false);
         profileEntity = body.getUniqueId();
         profilePin = location.clone();
         profileHeadOwner = null; // force updateProfileHead() to re-equip the nearest player's skull next tick
         tracked.put(body.getUniqueId(), body);
         pins.put(body.getUniqueId(), location.clone());
-        lookAtPlayers.put(body.getUniqueId(), Boolean.TRUE);
+        // Placement facing LOCKED (no player-tracking) — see spawn().
+        lookAtPlayers.put(body.getUniqueId(), Boolean.FALSE);
         // Static default stats initially; updateProfileDisplay() swaps in the nearest player's live stats next tick.
         String[] lines = ProfileStats.hologramLines(null);
         for (int i = 0; i < lines.length; i++) {
@@ -267,8 +410,9 @@ public final class LobbyNpcService implements Listener {
         if (body == null) return;
         Player nearest = nearestProfileViewer();
         boolean changed = false;
-        // Armor-stand fallback wears the nearest player's head; a Citizens NPC keeps its fixed skin (no swap).
-        if (body instanceof ArmorStand) {
+        // Armor-stand fallback wears the nearest player's head; a Citizens NPC or packet model keeps its
+        // fixed skin (no swap — the packet-model body is an invisible hitbox).
+        if (body instanceof ArmorStand && !packetModels.containsKey(body.getUniqueId())) {
             String owner = nearest == null ? PROFILE_SKIN : nearest.getName();
             changed = !owner.equals(profileHeadOwner);
             if (changed) {
@@ -331,6 +475,7 @@ public final class LobbyNpcService implements Listener {
         if (profileEntity != null) {
             pins.remove(profileEntity);
             lookAtPlayers.remove(profileEntity);
+            detachPacketModel(profileEntity);
             Entity entity = tracked.remove(profileEntity);
             if (entity != null) entity.remove();
             else removeWorldEntity(profileEntity, scrubAt);
@@ -342,6 +487,10 @@ public final class LobbyNpcService implements Listener {
         }
         scrubOrphanHolograms(scrubAt);
         scrubOrphanPapers(scrubAt);
+        // Kill orphan body sitting on the old pin — prevents the duplicate profile NPC
+        // when relocating. Entity was removed from tracked above, so scrubReloadedBodies finds and
+        // deletes it. Force-loads the chunk so getNearbyEntities sees it.
+        scrubReloadedBodies(scrubAt);
         profilePin = null;
     }
 
@@ -353,16 +502,26 @@ public final class LobbyNpcService implements Listener {
         if (location == null || location.getWorld() == null) return null;
         // Kill any reloaded orphan body sitting on the pin before spawning — prevents the duplicate villager.
         scrubReloadedBodies(location);
-        Entity entity = spawnCitizenNamed(location, "Cosmetics", EntityType.VILLAGER);
+        // Own packet fake-player first (invisible villager hitbox + player model); Citizens / plain villager
+        // only as fallbacks.
+        Entity entity = null;
+        if (PacketNpcs.available()) entity = location.getWorld().spawnEntity(location, EntityType.VILLAGER);
+        if (entity == null) entity = spawnCitizenNamed(location, "Cosmetics", EntityType.VILLAGER);
         if (entity == null) entity = location.getWorld().spawnEntity(location, EntityType.VILLAGER);
+        String cosmeticsSkin = plugin.lobby() != null && plugin.lobby().cosmeticsSkin() != null ? plugin.lobby().cosmeticsSkin() : PROFILE_SKIN;
+        boolean cosmeticsCape = plugin.lobby() != null && plugin.lobby().cosmeticsCape();
+        if (entity != null && !entity.hasMetadata("NPC")) attachPacketModel(entity, cosmeticsSkin, cosmeticsCape, location);
         entity.setMetadata(META_COSMETICS, new FixedMetadataValue(plugin, true));
         hideBodyName(entity);
         freeze(entity, false);
+        // Hittable so shift-left-click opens the skin editor (onNpcHit); damage is cancelled in onQueueNpcDamage.
+        invokeBoolean(entity, "setInvulnerable", false);
         cosmeticsEntity = entity.getUniqueId();
         cosmeticsPin = location.clone();
         tracked.put(entity.getUniqueId(), entity);
         pins.put(entity.getUniqueId(), location.clone());
-        lookAtPlayers.put(entity.getUniqueId(), Boolean.TRUE);
+        // Placement facing LOCKED (no player-tracking) — see spawn().
+        lookAtPlayers.put(entity.getUniqueId(), Boolean.FALSE);
         // Cosmetics height was already fine — only queue holos use LOBBY_NPC_HOLO_TOP.
         cosmeticsHolograms.add(hologram(location.clone().add(0, GameRules.labelY(GameRules.NPC_HOLO_TOP, 0), 0),
             ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "COSMETICS").getUniqueId());
@@ -406,6 +565,14 @@ public final class LobbyNpcService implements Listener {
     }
 
     @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        // A rejoining client never received the old spawn packets — drop them from every shown set so
+        // ensureViewers re-shows (else NPCs stay invisible after relog until a full respawn).
+        UUID viewer = event.getPlayer().getUniqueId();
+        for (PacketNpcs.Model model : packetModels.values()) model.forget(viewer);
+    }
+
+    @EventHandler
     public void onChunkLoad(ChunkLoadEvent event) {
         Location cosmetics = cosmeticsPin != null ? cosmeticsPin.clone()
             : (plugin.lobby() == null ? null : plugin.lobby().cosmeticsNpc());
@@ -435,15 +602,34 @@ public final class LobbyNpcService implements Listener {
         if (location == null || location.getWorld() == null) return null;
         // Kill any reloaded orphan body sitting on the pin before spawning — prevents duplicate queue NPCs.
         scrubReloadedBodies(location);
-        Entity entity = spawnCitizen(mode, settings);
-        if (entity == null) entity = settings.human() ? spawnHumanStand(location, settings.skin()) : location.getWorld().spawnEntity(location, settings.entityType());
+        // Fake Player mode (settings.human): the configured body (default villager) becomes the invisible click
+        // hitbox and a packet player model renders on top. Mob mode: the configured entity shows as a real mob,
+        // no packet overlay. Skin: configured, else the shared profile skin.
+        String skin = settings.skin() != null && !settings.skin().isEmpty() ? settings.skin() : PROFILE_SKIN;
+        Entity entity = null;
+        if (PacketNpcs.available()) entity = location.getWorld().spawnEntity(location, settings.entityType());
+        if (entity == null) entity = spawnCitizen(mode, settings);
+        if (entity == null) {
+            if (settings.human()) entity = spawnHumanStand(location, settings.skin());
+            if (entity == null) entity = location.getWorld().spawnEntity(location, settings.entityType());
+        }
+        if (entity != null && !entity.hasMetadata("NPC") && settings.human()) {
+            attachPacketModel(entity, skin, settings.cape(), location);
+        }
         entity.setMetadata(META_MODE, new FixedMetadataValue(plugin, mode.name()));
         // Holograms carry the label; hide vanilla nametag (same as shop villagers).
         hideBodyName(entity);
         freeze(entity, settings.baby());
+        // Queue NPC bodies stay HITTABLE (freeze() made them invulnerable) so a left-click fires
+        // EntityDamageByEntityEvent → onNpcHit opens the queue / admin editor. They can't actually be
+        // hurt: onNpcHit cancels player attacks and onQueueNpcDamage cancels every other damage cause.
+        invokeBoolean(entity, "setInvulnerable", false);
         entities.put(mode, entity.getUniqueId());
         tracked.put(entity.getUniqueId(), entity);
         pins.put(entity.getUniqueId(), location.clone());
+        // Honor the "Look at Players" toggle. When OFF the NPC holds its placed yaw/pitch; when ON it tracks the
+        // nearest player (pinEntities → faceNearestPlayerInRange → applyLook + PacketNpcs.look). The old "faces
+        // backward" bug was the yaw convention, since fixed — so the toggle is safe to respect again.
         lookAtPlayers.put(entity.getUniqueId(), settings.lookAtPlayers());
         spawnQueueHolograms(mode, location);
         return entity;
@@ -513,7 +699,14 @@ public final class LobbyNpcService implements Listener {
             boolean anyNear = false;
             for (Player player : pin.getWorld().getPlayers()) {
                 boolean near = player.getLocation().distanceSquared(pin) <= limit;
-                if (near && !EntityVisibility.isSpectator(player)) anyNear = true;
+                // The body is an invisible click hitbox (villager) under the packet player model. Potion
+                // invisibility is see-through for SPECTATORS, so they'd see the raw villager. Spectators can't
+                // right-click anyway, so packet-destroy the body for them (re-spawned when they leave spectator).
+                if (EntityVisibility.isSpectator(player)) {
+                    EntityVisibility.hide(plugin, player, entity);
+                    continue;
+                }
+                if (near) anyNear = true;
                 EntityVisibility.apply(plugin, player, entity, near);
             }
             entity.setCustomNameVisible(false);
@@ -551,6 +744,8 @@ public final class LobbyNpcService implements Listener {
         for (Entity entity : new ArrayList<Entity>(tracked.values())) {
             if (entity != null) entity.remove();
         }
+        for (PacketNpcs.Model model : packetModels.values()) PacketNpcs.destroy(model);
+        packetModels.clear();
         pins.clear();
         lookAtPlayers.clear();
         holograms.clear();
@@ -575,12 +770,16 @@ public final class LobbyNpcService implements Listener {
         if (cosmeticsEntity != null) {
             pins.remove(cosmeticsEntity);
             lookAtPlayers.remove(cosmeticsEntity);
+            detachPacketModel(cosmeticsEntity);
             Entity entity = tracked.remove(cosmeticsEntity);
             if (entity != null) entity.remove();
             else removeWorldEntity(cosmeticsEntity, scrubAt);
             cosmeticsEntity = null;
         }
         scrubOrphanHolograms(scrubAt);
+        // Kill orphan body sitting on the old pin — prevents the duplicate cosmetics NPC
+        // when relocating.
+        scrubReloadedBodies(scrubAt);
         cosmeticsPin = null;
     }
 
@@ -592,6 +791,7 @@ public final class LobbyNpcService implements Listener {
         if (uuid == null) return;
         pins.remove(uuid);
         lookAtPlayers.remove(uuid);
+        detachPacketModel(uuid);
         Entity entity = tracked.remove(uuid);
         if (entity != null) entity.remove();
     }
@@ -776,6 +976,12 @@ public final class LobbyNpcService implements Listener {
 
     private void pinEntities() {
         boolean remute = (++muteTick % 20 == 0);
+        // Orphan-model sweep: a model whose body entity no longer exists (relocated/despawned/killed body)
+        // must be destroyed — otherwise the old Steve keeps rendering at its last spot forever (the
+        // "old NPC stays" duplicate). Checks BOTH the pin map AND actual entity validity.
+        for (UUID orphan : new ArrayList<UUID>(packetModels.keySet())) {
+            if (!pins.containsKey(orphan) || !alive(find(orphan))) detachPacketModel(orphan);
+        }
         for (Map.Entry<UUID, Location> entry : new HashMap<UUID, Location>(pins).entrySet()) {
             Entity entity = find(entry.getKey());
             if (entity == null || !entity.isValid() || entity.isDead()) {
@@ -811,13 +1017,26 @@ public final class LobbyNpcService implements Listener {
                 if (needsTeleport(entity.getLocation(), pinned)) entity.teleport(pinned);
             }
             // Only push a rotation packet when yaw/pitch actually changed — 20 identical packets/sec was the jitter.
+            PacketNpcs.Model model = packetModels.get(entry.getKey());
             if (wantLook && !citizensNpc) {
                 float[] prev = lastLook.get(entry.getKey());
                 if (prev == null || Math.abs(yaw - prev[0]) > 0.5f || Math.abs(pitch - prev[1]) > 0.5f) {
                     applyLook(entity, yaw, pitch);
                     lastLook.put(entry.getKey(), new float[]{yaw, pitch});
+                    if (model != null) PacketNpcs.look(model, yaw, pitch);
                 }
             }
+            // Packet player-model: re-show to viewers who lost it (join/respawn/chunk reload), and retry the
+            // attach once an async skin fetch lands.
+            if (model == null) {
+                String pendingSkin = packetSkinKeys.get(entry.getKey());
+                boolean pendingCape = Boolean.TRUE.equals(packetCapes.get(entry.getKey()));
+                if (pendingSkin != null && PacketNpcs.cachedProfile(pendingSkin, pendingCape) != null) {
+                    attachPacketModel(entity, pendingSkin, pendingCape, entry.getValue());
+                    model = packetModels.get(entry.getKey());
+                }
+            }
+            if (model != null && (visibilityTick % 20) == 0) PacketNpcs.ensureViewers(model, 48.0);
             // Citizens remount clears NMS silent / nameplate. Never remute holograms — hideBodyName
             // + givePaper on META_PROFILE holos caused 1Hz nametag/paper flicker. setAI(false) is applied once at
             // spawn (freeze) — repeating it here reset the entity's navigation and nudged its position (jitter).
@@ -1058,7 +1277,7 @@ public final class LobbyNpcService implements Listener {
      * Nearest player within {@link #LOOK_RANGE}, or null to keep placement facing.
      * Pure enough for GameRulesCheck via {@link #inLookRange(double)}.
      */
-    private static float[] faceNearestPlayerInRange(Entity entity, Location location) {
+    public static float[] faceNearestPlayerInRange(Entity entity, Location location) {
         PlayerTarget nearest = null;
         for (org.bukkit.entity.Player player : entity.getWorld().getPlayers()) {
             if (player.equals(entity)) continue;

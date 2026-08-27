@@ -1,0 +1,10 @@
+﻿# Keep Cursor indexing/agents off heavy generated & runtime trees
+.gradle/
+build/
+servers/
+logs/
+.tools/
+# Minecraft world folders only (not Java package dev/.../world/)
+servers/**/world/
+servers/**/world_nether/
+servers/**/world_the_end/

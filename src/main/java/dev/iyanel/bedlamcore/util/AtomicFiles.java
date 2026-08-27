@@ -1,6 +1,8 @@
 package dev.iyanel.bedlamcore.util;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileVisitResult;
@@ -23,8 +25,16 @@ public final class AtomicFiles {
         if (parent == null) throw new IOException("Target has no parent: " + target);
         Files.createDirectories(parent);
         Path temporary = parent.resolve(target.getFileName() + ".tmp");
-        Files.write(temporary, value.getBytes(StandardCharsets.UTF_8),
-            StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+        ByteBuffer buffer = ByteBuffer.wrap(value.getBytes(StandardCharsets.UTF_8));
+        try (FileChannel channel = FileChannel.open(temporary,
+            StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+            while (buffer.hasRemaining()) channel.write(buffer);
+            channel.force(true); // flush data to disk before the rename, or a crash can leave a null-filled file
+        }
+        if (Files.exists(target)) {
+            try { Files.copy(target, parent.resolve(target.getFileName() + ".bak"), StandardCopyOption.REPLACE_EXISTING); }
+            catch (IOException ignored) { /* backup is best-effort */ }
+        }
         moveReplacing(temporary, target);
     }
 

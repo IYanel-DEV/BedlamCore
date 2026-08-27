@@ -1,6 +1,8 @@
 package dev.iyanel.bedlamcore.cosmetics;
 
 import dev.iyanel.bedlamcore.BedlamCore;
+import dev.iyanel.bedlamcore.arena.Arena;
+import dev.iyanel.bedlamcore.arena.TeamColor;
 import dev.iyanel.bedlamcore.compat.Particles;
 import dev.iyanel.bedlamcore.compat.Sounds;
 import dev.iyanel.bedlamcore.game.StatsStore;
@@ -31,6 +33,7 @@ public final class CosmeticsService {
     public static final String CAT_PRESTIGE = "PRESTIGE";
     public static final String CAT_PROJECTILE_TRAIL = "PROJECTILE_TRAIL";
     public static final String CAT_BED_DESTROY = "BED_DESTROY";
+    public static final String CAT_SHOPKEEPER_SKIN = "SHOPKEEPER_SKIN";
 
     private final BedlamCore plugin;
     private final Map<String, Cosmetic> byId = new LinkedHashMap<String, Cosmetic>();
@@ -55,6 +58,7 @@ public final class CosmeticsService {
         byCategory.put(CAT_PRESTIGE, new ArrayList<Cosmetic>());
         byCategory.put(CAT_PROJECTILE_TRAIL, new ArrayList<Cosmetic>());
         byCategory.put(CAT_BED_DESTROY, new ArrayList<Cosmetic>());
+        byCategory.put(CAT_SHOPKEEPER_SKIN, new ArrayList<Cosmetic>());
         FileConfiguration config = plugin.getConfig();
         ConfigurationSection root = config.getConfigurationSection("cosmetics.items");
         if (root != null) {
@@ -338,6 +342,8 @@ public final class CosmeticsService {
             list("CRIT", "CRITICAL_HIT", "SMOKE", "CLOUD"));
         add("we_dragon", CAT_WIN_EFFECT, "&5Dragon", 500, Collections.<String, String>emptyMap(), "dragon",
             list("FLAME", "PORTAL", "SMOKE", "CRIT"));
+        add("we_wither", CAT_WIN_EFFECT, "&8Wither", 500, Collections.<String, String>emptyMap(), "wither",
+            list("SMOKE", "LARGE_SMOKE", "CRIT"));
 
         // Wood Skins — colored wood-block appearances (particle feedback on place; textures need a resource pack).
         add("ws_cherry", CAT_WOOD_SKIN, "&cCherry Wood", 200, Collections.<String, String>emptyMap(), "cherry", list("FLAME", "REDSTONE"));
@@ -401,6 +407,64 @@ public final class CosmeticsService {
         add("bd_dragon", CAT_BED_DESTROY, "&5Dragon Breath", 400, Collections.<String, String>emptyMap(), "dragon", list("FLAME", "PORTAL", "SMOKE", "LARGE_SMOKE"));
         add("bd_lightning", CAT_BED_DESTROY, "&eLightning Strike", 300, Collections.<String, String>emptyMap(), "lightning", list("FIREWORK", "EXPLOSION", "CLOUD", "FIREWORKS_SPARK"));
         add("bd_glyph", CAT_BED_DESTROY, "&5Enchant Glyph", 275, Collections.<String, String>emptyMap(), "glyph", list("ENCHANTMENT_TABLE", "ENCHANT", "END_ROD", "CRIT"));
+
+        // Shopkeeper Skins — reskin your team's in-match shop NPCs. effect = a real signed Mojang username
+        // (all verified to resolve + return textures). Team-shared, split ITEM SHOP / TEAM UPGRADES by join order.
+        addSkin("sk_zombie", "&2Zombie", 150, "MHF_Zombie");
+        addSkin("sk_skeleton", "&7Skeleton", 150, "MHF_Skeleton");
+        addSkin("sk_creeper", "&aCreeper", 175, "MHF_Creeper");
+        addSkin("sk_spider", "&8Spider", 150, "MHF_Spider");
+        addSkin("sk_cavespider", "&1Cave Spider", 175, "MHF_CaveSpider");
+        addSkin("sk_pig", "&dPig", 120, "MHF_Pig");
+        addSkin("sk_sheep", "&fSheep", 120, "MHF_Sheep");
+        addSkin("sk_cow", "&6Cow", 120, "MHF_Cow");
+        addSkin("sk_mooshroom", "&cMooshroom", 200, "MHF_MushroomCow");
+        addSkin("sk_chicken", "&eChicken", 120, "MHF_Chicken");
+        addSkin("sk_squid", "&9Squid", 150, "MHF_Squid");
+        addSkin("sk_slime", "&aSlime", 175, "MHF_Slime");
+        addSkin("sk_magmacube", "&6Magma Cube", 250, "MHF_LavaSlime");
+        addSkin("sk_ocelot", "&eOcelot", 200, "MHF_Ocelot");
+        addSkin("sk_rabbit", "&fRabbit", 175, "MHF_Rabbit");
+        addSkin("sk_wolf", "&7Wolf", 200, "MHF_Wolf");
+        addSkin("sk_blaze", "&6Blaze", 300, "MHF_Blaze");
+        addSkin("sk_ghast", "&fGhast", 300, "MHF_Ghast");
+        addSkin("sk_pigman", "&cZombie Pigman", 300, "MHF_PigZombie");
+        addSkin("sk_enderman", "&5Enderman", 400, "MHF_Enderman");
+        addSkin("sk_guardian", "&3Guardian", 400, "MHF_Guardian");
+        addSkin("sk_witherskeleton", "&8Wither Skeleton", 500, "MHF_WSkeleton");
+        addSkin("sk_irongolem", "&7Iron Golem", 500, "MHF_Golem");
+        addSkin("sk_villager", "&aVillager", 150, "MHF_Villager");
+        addSkin("sk_herobrine", "&8Herobrine", 750, "MHF_Herobrine");
+        addSkin("sk_steve", "&fSteve", 100, "MHF_Steve");
+        addSkin("sk_alex", "&6Alex", 100, "MHF_Alex");
+        addSkin("sk_pumpkin", "&6Pumpkin", 175, "MHF_Pumpkin");
+        addSkin("sk_tnt", "&cTNT", 200, "MHF_TNT");
+        addSkin("sk_present_red", "&cRed Present", 200, "MHF_Present1");
+        addSkin("sk_present_green", "&aGreen Present", 200, "MHF_Present2");
+        addSkin("sk_cactus", "&2Cactus", 175, "MHF_Cactus");
+        addSkin("sk_melon", "&aMelon", 175, "MHF_Melon");
+        addSkin("sk_chest", "&6Chest", 175, "MHF_Chest");
+        addSkin("sk_notch", "&6&lNotch", 1500, "Notch");
+        addSkin("sk_jeb", "&e&ljeb_", 1200, "jeb_");
+        addSkin("sk_dinnerbone", "&f&lDinnerbone", 800, "Dinnerbone");
+        addSkin("sk_grumm", "&f&lGrumm", 800, "Grumm");
+        addSkin("sk_technoblade", "&c&lTechnoblade", 750, "Technoblade");
+        addSkin("sk_dream", "&a&lDream", 500, "Dream");
+        addSkin("sk_georgenotfound", "&fGeorgeNotFound", 350, "GeorgeNotFound");
+        addSkin("sk_sapnap", "&cSapnap", 350, "Sapnap");
+        addSkin("sk_tommyinnit", "&eTommyInnit", 300, "TommyInnit");
+        addSkin("sk_tubbo", "&aTubbo", 300, "Tubbo");
+        addSkin("sk_ranboo", "&8Ranboo", 300, "Ranboo");
+        addSkin("sk_skeppy", "&bSkeppy", 300, "Skeppy");
+        addSkin("sk_badboyhalo", "&0BadBoyHalo", 300, "BadBoyHalo");
+        addSkin("sk_captainsparklez", "&9CaptainSparklez", 350, "CaptainSparklez");
+        addSkin("sk_hypixel", "&e&lHypixel", 2000, "Hypixel");
+        addSkin("sk_refraction", "&bRefraction", 400, "Refraction");
+    }
+
+    /** Register a shopkeeper skin cosmetic: effect = the Mojang username to render on the shop NPC. */
+    private void addSkin(String id, String name, int cost, String username) {
+        add(id, CAT_SHOPKEEPER_SKIN, name, cost, Collections.<String, String>emptyMap(), username, Collections.<String>emptyList());
     }
 
     private void pack(String id, String name, int cost,
@@ -473,6 +537,30 @@ public final class CosmeticsService {
         return list == null ? 0 : list.size();
     }
 
+    public int shopkeeperSkinCount() {
+        List<Cosmetic> list = byCategory.get(CAT_SHOPKEEPER_SKIN);
+        return list == null ? 0 : list.size();
+    }
+
+    /**
+     * Skin username for a team's shop NPC, or null for the default villager. Team-shared, split by join order:
+     * item-shop NPC = first teammate's equipped skin; upgrades NPC = second teammate's (solo → same member on
+     * both). Only equipped ("paid") skins skin an NPC; null everywhere else keeps the plain villager.
+     */
+    public String shopkeeperSkin(Arena arena, TeamColor team, boolean upgradeNpc) {
+        if (arena == null || team == null) return null;
+        List<UUID> members = new ArrayList<UUID>();
+        for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
+            if (entry.getValue() == team) members.add(entry.getKey());
+        }
+        if (members.isEmpty()) return null;
+        UUID member = !upgradeNpc ? members.get(0)
+            : (members.size() >= 2 ? members.get(1) : members.get(0));
+        Cosmetic cosmetic = get(plugin.stats().equippedCosmetic(member, CAT_SHOPKEEPER_SKIN));
+        if (cosmetic == null || cosmetic.effect == null || cosmetic.effect.isEmpty()) return null;
+        return cosmetic.effect;
+    }
+
     /** Smoke-check IDs for default kill-message packs (merged when config lacks them). */
     public static String[] defaultKillMessagePackIds() {
         return new String[] {
@@ -491,7 +579,7 @@ public final class CosmeticsService {
             "we_cold_snap", "we_burning_soul", "we_notes", "we_blood",
             "we_cookie", "we_campfire", "we_glyphs", "we_snowball",
             "we_tornado", "we_meteor", "we_sparkler", "we_portal",
-            "we_rainbow", "we_anvil", "we_dragon"
+            "we_rainbow", "we_anvil", "we_dragon", "we_wither"
         };
     }
 
@@ -544,6 +632,7 @@ public final class CosmeticsService {
         if (CAT_PRESTIGE.equals(category)) return "Prestige Customizer";
         if (CAT_PROJECTILE_TRAIL.equals(category)) return "Projectile Trails";
         if (CAT_BED_DESTROY.equals(category)) return "Bed Destroys";
+        if (CAT_SHOPKEEPER_SKIN.equals(category)) return "Shopkeeper Skins";
         return category;
     }
 
@@ -559,6 +648,182 @@ public final class CosmeticsService {
         return "Currently Selected: " + (name.isEmpty() ? "NONE" : name);
     }
 
+    // ---------------------------------------------------------------- shop presentation (icons / rarity)
+
+    /** Thematic icon per cosmetic id: {modern material name, legacy 1.8 material name}. */
+    private static final Map<String, String[]> ICONS = new LinkedHashMap<String, String[]>();
+
+    /** Category default icons for ids without a specific entry: {modern, legacy}. */
+    private static String[] categoryIcon(String category) {
+        if (CAT_KILL_MESSAGE.equals(category)) return new String[]{"WRITABLE_BOOK", "BOOK_AND_QUILL"};
+        if (CAT_KILL_EFFECT.equals(category)) return new String[]{"BLAZE_POWDER", "BLAZE_POWDER"};
+        if (CAT_WIN_EFFECT.equals(category)) return new String[]{"FIREWORK_ROCKET", "FIREWORK"};
+        if (CAT_WOOD_SKIN.equals(category)) return new String[]{"OAK_LOG", "LOG"};
+        if (CAT_FINAL_KILL_EFFECT.equals(category)) return new String[]{"REDSTONE", "REDSTONE"};
+        if (CAT_PRESTIGE.equals(category)) return new String[]{"NAME_TAG", "NAME_TAG"};
+        if (CAT_PROJECTILE_TRAIL.equals(category)) return new String[]{"ARROW", "ARROW"};
+        if (CAT_BED_DESTROY.equals(category)) return new String[]{"RED_BED", "BED"};
+        if (CAT_SHOPKEEPER_SKIN.equals(category)) return new String[]{"VILLAGER_SPAWN_EGG", "MONSTER_EGG"};
+        return new String[]{"PAPER", "PAPER"};
+    }
+
+    static {
+        ICONS.put("km_crushed", new String[]{"ANVIL", "ANVIL"});
+        ICONS.put("km_rekt", new String[]{"TNT", "TNT"});
+        ICONS.put("km_swept", new String[]{"FEATHER", "FEATHER"});
+        ICONS.put("km_obliterated", new String[]{"NETHER_STAR", "NETHER_STAR"});
+        ICONS.put("km_fire", new String[]{"BLAZE_POWDER", "BLAZE_POWDER"});
+        ICONS.put("km_western", new String[]{"HAY_BLOCK", "HAY_BLOCK"});
+        ICONS.put("km_honourable", new String[]{"GOLDEN_SWORD", "GOLD_SWORD"});
+        ICONS.put("km_love", new String[]{"POPPY", "RED_ROSE"});
+        ICONS.put("km_bbq", new String[]{"COOKED_PORKCHOP", "GRILLED_PORK"});
+        ICONS.put("km_woof", new String[]{"BONE", "BONE"});
+        ICONS.put("km_pirate", new String[]{"COMPASS", "COMPASS"});
+        ICONS.put("km_spooky", new String[]{"JACK_O_LANTERN", "JACK_O_LANTERN"});
+        ICONS.put("km_memed", new String[]{"GOLDEN_APPLE", "GOLDEN_APPLE"});
+        ICONS.put("km_dramatic", new String[]{"MUSIC_DISC_CAT", "RECORD_4"});
+        ICONS.put("km_snow", new String[]{"SNOWBALL", "SNOWBALL"});
+        ICONS.put("km_eggy", new String[]{"EGG", "EGG"});
+        ICONS.put("km_celebratory", new String[]{"FIREWORK_ROCKET", "FIREWORK"});
+        ICONS.put("km_wrapped", new String[]{"STRING", "STRING"});
+        ICONS.put("km_moon", new String[]{"ENDER_EYE", "EYE_OF_ENDER"});
+        ICONS.put("km_festive", new String[]{"COOKIE", "COOKIE"});
+        ICONS.put("km_roar", new String[]{"ROTTEN_FLESH", "ROTTEN_FLESH"});
+        ICONS.put("km_buzz", new String[]{"BEE_SPAWN_EGG", "MONSTER_EGG"});
+        ICONS.put("km_oink", new String[]{"PORKCHOP", "PORK"});
+        ICONS.put("km_squeak", new String[]{"WHEAT_SEEDS", "SEEDS"});
+        ICONS.put("km_ox", new String[]{"LEATHER", "LEATHER"});
+        ICONS.put("km_primal", new String[]{"STONE_AXE", "STONE_AXE"});
+        ICONS.put("km_santa", new String[]{"COAL", "COAL"});
+        ICONS.put("km_bridging", new String[]{"OAK_PLANKS", "WOOD"});
+        ICONS.put("km_oldman", new String[]{"STICK", "STICK"});
+
+        ICONS.put("ke_blood", new String[]{"REDSTONE", "REDSTONE"});
+        ICONS.put("ke_flame", new String[]{"BLAZE_POWDER", "BLAZE_POWDER"});
+        ICONS.put("ke_spark", new String[]{"GLOWSTONE_DUST", "GLOWSTONE_DUST"});
+        ICONS.put("ke_smoke", new String[]{"GUNPOWDER", "SULPHUR"});
+
+        ICONS.put("we_firework", new String[]{"FIREWORK_ROCKET", "FIREWORK"});
+        ICONS.put("we_lightning", new String[]{"TRIDENT", "IRON_SWORD"});
+        ICONS.put("we_burst", new String[]{"FIRE_CHARGE", "FIREBALL"});
+        ICONS.put("we_hearts", new String[]{"POPPY", "RED_ROSE"});
+        ICONS.put("we_cold_snap", new String[]{"PACKED_ICE", "PACKED_ICE"});
+        ICONS.put("we_burning_soul", new String[]{"MAGMA_CREAM", "MAGMA_CREAM"});
+        ICONS.put("we_notes", new String[]{"NOTE_BLOCK", "NOTE_BLOCK"});
+        ICONS.put("we_blood", new String[]{"REDSTONE", "REDSTONE"});
+        ICONS.put("we_cookie", new String[]{"COOKIE", "COOKIE"});
+        ICONS.put("we_campfire", new String[]{"CAMPFIRE", "FURNACE"});
+        ICONS.put("we_glyphs", new String[]{"ENCHANTING_TABLE", "ENCHANTMENT_TABLE"});
+        ICONS.put("we_snowball", new String[]{"SNOWBALL", "SNOWBALL"});
+        ICONS.put("we_tornado", new String[]{"WATER_BUCKET", "WATER_BUCKET"});
+        ICONS.put("we_meteor", new String[]{"MAGMA_BLOCK", "MAGMA_CREAM"});
+        ICONS.put("we_sparkler", new String[]{"GLOWSTONE_DUST", "GLOWSTONE_DUST"});
+        ICONS.put("we_portal", new String[]{"OBSIDIAN", "OBSIDIAN"});
+        ICONS.put("we_rainbow", new String[]{"ELYTRA", "FEATHER"});
+        ICONS.put("we_anvil", new String[]{"ANVIL", "ANVIL"});
+        ICONS.put("we_dragon", new String[]{"DRAGON_HEAD", "SKULL_ITEM"});
+        ICONS.put("we_wither", new String[]{"WITHER_SKELETON_SKULL", "SKULL_ITEM"});
+
+        ICONS.put("ws_cherry", new String[]{"CHERRY_PLANKS", "WOOD"});
+        ICONS.put("ws_oak", new String[]{"OAK_LOG", "LOG"});
+        ICONS.put("ws_spruce", new String[]{"SPRUCE_LOG", "LOG"});
+        ICONS.put("ws_birch", new String[]{"BIRCH_LOG", "LOG"});
+        ICONS.put("ws_jungle", new String[]{"JUNGLE_LOG", "LOG"});
+        ICONS.put("ws_acacia", new String[]{"ACACIA_LOG", "LOG_2"});
+        ICONS.put("ws_dark_oak", new String[]{"DARK_OAK_LOG", "LOG_2"});
+        ICONS.put("ws_crimson", new String[]{"CRIMSON_STEM", "LOG"});
+        ICONS.put("ws_warped", new String[]{"WARPED_STEM", "LOG"});
+
+        ICONS.put("fke_soul_rip", new String[]{"SOUL_SAND", "SOUL_SAND"});
+        ICONS.put("fke_blood_burst", new String[]{"REDSTONE", "REDSTONE"});
+        ICONS.put("fke_lightning_strike", new String[]{"LIGHTNING_ROD", "BLAZE_ROD"});
+        ICONS.put("fke_void_collapse", new String[]{"OBSIDIAN", "OBSIDIAN"});
+        ICONS.put("fke_frozen_shatter", new String[]{"BLUE_ICE", "PACKED_ICE"});
+        ICONS.put("fke_dragon_breath", new String[]{"DRAGON_BREATH", "GLASS_BOTTLE"});
+        ICONS.put("fke_soulfire", new String[]{"SOUL_SOIL", "COAL_BLOCK"});
+        ICONS.put("fke_nova", new String[]{"NETHER_STAR", "NETHER_STAR"});
+
+        ICONS.put("pr_none", new String[]{"GRAY_DYE", "INK_SACK"});
+        ICONS.put("pr_gold", new String[]{"GOLD_INGOT", "GOLD_INGOT"});
+        ICONS.put("pr_diamond", new String[]{"DIAMOND", "DIAMOND"});
+        ICONS.put("pr_emerald", new String[]{"EMERALD", "EMERALD"});
+        ICONS.put("pr_netherite", new String[]{"NETHERITE_INGOT", "BRICK"});
+        ICONS.put("pr_ender", new String[]{"ENDER_EYE", "EYE_OF_ENDER"});
+        ICONS.put("pr_rainbow", new String[]{"ELYTRA", "FEATHER"});
+        ICONS.put("pr_hypixel", new String[]{"GOLD_BLOCK", "GOLD_BLOCK"});
+
+        ICONS.put("pt_flame", new String[]{"BLAZE_POWDER", "BLAZE_POWDER"});
+        ICONS.put("pt_portal", new String[]{"OBSIDIAN", "OBSIDIAN"});
+        ICONS.put("pt_smoke", new String[]{"GUNPOWDER", "SULPHUR"});
+        ICONS.put("pt_enchant", new String[]{"ENCHANTING_TABLE", "ENCHANTMENT_TABLE"});
+        ICONS.put("pt_snow", new String[]{"SNOWBALL", "SNOWBALL"});
+        ICONS.put("pt_blood", new String[]{"REDSTONE", "REDSTONE"});
+        ICONS.put("pt_rainbow", new String[]{"ELYTRA", "FEATHER"});
+        ICONS.put("pt_note", new String[]{"NOTE_BLOCK", "NOTE_BLOCK"});
+        ICONS.put("pt_ender", new String[]{"ENDER_EYE", "EYE_OF_ENDER"});
+        ICONS.put("pt_firework", new String[]{"FIREWORK_ROCKET", "FIREWORK"});
+
+        ICONS.put("bd_explosion", new String[]{"TNT", "TNT"});
+        ICONS.put("bd_fire", new String[]{"BLAZE_POWDER", "BLAZE_POWDER"});
+        ICONS.put("bd_soul", new String[]{"SOUL_SAND", "SOUL_SAND"});
+        ICONS.put("bd_frost", new String[]{"BLUE_ICE", "PACKED_ICE"});
+        ICONS.put("bd_blood", new String[]{"REDSTONE", "REDSTONE"});
+        ICONS.put("bd_void", new String[]{"OBSIDIAN", "OBSIDIAN"});
+        ICONS.put("bd_rainbow", new String[]{"ELYTRA", "FEATHER"});
+        ICONS.put("bd_dragon", new String[]{"DRAGON_HEAD", "SKULL_ITEM"});
+        ICONS.put("bd_lightning", new String[]{"LIGHTNING_ROD", "BLAZE_ROD"});
+        ICONS.put("bd_glyph", new String[]{"ENCHANTING_TABLE", "ENCHANTMENT_TABLE"});
+    }
+
+    /** Thematic shop icon for a cosmetic: {modern material name, legacy 1.8 name}. Never null. */
+    public static String[] iconFor(Cosmetic cosmetic) {
+        if (cosmetic == null) return new String[]{"PAPER", "PAPER"};
+        String[] icon = ICONS.get(cosmetic.id);
+        return icon != null ? icon : categoryIcon(cosmetic.category);
+    }
+
+    /** Rarity tier from price point: Common < 250 ≤ Rare < 500 ≤ Epic < 1500 ≤ Legendary. */
+    public static int rarityOf(Cosmetic cosmetic) {
+        if (cosmetic == null) return 0;
+        if (cosmetic.cost >= 1500) return 3;
+        if (cosmetic.cost >= 500) return 2;
+        if (cosmetic.cost >= 250) return 1;
+        return 0;
+    }
+
+    /** Colored rarity label for shop lore: Common/Rare/Epic/Legendary. */
+    public static String rarityLabel(Cosmetic cosmetic) {
+        switch (rarityOf(cosmetic)) {
+            case 3: return "\u00A76\u00A7lLEGENDARY";
+            case 2: return "\u00A75\u00A7lEPIC";
+            case 1: return "\u00A7b\u00A7lRARE";
+            default: return "\u00A77COMMON";
+        }
+    }
+
+    /** Short flavor line shown under the item name in the shop. */
+    public static String flavorFor(Cosmetic cosmetic) {
+        if (cosmetic == null) return "";
+        String category = cosmetic.category;
+        String effect = cosmetic.effect == null ? "" : cosmetic.effect.toLowerCase();
+        if (CAT_KILL_MESSAGE.equals(category)) return "Chat lines when you defeat someone.";
+        if (CAT_KILL_EFFECT.equals(category)) return "Particles at your victim's body.";
+        if (CAT_WIN_EFFECT.equals(category)) {
+            if ("dragon".equals(effect)) return "Summon the dragon on victory!";
+            if ("lightning".equals(effect)) return "Strike down the lobby on victory.";
+            if ("anvil".equals(effect)) return "It is raining anvils!";
+            if ("rainbow".equals(effect)) return "A colorful celebration.";
+            return "A show when your team wins.";
+        }
+        if (CAT_WOOD_SKIN.equals(category)) return "Recolors wood you place.";
+        if (CAT_FINAL_KILL_EFFECT.equals(category)) return "A dramatic finale on final kills.";
+        if (CAT_PRESTIGE.equals(category)) return "Colors your lobby name.";
+        if (CAT_PROJECTILE_TRAIL.equals(category)) return "Follows your arrows and fireballs.";
+        if (CAT_BED_DESTROY.equals(category)) return "A spectacle on bed breaks.";
+        if (CAT_SHOPKEEPER_SKIN.equals(category)) return "Reskins your team's shop NPCs.";
+        return "";
+    }
+
     public static String normalizeCategory(String raw) {
         if (raw == null) return null;
         String value = raw.trim().toUpperCase().replace(' ', '_').replace('-', '_');
@@ -570,9 +835,11 @@ public final class CosmeticsService {
         if (value.equals("PRESTIGE_CUSTOMIZER")) value = CAT_PRESTIGE;
         if (value.equals("PROJECTILE_TRAILS")) value = CAT_PROJECTILE_TRAIL;
         if (value.equals("BED_DESTROYS")) value = CAT_BED_DESTROY;
+        if (value.equals("SHOPKEEPER_SKINS")) value = CAT_SHOPKEEPER_SKIN;
         if (CAT_KILL_MESSAGE.equals(value) || CAT_KILL_EFFECT.equals(value) || CAT_WIN_EFFECT.equals(value)
             || CAT_WOOD_SKIN.equals(value) || CAT_FINAL_KILL_EFFECT.equals(value) || CAT_PRESTIGE.equals(value)
-            || CAT_PROJECTILE_TRAIL.equals(value) || CAT_BED_DESTROY.equals(value)) return value;
+            || CAT_PROJECTILE_TRAIL.equals(value) || CAT_BED_DESTROY.equals(value)
+            || CAT_SHOPKEEPER_SKIN.equals(value)) return value;
         return null;
     }
 

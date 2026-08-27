@@ -79,6 +79,9 @@ public final class GuiController {
     private final Map<UUID, TeamColor> selectedTeam = new HashMap<UUID, TeamColor>();
     private final Map<UUID, GameType> selectedNpc = new HashMap<UUID, GameType>();
     private final Map<UUID, GameType> skinInputs = new ConcurrentHashMap<UUID, GameType>();
+    /** Cosmetics/Profile NPC skin editor: which one ("COSMETICS"/"PROFILE") the player is editing / typing a skin for. */
+    private final Map<UUID, String> specialEditTarget = new HashMap<UUID, String>();
+    private final Map<UUID, String> specialSkinInputs = new ConcurrentHashMap<UUID, String>();
     private final Set<UUID> radiusInputs = ConcurrentHashMap.newKeySet();
     private final Map<UUID, String> shopCategory = new HashMap<UUID, String>();
     /** Next shop-item click assigns this favorite index instead of buying. */
@@ -393,6 +396,8 @@ public final class GuiController {
         selectedTeam.remove(uuid);
         selectedNpc.remove(uuid);
         skinInputs.remove(uuid);
+        specialEditTarget.remove(uuid);
+        specialSkinInputs.remove(uuid);
         radiusInputs.remove(uuid);
         shopCategory.remove(uuid);
         favoriteAssignSlot.remove(uuid);
@@ -510,6 +515,8 @@ public final class GuiController {
         else if (cleanTitle.equals("Game Setup")) clickArenaSetup(player, name, shiftLeft);
         else if (cleanTitle.equals("Team Setup")) clickTeamSetup(player, name);
         else if (cleanTitle.equals("NPC Editor")) clickNpcEditor(player, name);
+        else if (cleanTitle.equals("Cosmetics NPC") || cleanTitle.equals("Profile NPC")) clickSpecialNpcEditor(player, name);
+        else if (cleanTitle.equals("Skin Presets")) clickSkinPreset(player, name);
         else if (cleanTitle.startsWith("Play Bed Wars ")) {
             GameType type = GameType.parse(cleanTitle.substring("Play Bed Wars ".length()));
             clickPlay(player, type, name);
@@ -523,7 +530,8 @@ public final class GuiController {
         else if (cleanTitle.equals("Spectate")) clickSpectate(player, name);
         else if (cleanTitle.equals("Cosmetics") || cleanTitle.equals("My Cosmetics")) clickCosmeticsHome(player, name);
         else if (cleanTitle.equals("Kill Messages") || cleanTitle.equals("Kill Effects") || cleanTitle.equals("Win Effects")
-            || cleanTitle.equals("Wood Skins") || cleanTitle.equals("Final Kill Effects") || cleanTitle.equals("Prestige Customizer")) {
+            || cleanTitle.equals("Wood Skins") || cleanTitle.equals("Final Kill Effects") || cleanTitle.equals("Prestige Customizer")
+            || cleanTitle.equals("Bed Destroys") || cleanTitle.equals("Projectile Trails") || cleanTitle.equals("Shopkeeper Skins")) {
             clickCosmeticsCategory(player, cleanTitle, clicked);
         }
         else if (cleanTitle.equals("Bed Wars Statistics")) clickProfileStats(player, name);
@@ -551,15 +559,17 @@ public final class GuiController {
         LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
         if (draft == null) return;
         if (name.equals("Set Lobby Spawn")) draft.spawn(player.getLocation());
-        else if (name.equals("Place Solo NPC")) giveNpcPlacer(player, GameType.SOLO);
-        else if (name.equals("Place Doubles NPC")) giveNpcPlacer(player, GameType.DOUBLES);
+        else if (name.equals("Set Solo NPC")) setQueueNpcHere(player, draft, GameType.SOLO);
+        else if (name.equals("Set Doubles NPC")) setQueueNpcHere(player, draft, GameType.DOUBLES);
         else if (name.equals("Set Cosmetics NPC")) {
-            draft.cosmeticsNpc(player.getLocation());
+            Location loc = snapNpcLocation(player);
+            draft.cosmeticsNpc(loc);
             plugin.npcs().spawnCosmetics(draft.cosmeticsNpc());
             player.sendMessage(ChatColor.GREEN + "Cosmetics NPC set here. Click Apply to save.");
         }
         else if (name.equals("Set Profile NPC")) {
-            draft.profileNpc(player.getLocation());
+            Location loc = snapNpcLocation(player);
+            draft.profileNpc(loc);
             plugin.npcs().spawnProfile(draft.profileNpc());
             player.sendMessage(ChatColor.GREEN + "Profile NPC set here. Click Apply to save.");
         }
@@ -989,19 +999,21 @@ public final class GuiController {
         LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
         if (draft == null || !admin(player)) return;
         Location pin = location.clone();
-        // Face the placer (yaw toward player), not default/random spawn facing.
-        Vector toward = player.getLocation().toVector().subtract(pin.toVector());
-        if (toward.lengthSquared() > 1.0E-6) {
-            pin.setYaw((float) Math.toDegrees(Math.atan2(-toward.getX(), toward.getZ())));
-        }
+        // NPC faces the SAME direction the admin is looking when placing — one convention for every lobby NPC.
+        // (Was atan2-toward-player, which now renders the NPC facing away from where the admin looks.)
+        pin.setYaw(player.getLocation().getYaw());
         pin.setPitch(0f);
         draft.npc(type).location(pin);
         plugin.npcs().spawn(type, draft.npc(type));
         player.getInventory().removeItem(player.getItemInHand());
-        player.sendMessage(ChatColor.GREEN + type.displayName() + " NPC placed. Shift-left-click it to change its entity.");
+        player.sendMessage(ChatColor.GREEN + type.displayName() + " NPC placed. Shift-right-click it to edit its look.");
         if (lobbyMissing(draft).isEmpty()) player.sendMessage(ChatColor.GREEN + "Lobby setup is complete. Click Apply to save both NPCs.");
         openLobbySetup(player);
     }
+
+    /** Hypixel-style default skin presets offered in the NPC skin picker (Minecraft usernames). */
+    private static final String[] PRESET_SKINS =
+        {"Notch", "jeb_", "Technoblade", "Dream", "Hypixel", "Herobrine", "Steve", "Alex"};
 
     public void openNpcEditor(Player player, GameType type) {
         if (!admin(player)) return;
@@ -1011,16 +1023,30 @@ public final class GuiController {
             lobbyDrafts.put(player.getUniqueId(), draft);
         }
         selectedNpc.put(player.getUniqueId(), type);
+        specialEditTarget.remove(player.getUniqueId()); // queue edit — clear any cosmetics/profile edit context
         LobbySettings.NpcSettings settings = draft.npc(type);
+        boolean fake = settings.human();
         Inventory inventory = chest(27, ChatColor.DARK_GRAY + "NPC Editor");
-        inventory.setItem(4, Items.named(settings.human() ? Skins.head(settings.skin()) : new ItemStack(Items.material("VILLAGER_SPAWN_EGG", "MONSTER_EGG")),
+        inventory.setItem(4, Items.named(fake ? Skins.head(settings.skin()) : new ItemStack(Items.material("VILLAGER_SPAWN_EGG", "MONSTER_EGG")),
             ChatColor.GOLD + type.displayName() + " NPC", ChatColor.GRAY + appearance(settings)));
-        inventory.setItem(10, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Previous Mob"));
-        inventory.setItem(12, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Next Mob"));
-        inventory.setItem(14, Items.named(new ItemStack(Material.EGG), ChatColor.AQUA + "Age: " + (settings.baby() ? "Baby" : "Adult"), ChatColor.GRAY + "Click to toggle"));
-        inventory.setItem(16, Items.named(Skins.head(settings.skin()), ChatColor.GREEN + "Use Human Player", ChatColor.GRAY + "Skinned armor-stand player"));
-        inventory.setItem(20, Items.named(new ItemStack(Material.NAME_TAG), ChatColor.LIGHT_PURPLE + "Set Skin", ChatColor.GRAY + "Username or textures.minecraft.net URL"));
-        inventory.setItem(24, Items.named(new ItemStack(Items.material("ENDER_EYE", "EYE_OF_ENDER")),
+        // Type toggle: Fake Player (packet skin) <-> Mob (real mob entity).
+        inventory.setItem(10, Items.named(fake ? Skins.head(settings.skin()) : new ItemStack(Items.material("VILLAGER_SPAWN_EGG", "MONSTER_EGG")),
+            ChatColor.AQUA + "Type: " + (fake ? "Fake Player" : "Mob"), ChatColor.GRAY + "Click to switch"));
+        if (fake) {
+            inventory.setItem(12, Items.named(new ItemStack(Material.NAME_TAG), ChatColor.LIGHT_PURPLE + "Set Skin",
+                ChatColor.GRAY + "Username or textures.minecraft.net URL"));
+            inventory.setItem(13, Items.named(Skins.head("Hypixel"), ChatColor.GREEN + "Default Skins",
+                ChatColor.GRAY + "Pick a preset skin"));
+            inventory.setItem(14, Items.named(new ItemStack(Items.material("ELYTRA", "FEATHER")),
+                (settings.cape() ? ChatColor.GREEN : ChatColor.RED) + "Cape: " + (settings.cape() ? "ON" : "OFF"),
+                ChatColor.GRAY + "Only skins that own a cape show one", ChatColor.GRAY + "Default: OFF"));
+        } else {
+            inventory.setItem(11, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Previous Mob"));
+            inventory.setItem(13, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Next Mob"));
+            inventory.setItem(15, Items.named(new ItemStack(Material.EGG),
+                ChatColor.AQUA + "Age: " + (settings.baby() ? "Baby" : "Adult"), ChatColor.GRAY + "Click to toggle"));
+        }
+        inventory.setItem(16, Items.named(new ItemStack(Items.material("ENDER_EYE", "EYE_OF_ENDER")),
             (settings.lookAtPlayers() ? ChatColor.GREEN : ChatColor.RED) + "Look at Players: " + (settings.lookAtPlayers() ? "ON" : "OFF"), ChatColor.GRAY + "Default: OFF"));
         inventory.setItem(22, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
         openGui(player, inventory);
@@ -1031,12 +1057,14 @@ public final class GuiController {
         LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
         if (type == null || draft == null) return;
         LobbySettings.NpcSettings settings = draft.npc(type);
-        if (name.equals("Previous Mob") || name.equals("Next Mob")) {
+        if (name.startsWith("Type: ")) settings.human(!settings.human());
+        else if (name.equals("Previous Mob") || name.equals("Next Mob")) {
             settings.human(false);
             settings.entityType(plugin.npcs().next(settings.entityType(), name.equals("Next Mob") ? 1 : -1));
         } else if (name.startsWith("Age: ")) settings.baby(!settings.baby());
-        else if (name.equals("Use Human Player")) settings.human(true);
+        else if (name.startsWith("Cape: ")) settings.cape(!settings.cape());
         else if (name.startsWith("Look at Players: ")) settings.lookAtPlayers(!settings.lookAtPlayers());
+        else if (name.equals("Default Skins")) { openSkinPicker(player, type); return; }
         else if (name.equals("Set Skin")) {
             settings.human(true);
             skinInputs.put(player.getUniqueId(), type);
@@ -1048,7 +1076,65 @@ public final class GuiController {
         openNpcEditor(player, type);
     }
 
+    /** Preset skin picker — a grid of heads; clicking one sets the NPC to that Fake Player skin. */
+    private void openSkinPicker(Player player, GameType type) {
+        selectedNpc.put(player.getUniqueId(), type);
+        specialEditTarget.remove(player.getUniqueId()); // queue path — not a cosmetics/profile edit
+        openSkinPicker(player);
+    }
+
+    /** Shared preset grid; the click is routed to whichever NPC is being edited (queue vs cosmetics/profile). */
+    private void openSkinPicker(Player player) {
+        if (!admin(player)) return;
+        Inventory inventory = chest(27, ChatColor.DARK_GRAY + "Skin Presets");
+        int slot = 10;
+        for (String skin : PRESET_SKINS) {
+            inventory.setItem(slot++, Items.named(Skins.head(skin), ChatColor.GREEN + "Skin: " + skin,
+                ChatColor.GRAY + "Click to use this skin"));
+        }
+        inventory.setItem(22, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
+        openGui(player, inventory);
+    }
+
+    private void clickSkinPreset(Player player, String name) {
+        String special = specialEditTarget.get(player.getUniqueId());
+        if (special != null) {
+            if (name.equals("Back")) { openSpecialNpcEditor(player, special); return; }
+            if (!name.startsWith("Skin: ")) return;
+            applySpecialSkin(player, special, name.substring("Skin: ".length()).trim());
+            openSpecialNpcEditor(player, special);
+            return;
+        }
+        GameType type = selectedNpc.get(player.getUniqueId());
+        LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
+        if (type == null || draft == null) return;
+        if (name.equals("Back")) { openNpcEditor(player, type); return; }
+        if (!name.startsWith("Skin: ")) return;
+        LobbySettings.NpcSettings settings = draft.npc(type);
+        settings.human(true);
+        settings.skin(name.substring("Skin: ".length()).trim());
+        if (settings.location() != null) plugin.npcs().spawn(type, settings);
+        openNpcEditor(player, type);
+    }
+
     public boolean acceptSkinInput(final Player player, final String message) {
+        final String special = specialSkinInputs.remove(player.getUniqueId());
+        if (special != null) {
+            Bukkit.getScheduler().runTask(plugin, new Runnable() {
+                @Override public void run() {
+                    if (message.equalsIgnoreCase("cancel")) { player.sendMessage(ChatColor.YELLOW + "Skin input cancelled."); return; }
+                    if (!message.matches("[A-Za-z0-9_]{1,16}") && !message.startsWith("https://textures.minecraft.net/texture/")) {
+                        player.sendMessage(ChatColor.RED + "Use a Minecraft username or a direct https://textures.minecraft.net/texture/... URL.");
+                        openSpecialNpcEditor(player, special);
+                        return;
+                    }
+                    applySpecialSkin(player, special, message);
+                    player.sendMessage(ChatColor.GREEN + "Skin saved.");
+                    openSpecialNpcEditor(player, special);
+                }
+            });
+            return true;
+        }
         final GameType type = skinInputs.remove(player.getUniqueId());
         if (type == null) return false;
         Bukkit.getScheduler().runTask(plugin, new Runnable() {
@@ -1071,12 +1157,80 @@ public final class GuiController {
         return true;
     }
 
-    private void giveNpcPlacer(Player player, GameType type) {
-        ItemStack item = Items.named(new ItemStack(Material.ARMOR_STAND), ChatColor.GOLD + "Place " + type.displayName() + " NPC",
-            ChatColor.DARK_GRAY + "Bedlam NPC: " + type.name(), ChatColor.GRAY + "Right-click a block to place");
-        player.getInventory().addItem(item);
-        player.closeInventory();
-        player.sendMessage(ChatColor.YELLOW + "Right-click a block with the armor stand to place the " + type.displayName() + " NPC.");
+    /** Skin editor for the Cosmetics / Profile NPC. These apply LIVE (no draft/Apply) — the NPC is already
+     *  placed — so a pick saves to the lobby config and respawns the body immediately. target = COSMETICS|PROFILE. */
+    public void openSpecialNpcEditor(Player player, String target) {
+        if (!admin(player)) return;
+        specialEditTarget.put(player.getUniqueId(), target);
+        boolean cosmetics = "COSMETICS".equals(target);
+        String skin = cosmetics ? plugin.lobby().cosmeticsSkin() : plugin.lobby().profileSkin();
+        boolean cape = cosmetics ? plugin.lobby().cosmeticsCape() : plugin.lobby().profileCape();
+        String label = cosmetics ? "Cosmetics" : "Profile";
+        Inventory inventory = chest(27, ChatColor.DARK_GRAY + label + " NPC");
+        inventory.setItem(4, Items.named(Skins.head(skin != null ? skin : "Steve"),
+            ChatColor.GOLD + label + " NPC", ChatColor.GRAY + "Skin: " + (skin != null ? skin : "Default")));
+        inventory.setItem(11, Items.named(new ItemStack(Material.NAME_TAG), ChatColor.LIGHT_PURPLE + "Set Skin",
+            ChatColor.GRAY + "Username or textures.minecraft.net URL"));
+        inventory.setItem(13, Items.named(Skins.head("Hypixel"), ChatColor.GREEN + "Default Skins",
+            ChatColor.GRAY + "Pick a preset skin"));
+        inventory.setItem(15, Items.named(new ItemStack(Items.material("ELYTRA", "FEATHER")),
+            (cape ? ChatColor.GREEN : ChatColor.RED) + "Cape: " + (cape ? "ON" : "OFF"),
+            ChatColor.GRAY + "Only skins that own a cape show one", ChatColor.GRAY + "Default: OFF"));
+        inventory.setItem(22, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
+        openGui(player, inventory);
+    }
+
+    private void clickSpecialNpcEditor(Player player, String name) {
+        String target = specialEditTarget.get(player.getUniqueId());
+        if (target == null) return;
+        boolean cosmetics = "COSMETICS".equals(target);
+        if (name.equals("Back")) { specialEditTarget.remove(player.getUniqueId()); openLobbySetup(player); return; }
+        if (name.equals("Default Skins")) { openSkinPicker(player); return; }
+        if (name.equals("Set Skin")) {
+            specialSkinInputs.put(player.getUniqueId(), target);
+            player.closeInventory();
+            player.sendMessage(ChatColor.YELLOW + "Type a Minecraft username or textures.minecraft.net URL in chat. Type cancel to stop.");
+            return;
+        }
+        if (name.startsWith("Cape: ")) {
+            if (cosmetics) plugin.lobby().cosmeticsCape(!plugin.lobby().cosmeticsCape());
+            else plugin.lobby().profileCape(!plugin.lobby().profileCape());
+            plugin.saveSettings();
+            respawnSpecial(target);
+        }
+        openSpecialNpcEditor(player, target);
+    }
+
+    private void applySpecialSkin(Player player, String target, String skin) {
+        if ("COSMETICS".equals(target)) plugin.lobby().cosmeticsSkin(skin);
+        else plugin.lobby().profileSkin(skin);
+        plugin.saveSettings();
+        respawnSpecial(target);
+    }
+
+    private void respawnSpecial(String target) {
+        if ("COSMETICS".equals(target)) plugin.npcs().spawnCosmetics(plugin.lobby().cosmeticsNpc());
+        else plugin.npcs().spawnProfile(plugin.lobby().profileNpc());
+    }
+
+    /** Snap NPC placement to block center (x/z +0.5) with horizontal facing only (pitch = 0). */
+    private static Location snapNpcLocation(Player player) {
+        Location loc = player.getLocation().clone();
+        loc.setX(Math.floor(loc.getX()) + 0.5);
+        loc.setZ(Math.floor(loc.getZ()) + 0.5);
+        loc.setPitch(0f);
+        // NPC faces the SAME direction the admin is looking when placing (stand facing where you want the NPC
+        // to look). The old +180 flip faced it away — with packet facing now rendering correctly that put the
+        // NPC's face behind the admin.
+        return loc;
+    }
+
+    /** Place/relocate a queue NPC at the admin's position + facing — same flow as the cosmetics/profile NPCs. */
+    private void setQueueNpcHere(Player player, LobbySettings draft, GameType type) {
+        Location loc = snapNpcLocation(player);
+        draft.npc(type).location(loc);
+        plugin.npcs().spawn(type, draft.npc(type));
+        player.sendMessage(ChatColor.GREEN + type.displayName() + " NPC set here. Shift-click it to edit its look. Click Apply to save.");
     }
 
     public void openShop(Player player) {
@@ -1140,7 +1294,7 @@ public final class GuiController {
             "Customize your prestige look.", CosmeticsService.CAT_PRESTIGE));
         inventory.setItem(28, cosmeticsHomeIcon(player, "Shopkeeper Skins",
             Items.material("VILLAGER_SPAWN_EGG", "MONSTER_EGG"),
-            "Change shopkeeper appearances.", null));
+            "Reskin your team's shop NPCs.", CosmeticsService.CAT_SHOPKEEPER_SKIN));
         inventory.setItem(30, cosmeticsHomeIcon(player, "Sprays",
             Material.MAP,
             "Spray images on walls.", null));
@@ -1170,15 +1324,25 @@ public final class GuiController {
         lore.add("");
         lore.add(ChatColor.GRAY + description);
         lore.add("");
-        if (category != null) {
-            lore.add(ChatColor.GRAY + CosmeticsService.unlockProgress(ownedCount(player, category), plugin.cosmetics().category(category).size()));
-            lore.add(ChatColor.GRAY + CosmeticsService.selectedLabel(equippedName(player, category)));
+        boolean available = category != null;
+        if (available) {
+            int owned = ownedCount(player, category);
+            int total = plugin.cosmetics().category(category).size();
+            lore.add(progressBar(owned, total));
+            lore.add(ChatColor.GRAY + "Unlocked: " + ChatColor.WHITE + owned + ChatColor.GRAY + "/"
+                + ChatColor.WHITE + total);
+            String selected = equippedName(player, category);
+            if (selected != null && !selected.isEmpty()) {
+                lore.add(ChatColor.GRAY + "Selected: " + ChatColor.AQUA + selected);
+            }
             lore.add("");
-            lore.add(ChatColor.YELLOW + "Click to view!");
+            lore.add(ChatColor.YELLOW + "\u25CF Click to view!");
         } else {
-            lore.add(ChatColor.RED + "Coming Soon");
+            lore.add(ChatColor.DARK_GRAY + "\u2715 " + ChatColor.RED + "Coming Soon");
         }
-        return Items.named(new ItemStack(icon), ChatColor.GREEN + title, lore.toArray(new String[0]));
+        // Name stays EXACTLY `title` — clickCosmeticsHome routes by stripped name.
+        return Items.named(new ItemStack(icon), (available ? ChatColor.GREEN : ChatColor.GRAY) + title,
+            lore.toArray(new String[0]));
     }
 
     private int ownedCount(Player player, String category) {
@@ -1214,25 +1378,79 @@ public final class GuiController {
     private ItemStack cosmeticsIcon(Player player, CosmeticsService.Cosmetic cosmetic) {
         boolean owned = plugin.stats().ownsCosmetic(player.getUniqueId(), cosmetic.id);
         boolean equipped = cosmetic.id.equals(plugin.stats().equippedCosmetic(player.getUniqueId(), cosmetic.category));
-        Material icon = Material.PAPER;
-        if (CosmeticsService.CAT_KILL_EFFECT.equals(cosmetic.category)) icon = Items.material("BLAZE_POWDER", "BLAZE_POWDER");
-        else if (CosmeticsService.CAT_WIN_EFFECT.equals(cosmetic.category)) icon = Items.material("FIREWORK_ROCKET", "FIREWORK");
-        else if (CosmeticsService.CAT_WOOD_SKIN.equals(cosmetic.category)) icon = Items.material("OAK_LOG", "LOG");
-        else if (CosmeticsService.CAT_FINAL_KILL_EFFECT.equals(cosmetic.category)) icon = Material.REDSTONE;
-        else if (CosmeticsService.CAT_PRESTIGE.equals(cosmetic.category)) icon = Material.NAME_TAG;
+        String[] iconPair = CosmeticsService.iconFor(cosmetic);
+        // Shopkeeper skins preview the actual skin as a player head (the effect is the Mojang username).
+        ItemStack stack = CosmeticsService.CAT_SHOPKEEPER_SKIN.equals(cosmetic.category)
+            ? Skins.head(cosmetic.effect)
+            : new ItemStack(Items.material(iconPair[0], iconPair[1]));
+        String displayName;
         List<String> lore = new ArrayList<String>();
-        lore.add(ChatColor.DARK_GRAY + "Bedlam Cosmetic: " + cosmetic.id);
-        lore.add(ChatColor.GRAY + "Cost: " + ChatColor.GOLD + cosmetic.cost + " tokens");
+        lore.add(ChatColor.DARK_GRAY + "Bedlam Cosmetic");
+        String flavor = CosmeticsService.flavorFor(cosmetic);
+        if (flavor != null && !flavor.isEmpty()) {
+            lore.add("");
+            lore.add(ChatColor.GRAY + flavor);
+        }
         String sample = cosmetic.templateFor("kill");
         if (sample != null && !sample.isEmpty()) {
-            lore.add(ChatColor.DARK_GRAY + "Sample:");
-            lore.add(ChatColor.GRAY + ChatColor.stripColor(CosmeticsService.formatKillMessage(sample, "Victim", "You", false)));
+            lore.add("");
+            lore.add(ChatColor.DARK_GRAY + "Preview:");
+            String preview = ChatColor.stripColor(CosmeticsService.formatKillMessage(sample, "Victim", "You", false));
+            lore.add(ChatColor.GRAY + "" + ChatColor.ITALIC + preview);
         }
-        if (equipped) lore.add(ChatColor.GREEN + "EQUIPPED " + ChatColor.GRAY + "(click to unequip)");
-        else if (owned) lore.add(ChatColor.AQUA + "OWNED " + ChatColor.GRAY + "(click to equip)");
-        else lore.add(ChatColor.YELLOW + "Click to buy & equip");
-        return Items.named(new ItemStack(icon), (equipped ? ChatColor.GREEN : owned ? ChatColor.AQUA : ChatColor.WHITE) + ChatColor.stripColor(cosmetic.name),
-            lore.toArray(new String[0]));
+        lore.add("");
+        lore.add(ChatColor.GRAY + "Rarity: " + CosmeticsService.rarityLabel(cosmetic));
+        if (owned) {
+            lore.add(ChatColor.GREEN + "\u2714 Unlocked");
+            displayName = ChatColor.stripColor(cosmetic.name);
+        } else {
+            lore.add(ChatColor.GOLD + "Cost: " + ChatColor.YELLOW + GameRules.commas(cosmetic.cost)
+                + ChatColor.GOLD + " Tokens");
+            displayName = ChatColor.stripColor(cosmetic.name);
+        }
+        lore.add("");
+        if (equipped) {
+            lore.add(ChatColor.GREEN + "\u25CF EQUIPPED " + ChatColor.DARK_GRAY + "("
+                + ChatColor.GRAY + "click to unequip" + ChatColor.DARK_GRAY + ")");
+            displayName = ChatColor.GREEN + "\u00BB " + displayName;
+        } else if (owned) {
+            lore.add(ChatColor.AQUA + "\u25CF OWNED " + ChatColor.DARK_GRAY + "("
+                + ChatColor.GRAY + "click to equip" + ChatColor.DARK_GRAY + ")");
+        } else {
+            lore.add(ChatColor.YELLOW + "\u25CF Click to buy & equip");
+        }
+        // Routing tag — clickCosmeticsCategory resolves purchases from this line.
+        lore.add(ChatColor.DARK_GRAY + "Bedlam Cosmetic: " + cosmetic.id);
+
+        ItemMeta meta = stack.getItemMeta();
+        if (meta == null) return Items.named(stack, displayName, lore.toArray(new String[0]));
+        meta.setDisplayName(displayName);
+        meta.setLore(lore);
+        if (equipped) applyGlint(meta);
+        stack.setItemMeta(meta);
+        return stack;
+    }
+
+    /** Enchant shimmer so equipped cosmetics stand out, hidden flags so no tooltip text leaks. */
+    private static void applyGlint(ItemMeta meta) {
+        org.bukkit.enchantments.Enchantment enchant = org.bukkit.enchantments.Enchantment.getByName("DURABILITY");
+        if (enchant == null) enchant = org.bukkit.enchantments.Enchantment.getByName("UNBREAKING");
+        if (enchant != null) {
+            try { meta.addEnchant(enchant, 1, true); } catch (Throwable ignored) { }
+        }
+        try { meta.addItemFlags(org.bukkit.inventory.ItemFlag.HIDE_ENCHANTS); } catch (Throwable ignored) { }
+    }
+
+    /** Hypixel-style unlock bar: green filled slots, dark empty ones. */
+    private static String progressBar(int owned, int total) {
+        int filled = total <= 0 ? 0 : Math.round((owned * 10.0f) / total);
+        StringBuilder bar = new StringBuilder();
+        bar.append(ChatColor.DARK_GRAY).append("[");
+        for (int i = 0; i < 10; i++) {
+            bar.append(i < filled ? ChatColor.GREEN : ChatColor.DARK_GRAY).append("\u258C");
+        }
+        bar.append(ChatColor.DARK_GRAY).append("]");
+        return bar.toString();
     }
 
     private void clickCosmeticsHome(Player player, String name) {
@@ -1246,6 +1464,7 @@ public final class GuiController {
         else if (name.equals("Prestige Customizer")) openCosmeticsCategory(player, CosmeticsService.CAT_PRESTIGE);
         else if (name.equals("Projectile Trails")) openCosmeticsCategory(player, CosmeticsService.CAT_PROJECTILE_TRAIL);
         else if (name.equals("Bed Destroys")) openCosmeticsCategory(player, CosmeticsService.CAT_BED_DESTROY);
+        else if (name.equals("Shopkeeper Skins")) openCosmeticsCategory(player, CosmeticsService.CAT_SHOPKEEPER_SKIN);
         else if (isComingSoonCosmetic(name)) {
             player.sendMessage(ChatColor.RED + "Coming Soon");
         }
@@ -1253,7 +1472,7 @@ public final class GuiController {
 
     private static boolean isComingSoonCosmetic(String name) {
         return name.equals("Glyphs") || name.equals("Hats")
-            || name.equals("Shopkeeper Skins") || name.equals("Sprays") || name.equals("Death Cries")
+            || name.equals("Sprays") || name.equals("Death Cries")
             || name.equals("Island Toppers") || name.equals("Figurines");
     }
 
@@ -1882,13 +2101,18 @@ public final class GuiController {
 
     private static ItemStack npcItem(GameType type, LobbySettings draft) {
         LobbySettings.NpcSettings npc = draft.npc(type);
-        return Items.named(new ItemStack(Material.ARMOR_STAND), ChatColor.GOLD + "Place " + type.displayName() + " NPC",
+        return Items.named(new ItemStack(Material.ARMOR_STAND),
+            (npc.location() == null ? ChatColor.YELLOW : ChatColor.GREEN) + "Set " + type.displayName() + " NPC",
             npc.location() == null ? ChatColor.RED + "Not placed" : ChatColor.GREEN + "Placed as " + appearance(npc),
-            ChatColor.GRAY + "Shift-left-click the placed NPC to edit");
+            ChatColor.GRAY + "Click to place/relocate at you",
+            ChatColor.GRAY + "Shift-right-click the placed NPC to edit its look");
     }
 
     private static String appearance(LobbySettings.NpcSettings npc) {
-        return npc.human() ? "Human" + (npc.skin() == null ? "" : " (" + npc.skin() + ")") : (npc.baby() ? "Baby " : "Adult ") + npc.entityType().name();
+        if (npc.human()) {
+            return "Fake Player" + (npc.skin() == null ? "" : " (" + npc.skin() + ")") + (npc.cape() ? " +cape" : "");
+        }
+        return (npc.baby() ? "Baby " : "Adult ") + npc.entityType().name();
     }
 
     private static ItemStack setupItem(Material material, String name, boolean set) { return Items.named(new ItemStack(material), (set ? ChatColor.GREEN : ChatColor.YELLOW) + name, status(set)); }

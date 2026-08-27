@@ -43,6 +43,7 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -74,8 +75,6 @@ final class WinEffectController implements Listener {
      * dragon back onto the controlled path every tick regardless of where its AI tried to wander.
      */
     private final Map<UUID, Location> dragonPos = new ConcurrentHashMap<UUID, Location>();
-    /** Cached: does LivingEntity.setAI exist (1.9+)? On 1.8 it does not, so the dragon can't be tamed. */
-    private static Boolean aiToggle;
 
     WinEffectController(BedlamCore plugin, CosmeticsService cosmetics) {
         this.plugin = plugin;
@@ -97,10 +96,11 @@ final class WinEffectController implements Listener {
         final String[] particles = cosmetic.particles.isEmpty()
             ? null : cosmetic.particles.toArray(new String[0]);
         final UUID uuid = winner.getUniqueId();
-        // ponytail: fixed cadence; dragon ~7.5s ride, rainbow sheep ~5s follow
-        final int durationTicks = "dragon".equals(effect) ? 150 : ("rainbow".equals(effect) ? 100 : 80);
+        // ponytail: fixed cadence; dragon/wither ~7.5s ride, rainbow sheep ~5s follow
+        final boolean mountRide = "dragon".equals(effect) || "wither".equals(effect);
+        final int durationTicks = mountRide ? 150 : ("rainbow".equals(effect) ? 100 : 80);
         final int period = 5;
-        if ("dragon".equals(effect)) spawnWinDragon(winner);
+        if (mountRide) spawnWinMount(winner, effect);
         if ("rainbow".equals(effect)) spawnWinSheep(winner);
         new BukkitRunnable() {
             int elapsed = 0;
@@ -294,7 +294,7 @@ final class WinEffectController implements Listener {
                 namesOr(particles, "CRIT", "CRITICAL_HIT", "SMOKE"));
             return;
         }
-        if ("dragon".equals(effect)) {
+        if ("dragon".equals(effect) || "wither".equals(effect)) {
             tickWinDragon(winner, elapsed);
             return;
         }
@@ -363,46 +363,66 @@ final class WinEffectController implements Listener {
         }
     }
 
-    private void spawnWinDragon(Player winner) {
+    /** Spawn the win mount (dragon or wither) under the winner and start the flight loop. */
+    private void spawnWinMount(Player winner, String effect) {
+        boolean wither = "wither".equals(effect);
         World world = winner.getWorld();
         if (world == null) return;
         endWinDragon(winner.getUniqueId());
         // Spawn under the winner so setPassenger seats them Hypixel-style (orbit teleport was the mount blocker).
         Location at = winner.getLocation().clone().add(0.0, 1.2, 0.0);
-        Entity dragon;
+        Entity mount;
         try {
-            dragon = world.spawnEntity(at, EntityType.ENDER_DRAGON);
+            mount = world.spawnEntity(at, wither ? EntityType.WITHER : EntityType.ENDER_DRAGON);
         } catch (Throwable t) {
             Particles.play(null, at, 40, 1.2, "FLAME", "PORTAL", "SMOKE", "CRIT");
             Sounds.playAt(at, "ENTITY_ENDER_DRAGON_GROWL", "ENTITY_ENDERDRAGON_GROWL", "ENDERDRAGON_GROWL");
             return;
         }
-        dragon.setMetadata(META_WIN_DRAGON, new FixedMetadataValue(plugin, winner.getUniqueId().toString()));
-        if (dragon instanceof LivingEntity) {
-            LivingEntity living = (LivingEntity) dragon;
+        // Reuse the win-dragon tag: every protection (damage cancel, portal cancel, grief tracking,
+        // match-reset cleanup) then applies to the wither identically.
+        mount.setMetadata(META_WIN_DRAGON, new FixedMetadataValue(plugin, winner.getUniqueId().toString()));
+        if (mount instanceof LivingEntity) {
+            LivingEntity living = (LivingEntity) mount;
             living.setRemoveWhenFarAway(false);
-            invokeBoolean(living, "setAI", false);
+            if (wither) {
+                // The client Wither has no isAIDisabled gate (unlike the dragon), so noAI is safe here:
+                // it silences the wandering/shooting AI server-side without freezing the client.
+                invokeBoolean(living, "setAI", false);
+            }
             invokeBoolean(living, "setGravity", false);
             invokeBoolean(living, "setInvulnerable", true);
             invokeBoolean(living, "setCollidable", false);
         }
-        winDragons.put(winner.getUniqueId(), dragon.getUniqueId());
+        if (!wither) {
+            // NO setAI(false) on the dragon! noAI syncs to the client and the client EnderDragon skips its WHOLE
+            // update — including the position lerp — while noAI is set (verified against 1.12.2 client
+            // bytecode: onLivingUpdate gates on isAIDisabled). The dragon froze mid-air with any streamed
+            // movement. Instead the HOVER phase keeps the server AI stationary (see setHoverPhase).
+            setHoverPhase(mount);
+        }
+        winDragons.put(winner.getUniqueId(), mount.getUniqueId());
         dragonPos.put(winner.getUniqueId(), at.clone());
-        mountPassenger(dragon, winner);
+        mountPassenger(mount, winner);
+        // Resolve the relative-move streaming stack once (packet ctors + send plumbing + tracker baseline).
+        // Null on unknown servers → the vanilla tracker syncs the NMS-relocated mount alone.
+        resolveDragonStream();
+        // One absolute resync so every client starts the ride from the exact mounted position (doc contract),
+        // then per-tick RELATIVE move streaming keeps the camera interpolated/silk (never teleport-strobed).
+        sendDragonResync(mount);
         // Every tick: fly toward the rider's look + force remount (sneak/eject cannot stick).
-        // Teleport of a vehicle is blocked on 1.9+, so flightStep does eject→teleport→remount.
         final UUID owner = winner.getUniqueId();
-        final UUID dragonId = dragon.getUniqueId();
+        final UUID mountId = mount.getUniqueId();
         new BukkitRunnable() {
             int ticks = 0;
             @Override public void run() {
-                if (!dragonId.equals(winDragons.get(owner))) {
+                if (!mountId.equals(winDragons.get(owner))) {
                     cancel();
                     return;
                 }
                 Player p = Bukkit.getPlayer(owner);
                 if (p == null || !p.isOnline() || p.getWorld() == null) return;
-                Entity d = entityByUuid(p.getWorld(), dragonId);
+                Entity d = entityByUuid(p.getWorld(), mountId);
                 if (d == null || d.isDead()) {
                     winDragons.remove(owner);
                     cancel();
@@ -417,7 +437,7 @@ final class WinEffectController implements Listener {
             @Override public void run() {
                 Player p = Bukkit.getPlayer(owner);
                 if (p == null || !p.isOnline() || p.getWorld() == null) return;
-                Entity d = entityByUuid(p.getWorld(), dragonId);
+                Entity d = entityByUuid(p.getWorld(), mountId);
                 if (d == null || d.isDead()) return;
                 if (!isPassengerOf(d, p)) {
                     dragonMoving.put(owner, Boolean.TRUE);
@@ -429,20 +449,11 @@ final class WinEffectController implements Listener {
                 }
             }
         }, 2L);
-        Sounds.playAt(at, "ENTITY_ENDER_DRAGON_GROWL", "ENTITY_ENDERDRAGON_GROWL", "ENDERDRAGON_GROWL");
-    }
-
-    /** True when LivingEntity.setAI exists (1.9+); false on 1.8 where the dragon's flight AI can't be disabled. */
-    static boolean supportsAiToggle() {
-        if (aiToggle == null) {
-            try {
-                LivingEntity.class.getMethod("setAI", boolean.class);
-                aiToggle = Boolean.TRUE;
-            } catch (Throwable t) {
-                aiToggle = Boolean.FALSE;
-            }
+        if (wither) {
+            Sounds.playAt(at, "ENTITY_WITHER_SPAWN", "ENTITY_WITHER_SPAWN", "WITHER_SPAWN");
+        } else {
+            Sounds.playAt(at, "ENTITY_ENDER_DRAGON_GROWL", "ENTITY_ENDERDRAGON_GROWL", "ENDERDRAGON_GROWL");
         }
-        return aiToggle.booleanValue();
     }
 
     /**
@@ -471,6 +482,13 @@ final class WinEffectController implements Listener {
         // the dragon's CURRENT cell AFTER the move, so climbing a hill / diving into ground teleported into solid
         // blocks the server clamped or rubber-banded — the "no vertical progress" bug.
         griefWinDragonPath(dragon.getWorld(), base, next);
+        // Hold the flight AI onto the path: 1.8 pins its legacy target fields; 1.9+ re-asserts the HOVER phase.
+        // Dragon-only — the wither runs noAI (its client has no isAIDisabled gate, see spawnWinMount).
+        boolean dragonMount = dragon.getType() == EntityType.ENDER_DRAGON;
+        if (dragonMount) {
+            pinLegacyDragonAi(dragon, next);
+            if (supportsAiToggle() && ticks % 10 == 0) setHoverPhase(dragon);
+        }
         // If the destination is still blocked by an unbreakable (bedrock/barrier), slide along the wall instead
         // of stalling: drop the vertical component, optionally hop up <=1 block.
         next = slideIfBlocked(base, next);
@@ -480,19 +498,24 @@ final class WinEffectController implements Listener {
         double dy = next.getY() - base.getY();
         double dz = next.getZ() - base.getZ();
         double horiz = Math.sqrt(dx * dx + dz * dz);
-        float targetYaw = horiz > 1.0e-4 ? dragonBodyYaw(dx, dz) : base.getYaw();
+        // Facing comes from the actual displacement. The EnderDragon's client model is reversed (head toward
+        // -Z at yaw 0), so it needs the +180 model offset; the WITHER uses the normal mob model (faces +Z at
+        // yaw 0) and reusing the dragon's offset made it fly head-first BACKWARDS.
+        float targetYaw = horiz > 1.0e-4
+            ? (dragonMount ? dragonBodyYaw(dx, dz) : witherBodyYaw(dx, dz))
+            : base.getYaw();
         float yaw = lerpYawShortest(base.getYaw(), targetYaw, DRAGON_YAW_LERP);
         float pitch = clampDragonPitch(dy, horiz);
         next.setYaw(yaw);
         next.setPitch(pitch);
         // Move; commit the tracked position to where the entity ACTUALLY ended up (never advance past a refused
-        // teleport in the fallback path — that drift caused the snap/stall).
-        Location applied = moveMountedDragon(owner, dragon, rider, next);
+        // move in the fallback path — that drift caused the snap/stall).
+        Location applied = moveMountedDragon(owner, dragon, rider, next, ticks);
         applied.setYaw(yaw);
         applied.setPitch(pitch);
         dragonPos.put(owner, applied);
         if (DRAGON_DEBUG && ticks % 20 == 0) {
-            plugin.getLogger().info("[windragon] mode=" + (planADisabled ? "B" : "A")
+            plugin.getLogger().info("[windragon] sync=" + (dragonStream == null ? "tracker" : "stream")
                 + " pos=" + applied.getBlockX() + "," + applied.getBlockY() + "," + applied.getBlockZ()
                 + " seated=" + isPassengerOf(dragon, rider));
         }
@@ -506,13 +529,23 @@ final class WinEffectController implements Listener {
             Particles.play(null, dragon.getLocation().clone().add(0, 1.5, 0), 6, 0.5, "FLAME", "PORTAL", "SMOKE");
         }
         if (ticks % 20 == 0) {
-            Sounds.playAt(dragon.getLocation(), "ENTITY_ENDER_DRAGON_FLAP", "ENDERDRAGON_WINGS", "BAT_TAKEOFF");
+            if (dragonMount) {
+                Sounds.playAt(dragon.getLocation(), "ENTITY_ENDER_DRAGON_FLAP", "ENDERDRAGON_WINGS", "BAT_TAKEOFF");
+            } else {
+                Sounds.playAt(dragon.getLocation(), "ENTITY_WITHER_AMBIENT", "WITHER_AMBIENT", "ENTITY_WITHER_HURT");
+            }
         }
     }
 
     /** Bukkit-free body yaw from a horizontal delta (standard Bukkit convention) + the EnderDragon model offset. */
     public static float dragonBodyYaw(double dx, double dz) {
         return (float) Math.toDegrees(Math.atan2(-dx, dz)) + DRAGON_MODEL_YAW_OFFSET;
+    }
+
+    /** Body yaw for the wither: a NORMAL mob model (faces +Z at yaw 0), so no EnderDragon offset. Applying the
+     *  dragon's +180 model offset made the wither fly head-first backwards. */
+    private static float witherBodyYaw(double dx, double dz) {
+        return (float) Math.toDegrees(Math.atan2(-dx, dz));
     }
 
     /** Bukkit-free pitch from the vertical/horizontal delta, clamped so the model never flips. */
@@ -535,44 +568,33 @@ final class WinEffectController implements Listener {
     /**
      * Move a mounted win dragon (and its rider) to {@code next}, returning where the dragon actually ended up.
      *
-     * Modern (1.9+): teleporting a vehicle WITH passengers is refused by CraftBukkit, and the old
-     * eject→teleport→remount every tick caused the rider rubber-band + 1-2 tick dragon flicker. We instead
-     * relocate the dragon at the NMS level ({@code setLocation}/{@code setPositionRotation}/{@code moveTo}) which
-     * moves it without ejecting — the server repositions the seated rider onto it automatically, so flight is
-     * smooth/Hypixel-like. If no NMS relocation method resolves we fall back to eject→teleport→remount, with
-     * {@link #dragonMoving} suppressing our dismount/exit cancel handlers during our own programmatic eject.
+     * Streaming path (default): relocate the dragon handle at the NMS level ({@code setLocation} /
+     * {@code setPositionRotation} / {@code moveTo} / {@code absSnapTo}) WITHOUT ejecting the rider — the server
+     * repositions the seated rider itself — then stream a RELATIVE move+look packet to every viewer. Relative
+     * moves are interpolated by the client over ~3 ticks, so the rider's camera glides with the dragon. Per-tick
+     * absolute teleport packets (the old behaviour) apply instantly with zero client interpolation, which strobed
+     * the camera 20x/second — that was the "tweaking" bug. After streaming, the vanilla tracker's last-sent
+     * baseline is re-aligned to the streamed state so its own sync computes ~zero delta and stays quiet instead
+     * of double-moving the client.
      *
-     * 1.8: the vehicle-teleport refusal is 1.9+, so a plain teleport carries the rider — keep that shortcut.
+     * If any piece of the streaming stack cannot be resolved on the running server, streaming is skipped
+     * entirely and the vanilla tracker syncs the relocated entity on its own (mob-grade smoothness, never
+     * broken). Only when even the NMS relocate is unavailable do we fall back to eject → teleport → remount.
      */
-    private Location moveMountedDragon(UUID owner, Entity dragon, Player rider, Location next) {
-        if (!supportsAiToggle()) {
-            boolean seated = isPassengerOf(dragon, rider);
-            dragon.teleport(next);
-            if (seated && !isPassengerOf(dragon, rider)) {
-                dragonMoving.put(owner, Boolean.TRUE);
-                try {
-                    mountPassenger(dragon, rider);
-                } finally {
-                    dragonMoving.remove(owner);
-                }
+    private Location moveMountedDragon(UUID owner, Entity dragon, Player rider, Location next, int ticks) {
+        Location prev = dragon.getLocation();
+        if (nmsRelocate(dragon, next)) {
+            if (dragonStream != null && streamDragonMove(dragon, prev, next, ticks)) {
+                streamConsecutiveFailures = 0;
+            } else if (dragonStream != null && ++streamConsecutiveFailures >= 5) {
+                // Streaming broke mid-ride — latch off so the vanilla tracker syncs alone (never broken).
+                dragonStream = null;
+                if (DRAGON_DEBUG) plugin.getLogger().info("[windragon] streaming latched off -> tracker sync");
             }
-            return dragon.getLocation();
+            return next.clone();
         }
-        // Modern (Plan A): relocate at the NMS level (no rider eject) then BROADCAST a teleport packet so clients
-        // actually SEE the move. On 1.12.2, setLocation only mutates server-side position fields — the entity
-        // tracker does not reliably broadcast raw mutations for a noAI flyer, so without the explicit packet the
-        // dragon advances server-side while the client renders it frozen at spawn (the f4ce1c6 regression). If
-        // relocate or the broadcast can't work, fall through to Plan B; after a few misses latch Plan B so we
-        // don't repeat failed reflection every tick.
-        if (!planADisabled) {
-            if (nmsRelocate(dragon, next) && broadcastDragonMove(dragon, next.getYaw())) {
-                planAConsecutiveFailures = 0;
-                return next.clone();
-            }
-            if (++planAConsecutiveFailures >= 3) planADisabled = true;
-        }
-        // Plan B: eject → teleport both → remount (provably flew on 1.12.2 before f4ce1c6). Bukkit teleport marks
-        // the entity moved for its tracker, so clients see it; minor per-tick flicker is acceptable here.
+        // Deep fallback (NMS relocate unavailable — practically never): eject → teleport both → remount.
+        // Teleporting the rider every tick yanks the camera; this path exists only so the dragon still moves.
         boolean seated = isPassengerOf(dragon, rider);
         if (seated) {
             dragonMoving.put(owner, Boolean.TRUE);
@@ -591,14 +613,380 @@ final class WinEffectController implements Listener {
         return moved ? next.clone() : dragon.getLocation();
     }
 
-    /** Cached NMS relocation method (setLocation/setPositionRotation/moveTo) resolved once; null = use fallback. */
+    /** Once-per-second flight diagnostics (sync mode, position delta, seat). Off in release builds. */
+    private static final boolean DRAGON_DEBUG = false;
+
+    /** Cached streaming stack (packet ctors + baseline fields); null = vanilla-tracker-only sync for the JVM. */
+    private static volatile DragonStream dragonStream;
+    private static boolean streamResolved;
+    private static int streamConsecutiveFailures;
+
+    /**
+     * Relative-move client sync for the win dragon, resolved once per JVM. All-or-nothing: if the packet
+     * constructors, the send plumbing, or the tracker baseline fields cannot be resolved, {@code null} is
+     * cached and the vanilla tracker syncs alone (mob-grade smoothness — never broken, never double-synced).
+     */
+    private static final class DragonStream {
+        /** (int entityId, [byte|short|long]×3 deltas, byte yaw, byte pitch, boolean onGround). */
+        final Constructor<?> relMove;
+        /** (nms Entity, byte headYaw). */
+        final Constructor<?> headRot;
+        /** (int entityId) absolute resync; null on Mojang-record layouts where a zero-delta relmove is used. */
+        final Constructor<?> teleport;
+        /** Delta fixed-point scale: 32 on 1.8.x, 4096 on 1.9+ (both mappings). */
+        final int scale;
+        /** Delta parameter type of the resolved ctor (long 1.12 / short 1.9+ / byte 1.8) — quantization width. */
+        final Class<?> deltaType;
+        /** Largest per-component delta the relmove packet can carry before an absolute resync is required. */
+        final double maxDelta;
+        /** getHandle → connection field → send method plumbing, resolved against the running server. */
+        final Field connectionField;
+        final Method sendMethod;
+
+        DragonStream(Constructor<?> relMove, Constructor<?> headRot, Constructor<?> teleport,
+                     int scale, Field connectionField, Method sendMethod) {
+            this.relMove = relMove;
+            this.headRot = headRot;
+            this.teleport = teleport;
+            this.scale = scale;
+            this.deltaType = relMove.getParameterTypes()[1];
+            this.maxDelta = deltaType == byte.class ? 3.9 : 8.0;
+            this.connectionField = connectionField;
+            this.sendMethod = sendMethod;
+        }
+
+        /**
+         * Quantize one delta component into the ctor's exact parameter width. The 1.9+ packet carries
+         * delta*4096 as a SHORT — casting that to byte truncates ~2048 to 0, which zeroed every streamed
+         * move and left the client dragon frozen while the server-side seat advanced (the violent
+         * rubber-band). Integer widens to the long params on 1.12.2; Short/Byte fit their own shapes.
+         */
+        Number quantize(double delta) {
+            long scaled = Math.round(delta * scale);
+            if (deltaType == long.class) return Integer.valueOf((int) scaled);
+            if (deltaType == short.class) return Short.valueOf((short) scaled);
+            return Byte.valueOf((byte) scaled);
+        }
+    }
+
+    /** Resolved tracker-baseline fields for one entry class (EntityTrackerEntry / ServerEntity). */
+    private static final class BaselineFields {
+        final Field x, y, z;            // quantized last-sent position (int on 1.8, long on 1.12/1.16) — nullable
+        final Field yawInt, pitchInt;   // quantized last-sent angles (int, 1.8–1.16) — nullable
+        final Field yawByte, pitchByte; // Mojang-layout byte angles (ServerEntity, 26.2) — nullable
+        final Field vecPos;             // exact last-sent position (Vec3D/Vec3) — nullable
+        final Field entryCodecField;    // entry field holding the VecDeltaCodec — nullable
+        final Field codecVecPos;        // VecDeltaCodec.base exact position — nullable
+        final Constructor<?> vecCtor;   // (double,double,double) for the vec types above
+        final boolean valid;
+
+        BaselineFields(Class<?> entryClass) {
+            Field vx = null, vy = null, vz = null, yi = null, pi = null, yb = null, pb = null,
+                vec = null, codecField = null, codecVec = null;
+            Constructor<?> vc = null;
+            for (Class<?> c = entryClass; c != null && c != Object.class; c = c.getSuperclass()) {
+                for (Field f : c.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                    String n = f.getName();
+                    Class<?> t = f.getType();
+                    try {
+                        if ((n.equals("xLoc") || n.equals("yLoc") || n.equals("zLoc"))
+                            && (t == int.class || t == long.class)) {
+                            f.setAccessible(true);
+                            if (n.equals("xLoc")) vx = f;
+                            else if (n.equals("yLoc")) vy = f;
+                            else vz = f;
+                        } else if (n.equals("yRot") && t == int.class) {
+                            f.setAccessible(true);
+                            yi = f;
+                        } else if (n.equals("xRot") && t == int.class) {
+                            f.setAccessible(true);
+                            pi = f;
+                        } else if (n.equals("lastSentYRot") && t == byte.class) {
+                            f.setAccessible(true);
+                            yb = f;
+                        } else if (n.equals("lastSentXRot") && t == byte.class) {
+                            f.setAccessible(true);
+                            pb = f;
+                        } else if (t.getSimpleName().equals("VecDeltaCodec")) {
+                            f.setAccessible(true);
+                            codecField = f;
+                        } else if (isVecType(t) && !n.equals("lastSentMovement")) {
+                            f.setAccessible(true);
+                            vec = f;
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+            if (codecField != null) {
+                for (Field cf : codecField.getType().getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(cf.getModifiers())) continue;
+                    if (isVecType(cf.getType())) {
+                        cf.setAccessible(true);
+                        codecVec = cf;
+                        break;
+                    }
+                }
+            }
+            Class<?> vecClass = vec != null ? vec.getType() : (codecVec != null ? codecVec.getType() : null);
+            if (vecClass != null) {
+                try {
+                    vc = vecClass.getConstructor(double.class, double.class, double.class);
+                } catch (Throwable ignored) {
+                    vc = null;
+                    vec = null;
+                    codecVec = null;
+                }
+            }
+            this.x = vx;
+            this.y = vy;
+            this.z = vz;
+            this.yawInt = yi;
+            this.pitchInt = pi;
+            this.yawByte = yb;
+            this.pitchByte = pb;
+            this.vecPos = vec;
+            this.entryCodecField = codecField;
+            this.codecVecPos = codecVec;
+            this.vecCtor = vc;
+            this.valid = (vx != null && vy != null && vz != null) || vec != null
+                || codecVec != null || yb != null || yi != null;
+        }
+
+        private static boolean isVecType(Class<?> t) {
+            String n = t.getName();
+            return n.endsWith(".Vec3D") || n.endsWith(".Vec3");
+        }
+
+        /**
+         * Re-align the tracker's last-sent state to {@code at}/{@code yaw}/{@code pitch} so its next sync
+         * computes ~zero delta and stays quiet instead of double-moving the client.
+         */
+        void apply(Object entry, Location at, float yaw, float pitch, int scale) {
+            try {
+                if (x != null && y != null && z != null) {
+                    setNumber(x, entry, (long) Math.floor(at.getX() * scale));
+                    setNumber(y, entry, (long) Math.floor(at.getY() * scale));
+                    setNumber(z, entry, (long) Math.floor(at.getZ() * scale));
+                }
+                if (yawInt != null) setNumber(yawInt, entry, (int) Math.floor(yaw * 256.0f / 360.0f));
+                if (pitchInt != null) setNumber(pitchInt, entry, (int) Math.floor(pitch * 256.0f / 360.0f));
+                if (yawByte != null) setNumber(yawByte, entry, angleByte(yaw));
+                if (pitchByte != null) setNumber(pitchByte, entry, angleByte(pitch));
+                if (vecPos != null && vecCtor != null) {
+                    vecPos.set(entry, vecCtor.newInstance(at.getX(), at.getY(), at.getZ()));
+                }
+                if (entryCodecField != null && codecVecPos != null && vecCtor != null) {
+                    Object codec = entryCodecField.get(entry);
+                    if (codec != null) {
+                        codecVecPos.set(codec, vecCtor.newInstance(at.getX(), at.getY(), at.getZ()));
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+
+        private void setNumber(Field f, Object target, Number value) throws IllegalAccessException {
+            Class<?> t = f.getType();
+            if (t == int.class) f.setInt(target, value.intValue());
+            else if (t == long.class) f.setLong(target, value.longValue());
+            else if (t == byte.class) f.setByte(target, value.byteValue());
+            else if (t == double.class) f.setDouble(target, value.doubleValue());
+            else if (t == float.class) f.setFloat(target, value.floatValue());
+        }
+    }
+
+    /** Baseline field sets cached per entry class (the shape is fixed per server). */
+    private static final Map<Class<?>, BaselineFields> baselineCache =
+        new java.util.concurrent.ConcurrentHashMap<Class<?>, BaselineFields>();
+
+    /**
+     * Stream this tick's dragon move to every nearby viewer as a RELATIVE move+look packet
+     * (client-interpolated over ~3 ticks — silky) plus a head-rotation packet every 2 ticks, then re-align
+     * the vanilla tracker baseline so its own sync stays quiet. Works because the dragon is NOT noAI:
+     * with noAI set the client EnderDragon skips its entire update including the lerp (frozen dragon).
+     * Deltas beyond the packet's fixed-point range fall back to one absolute resync. Returns false when
+     * anything fails so the caller can latch to vanilla-tracker-only sync.
+     */
+    private boolean streamDragonMove(Entity dragon, Location prev, Location next, int ticks) {
+        DragonStream s = dragonStream;
+        if (s == null) return false;
+        try {
+            // All-or-nothing: align the vanilla tracker baseline BEFORE streaming. If the baseline cannot be
+            // resolved on this server we must not stream at all — the tracker would double-move the client.
+            if (!alignTrackerBaseline(dragon, next)) return false;
+            double dx = next.getX() - prev.getX();
+            double dy = next.getY() - prev.getY();
+            double dz = next.getZ() - prev.getZ();
+            Byte yawB = Byte.valueOf(angleByte(next.getYaw()));
+            Byte pitchB = Byte.valueOf(angleByte(next.getPitch()));
+            Object movePacket;
+            if (Math.abs(dx) > s.maxDelta || Math.abs(dy) > s.maxDelta || Math.abs(dz) > s.maxDelta) {
+                if (s.teleport == null) return false;
+                Object handle = dragon.getClass().getMethod("getHandle").invoke(dragon);
+                movePacket = s.teleport.newInstance(handle);
+            } else {
+                movePacket = s.relMove.newInstance(Integer.valueOf(dragon.getEntityId()),
+                    s.quantize(dx), s.quantize(dy), s.quantize(dz), yawB, pitchB, Boolean.FALSE);
+            }
+            boolean sent = false;
+            for (Player viewer : dragon.getWorld().getPlayers()) {
+                if (EntityVisibility.isSpectator(viewer)) continue;
+                if (viewer.getLocation().distanceSquared(next) > 160.0 * 160.0) continue;
+                if (sendPacket(s, viewer, movePacket)) sent = true;
+            }
+            if (!sent) return false;
+            if (s.headRot != null && ticks % 2 == 0) {
+                Object handle = dragon.getClass().getMethod("getHandle").invoke(dragon);
+                Object head = s.headRot.newInstance(handle, Byte.valueOf(angleByte(next.getYaw())));
+                for (Player viewer : dragon.getWorld().getPlayers()) {
+                    if (EntityVisibility.isSpectator(viewer)) continue;
+                    if (viewer.getLocation().distanceSquared(next) > 160.0 * 160.0) continue;
+                    sendPacket(s, viewer, head);
+                }
+            }
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static byte angleByte(float degrees) {
+        return (byte) Math.floor(degrees * 256.0f / 360.0f);
+    }
+
+    /**
+     * Re-align the vanilla tracker's last-sent baseline so its own sync computes ~zero delta (stays quiet).
+     * Returns false when the entry/baseline cannot be resolved — callers must not stream in that state.
+     */
+    private static boolean alignTrackerBaseline(Entity dragon, Location at) {
+        try {
+            Object entry = trackerEntryFor(dragon);
+            if (entry == null) return false;
+            BaselineFields bf = baselineCache.get(entry.getClass());
+            if (bf == null) {
+                bf = new BaselineFields(entry.getClass());
+                baselineCache.put(entry.getClass(), bf);
+            }
+            if (!bf.valid) return false;
+            DragonStream s = dragonStream;
+            bf.apply(entry, at, at.getYaw(), at.getPitch(), s != null ? s.scale : 4096);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * Locate the vanilla per-entity tracker entry for {@code dragon}, across three architectures:
+     * moonrise (26.2+): handle.moonrise$getTrackedEntity().serverEntity;
+     * classic (1.8/1.12): WorldServer.tracker (EntityTracker).trackedEntities(IntHashMap).get(id);
+     * chunk-map (1.16/1.20): WorldServer.chunkProvider.playerChunkMap.trackedEntities(Int2ObjectMap).get(id)
+     * → wrapper.trackerEntry. Returns null when the shape is unknown (caller degrades gracefully).
+     */
+    private static Object trackerEntryFor(Entity dragon) throws Exception {
+        Object handle = dragon.getClass().getMethod("getHandle").invoke(dragon);
+        // moonrise (Paper 26.2+): per-entity TrackedEntity with a public serverEntity field. The accessor may be
+        // declared on the entity class itself or inherited from the moonrise interface — scan both.
+        Method moonrise = null;
+        for (Class<?> c = handle.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Method m : c.getDeclaredMethods()) {
+                if (m.getName().equals("moonrise$getTrackedEntity") && m.getParameterCount() == 0) {
+                    moonrise = m;
+                    break;
+                }
+            }
+            if (moonrise != null) break;
+        }
+        if (moonrise == null) {
+            for (Method m : handle.getClass().getMethods()) {
+                if (m.getName().equals("moonrise$getTrackedEntity") && m.getParameterCount() == 0) {
+                    moonrise = m;
+                    break;
+                }
+            }
+        }
+        if (moonrise != null) {
+            moonrise.setAccessible(true);
+            Object tracked = moonrise.invoke(handle);
+            if (tracked == null) return null;
+            for (Field f : tracked.getClass().getDeclaredFields()) {
+                if (f.getType().getSimpleName().equals("ServerEntity")) {
+                    f.setAccessible(true);
+                    return f.get(tracked);
+                }
+            }
+            return null;
+        }
+        Object worldHandle = dragon.getWorld().getClass().getMethod("getHandle").invoke(dragon.getWorld());
+        // classic (1.8/1.12): WorldServer.tracker → IntHashMap trackedEntities.get(id) → entry.
+        Object tracker = typedFieldGet(worldHandle, "EntityTracker");
+        if (tracker != null && !tracker.getClass().getSimpleName().endsWith("Entry")) {
+            Object map = typedFieldGet(tracker, "IntHashMap");
+            if (map != null) {
+                Object entry = invokeGet(map, dragon.getEntityId());
+                if (entry != null) return entry;
+            }
+        }
+        // chunk-map (1.16/1.20): chunkProvider → playerChunkMap → Int2ObjectMap trackedEntities.get(id)
+        // → wrapper with an EntityTrackerEntry-typed field.
+        Object chunkProvider = typedFieldGet(worldHandle, "ChunkProviderServer");
+        if (chunkProvider == null) {
+            for (Method m : worldHandle.getClass().getMethods()) {
+                if (m.getParameterCount() == 0 && m.getReturnType().getSimpleName().equals("ChunkProviderServer")) {
+                    chunkProvider = m.invoke(worldHandle);
+                    break;
+                }
+            }
+        }
+        if (chunkProvider == null) return null;
+        Object chunkMap = typedFieldGet(chunkProvider, "PlayerChunkMap");
+        if (chunkMap == null) return null;
+        Object map = typedFieldGet(chunkMap, "Int2ObjectMap");
+        if (map == null) return null;
+        Object wrapper = invokeGet(map, dragon.getEntityId());
+        if (wrapper == null) return null;
+        return typedFieldGet(wrapper, "EntityTrackerEntry", "ServerEntity");
+    }
+
+    /** Read the first instance field of {@code target} whose type simple name matches any of {@code names}. */
+    private static Object typedFieldGet(Object target, String... names) throws IllegalAccessException {
+        for (Class<?> c = target.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Field f : c.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                String simple = f.getType().getSimpleName();
+                for (String n : names) {
+                    if (simple.equals(n)) {
+                        f.setAccessible(true);
+                        return f.get(target);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** IntHashMap.get(int) / Int2ObjectMap.get(int) — both expose a public single-int {@code get}. */
+    private static Object invokeGet(Object map, int entityId) throws Exception {
+        for (Method m : map.getClass().getMethods()) {
+            if (!m.getName().equals("get") || m.getParameterCount() != 1) continue;
+            if (m.getParameterTypes()[0] != int.class) continue;
+            return m.invoke(map, Integer.valueOf(entityId));
+        }
+        return null;
+    }
+
+    /** Cached NMS relocation method (DDDFF) resolved once; null = use the deep eject/teleport fallback. */
     private static Method nmsSetLocation;
     private static boolean nmsSetLocationResolved;
 
     /**
-     * Move the entity at the NMS level so a seated passenger is NOT ejected. Mapping names differ across
-     * versions, so resolve reflectively: {@code setLocation} (Spigot), {@code setPositionRotation} (older CB),
-     * {@code moveTo} (Mojang-mapped Paper). Returns false if none resolve or the call throws → caller falls back.
+     * Move the entity at the NMS level so a seated passenger is NOT ejected. Resolved reflectively by name
+     * ({@code setLocation} 1.8 Spigot, {@code setPositionRotation} older CB, {@code moveTo} Mojang-mapped,
+     * {@code absSnapTo} 1.21.2+), else by signature — Paper 1.20.4 keeps obfuscated member names, so any
+     * void (double,double,double,float,float) method on the Entity hierarchy is accepted. Returns false if
+     * nothing resolves or the call throws → caller uses the deep fallback.
      */
     private static boolean nmsRelocate(Entity entity, Location to) {
         Method setter = resolveNmsSetLocation(entity);
@@ -617,18 +1005,24 @@ final class WinEffectController implements Listener {
         nmsSetLocationResolved = true;
         try {
             Object handle = entity.getClass().getMethod("getHandle").invoke(entity);
-            for (String name : new String[]{"setLocation", "setPositionRotation", "moveTo"}) {
-                Class<?> c = handle.getClass();
-                while (c != null) {
-                    try {
-                        Method m = c.getDeclaredMethod(name, double.class, double.class, double.class,
-                            float.class, float.class);
+            for (String name : new String[]{"setLocation", "setPositionRotation", "moveTo", "absSnapTo"}) {
+                Method m = findHandleMethod(handle.getClass(), name);
+                if (m != null) {
+                    nmsSetLocation = m;
+                    return nmsSetLocation;
+                }
+            }
+            // Signature fallback for obfuscated members (Paper 1.20.4): first void (DDDFF) on the hierarchy.
+            for (Class<?> c = handle.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+                for (Method m : c.getDeclaredMethods()) {
+                    if (java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
+                    Class<?>[] p = m.getParameterTypes();
+                    if (p.length == 5 && p[0] == double.class && p[1] == double.class && p[2] == double.class
+                        && p[3] == float.class && p[4] == float.class && m.getReturnType() == void.class) {
                         m.setAccessible(true);
                         nmsSetLocation = m;
                         return nmsSetLocation;
-                    } catch (NoSuchMethodException ignored) {
                     }
-                    c = c.getSuperclass();
                 }
             }
         } catch (Throwable ignored) {
@@ -636,69 +1030,268 @@ final class WinEffectController implements Listener {
         return nmsSetLocation;
     }
 
-    /** Once-per-second flight diagnostics (Plan A/B, position delta, seat). Off in release builds. */
-    private static final boolean DRAGON_DEBUG = false;
-    /** Consecutive Plan-A (relocate+broadcast) misses; after {@code >=3} we latch to Plan B for the JVM. */
-    private static int planAConsecutiveFailures;
-    private static boolean planADisabled;
-    private static Constructor<?> teleportPacketCtor;
-    private static Constructor<?> headRotPacketCtor;
-    private static boolean movePacketsResolved;
-
-    /**
-     * Broadcast the dragon's post-relocate position to nearby clients so the NMS setLocation is actually visible.
-     * Sends PacketPlayOutEntityTeleport (reads the handle's just-updated position) + PacketPlayOutEntityHeadRotation
-     * (EnderDragon head yaw lags otherwise) to every non-spectator within ~160 blocks. Returns false when the
-     * packet classes / send plumbing are unavailable (e.g. Mojang-mapped Paper) so the caller uses Plan B.
-     */
-    private boolean broadcastDragonMove(Entity dragon, float yaw) {
-        if (!resolveMovePackets() || !EntityVisibility.packetsAvailable()) return false;
-        Object handle;
-        try {
-            handle = dragon.getClass().getMethod("getHandle").invoke(dragon);
-        } catch (Throwable t) {
-            return false;
+    private static Method findHandleMethod(Class<?> handleClass, String name) {
+        for (Class<?> c = handleClass; c != null && c != Object.class; c = c.getSuperclass()) {
+            try {
+                Method m = c.getDeclaredMethod(name, double.class, double.class, double.class,
+                    float.class, float.class);
+                m.setAccessible(true);
+                return m;
+            } catch (NoSuchMethodException ignored) {
+            }
         }
-        Object tpPacket;
-        try {
-            tpPacket = teleportPacketCtor.newInstance(handle);
-        } catch (Throwable t) {
-            return false;
-        }
-        Object headPacket = null;
-        try {
-            headPacket = headRotPacketCtor.newInstance(handle, (byte) ((int) (yaw * 256.0F / 360.0F)));
-        } catch (Throwable ignored) {
-        }
-        World world = dragon.getWorld();
-        if (world == null) return false;
-        Location at = dragon.getLocation();
-        for (Player viewer : world.getPlayers()) {
-            if (EntityVisibility.isSpectator(viewer)) continue;
-            if (viewer.getLocation().distanceSquared(at) > 160.0 * 160.0) continue;
-            EntityVisibility.sendRaw(viewer, tpPacket);
-            if (headPacket != null) EntityVisibility.sendRaw(viewer, headPacket);
-        }
-        return true;
+        return null;
     }
 
-    /** Resolve the versioned move-packet constructors once; unavailable on Mojang-mapped builds (→ Plan B). */
-    private static boolean resolveMovePackets() {
-        if (movePacketsResolved) return teleportPacketCtor != null;
-        movePacketsResolved = true;
+    /** True when LivingEntity.setAI exists (1.9+). On 1.8 the dragon's flight AI cannot be disabled. */
+    private static boolean supportsAiToggle() {
+        if (aiToggle == null) {
+            try {
+                LivingEntity.class.getMethod("setAI", boolean.class);
+                aiToggle = Boolean.TRUE;
+            } catch (Throwable t) {
+                aiToggle = Boolean.FALSE;
+            }
+        }
+        return aiToggle.booleanValue();
+    }
+
+    private static Boolean aiToggle;
+
+    /**
+     * Park the dragon in the HOVER phase (Bukkit {@code EnderDragon.setPhase}, 1.9+). Hover keeps the
+     * server AI stationary — no waypoints, no attacks, no block grief — WITHOUT noAI (which freezes the
+     * client dragon: see the spawn comment). The phase also syncs to clients, whose own controller then
+     * hovers passively and follows our streamed relative moves. Re-asserted periodically in case the AI
+     * auto-switches phases mid-ride. No-op on 1.8 (the legacy AI-target pin handles that server).
+     */
+    private static void setHoverPhase(Entity dragon) {
+        if (!(dragon instanceof org.bukkit.entity.EnderDragon)) return;
+        try {
+            Class<?> phaseEnum = Class.forName("org.bukkit.entity.EnderDragon$Phase");
+            Object hover = phaseEnum.getField("HOVER").get(null);
+            dragon.getClass().getMethod("setPhase", phaseEnum).invoke(dragon, hover);
+        } catch (Throwable ignored) {
+        }
+    }
+    /** 1.8.8 EntityEnderDragon flight-target fields (obfuscated a/b/c doubles = targetX/Y/Z). */
+    private static Field legacyTargetX;
+    private static Field legacyTargetY;
+    private static Field legacyTargetZ;
+    private static boolean legacyTargetResolved;
+
+    /**
+     * 1.8-only: the dragon's flight AI cannot be disabled (no setAI), so it constantly flies toward its own
+     * waypoint target and fights the per-tick relocate — the client sees a violent back-and-forth zigzag.
+     * Pin the AI target (handle fields a/b/c, verified = targetX/Y/Z against v1_8_R3 bytecode) onto the
+     * desired path point each tick: the AI then holds position instead of dragging the dragon away.
+     */
+    private static void pinLegacyDragonAi(Entity dragon, Location to) {
+        if (supportsAiToggle()) return;
+        try {
+            if (!legacyTargetResolved) {
+                legacyTargetResolved = true;
+                Object handle = dragon.getClass().getMethod("getHandle").invoke(dragon);
+                for (Class<?> c = handle.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+                    if (!c.getSimpleName().equals("EntityEnderDragon")) continue;
+                    for (Field f : c.getDeclaredFields()) {
+                        if (f.getType() != double.class || java.lang.reflect.Modifier.isStatic(f.getModifiers())) {
+                            continue;
+                        }
+                        if (f.getName().equals("a")) legacyTargetX = f;
+                        else if (f.getName().equals("b")) legacyTargetY = f;
+                        else if (f.getName().equals("c")) legacyTargetZ = f;
+                    }
+                    if (legacyTargetX != null && legacyTargetY != null && legacyTargetZ != null) {
+                        legacyTargetX.setAccessible(true);
+                        legacyTargetY.setAccessible(true);
+                        legacyTargetZ.setAccessible(true);
+                    }
+                    break;
+                }
+            }
+            if (legacyTargetX == null || legacyTargetY == null || legacyTargetZ == null) return;
+            Object handle = dragon.getClass().getMethod("getHandle").invoke(dragon);
+            legacyTargetX.setDouble(handle, to.getX());
+            legacyTargetY.setDouble(handle, to.getY());
+            legacyTargetZ.setDouble(handle, to.getZ());
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Resolve the full streaming stack once per JVM; any missing piece → vanilla-tracker-only sync. */
+    private static void resolveDragonStream() {
+        if (streamResolved) return;
+        streamResolved = true;
         try {
             String v = EntityVisibility.nmsVersion();
-            if (v == null) return false;
-            Class<?> nmsEntity = Class.forName("net.minecraft.server." + v + ".Entity");
-            teleportPacketCtor = Class.forName("net.minecraft.server." + v + ".PacketPlayOutEntityTeleport")
-                .getConstructor(nmsEntity);
-            headRotPacketCtor = Class.forName("net.minecraft.server." + v + ".PacketPlayOutEntityHeadRotation")
-                .getConstructor(nmsEntity, byte.class);
+            boolean versioned = v != null && v.startsWith("v1_");
+            int scale = (versioned && v.startsWith("v1_8")) ? 32 : 4096;
+
+            String pkg = versioned ? "net.minecraft.server." + v : "net.minecraft.network.protocol.game";
+            Class<?> nmsEntity = null;
+            for (String name : new String[]{
+                versioned ? "net.minecraft.server." + v + ".Entity" : "",
+                "net.minecraft.world.entity.Entity"}) {
+                if (name.isEmpty()) continue;
+                try {
+                    nmsEntity = Class.forName(name);
+                    break;
+                } catch (Throwable ignored) {
+                }
+            }
+            Constructor<?> relMove = findRelMoveCtor(new String[]{
+                pkg + ".PacketPlayOutEntity$PacketPlayOutRelEntityMoveLook",
+                "net.minecraft.network.protocol.game.PacketPlayOutEntity$PacketPlayOutRelEntityMoveLook",
+                "net.minecraft.network.protocol.game.ClientboundMoveEntityPacket$PosRot"});
+            Constructor<?> headRot = nmsEntity == null ? null : findCtor(new String[]{
+                pkg + ".PacketPlayOutEntityHeadRotation",
+                "net.minecraft.network.protocol.game.PacketPlayOutEntityHeadRotation",
+                "net.minecraft.network.protocol.game.ClientboundRotateHeadPacket"}, nmsEntity, byte.class);
+            Constructor<?> teleport = nmsEntity == null ? null : findCtor(new String[]{
+                pkg + ".PacketPlayOutEntityTeleport",
+                "net.minecraft.network.protocol.game.PacketPlayOutEntityTeleport"}, nmsEntity);
+            if (relMove == null || headRot == null) return;
+
+            // Send plumbing shape: CraftPlayer.getHandle() → playerConnection|connection field → sendPacket|send.
+            Class<?> craftPlayer;
+            try {
+                craftPlayer = Class.forName(
+                    (versioned ? "org.bukkit.craftbukkit." + v : "org.bukkit.craftbukkit") + ".entity.CraftPlayer");
+            } catch (Throwable ignored) {
+                return;
+            }
+            Class<?> handleClass = craftPlayer.getMethod("getHandle").getReturnType();
+            Field connectionField = findConnectionField(handleClass);
+            if (connectionField == null) return;
+            Method sendMethod = null;
+            // The send method's parameter is the NMS Packet interface — named differently per package layout.
+            Class<?> packetInterface = null;
+            for (String name : new String[]{
+                versioned ? "net.minecraft.server." + v + ".Packet" : "",
+                "net.minecraft.network.protocol.Packet"}) {
+                if (name.isEmpty()) continue;
+                try {
+                    packetInterface = Class.forName(name);
+                    break;
+                } catch (Throwable ignored) {
+                }
+            }
+            if (packetInterface == null) return;
+            for (Method m : connectionField.getType().getMethods()) {
+                if (!m.getName().equals("sendPacket") && !m.getName().equals("send")) continue;
+                if (m.getParameterCount() != 1) continue;
+                if (m.getParameterTypes()[0].isAssignableFrom(packetInterface)) {
+                    sendMethod = m;
+                    break;
+                }
+            }
+            if (sendMethod == null) return;
+
+            dragonStream = new DragonStream(relMove, headRot, teleport, scale, connectionField, sendMethod);
         } catch (Throwable ignored) {
-            teleportPacketCtor = null;
-            headRotPacketCtor = null;
+            dragonStream = null;
         }
-        return teleportPacketCtor != null;
+    }
+
+    private static Constructor<?> findRelMoveCtor(String[] classNames) {
+        for (String name : classNames) {
+            Class<?> c;
+            try {
+                c = Class.forName(name);
+            } catch (Throwable ignored) {
+                continue;
+            }
+            // Byte args widen to byte/short/long params via reflection, so one call site fits every shape.
+            for (Class<?>[] shape : new Class<?>[][] {
+                {int.class, long.class, long.class, long.class, byte.class, byte.class, boolean.class},
+                {int.class, short.class, short.class, short.class, byte.class, byte.class, boolean.class},
+                {int.class, byte.class, byte.class, byte.class, byte.class, byte.class, boolean.class}}) {
+                try {
+                    Constructor<?> ctor = c.getConstructor(shape);
+                    ctor.setAccessible(true);
+                    return ctor;
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Constructor<?> findCtor(String[] classNames, Class<?> first, Class<?> second) {
+        for (String name : classNames) {
+            try {
+                Constructor<?> ctor = Class.forName(name).getConstructor(first, second);
+                ctor.setAccessible(true);
+                return ctor;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static Constructor<?> findCtor(String[] classNames, Class<?> first) {
+        for (String name : classNames) {
+            try {
+                Constructor<?> ctor = Class.forName(name).getConstructor(first);
+                ctor.setAccessible(true);
+                return ctor;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static Field findConnectionField(Class<?> handleClass) {
+        for (Class<?> c = handleClass; c != null && c != Object.class; c = c.getSuperclass()) {
+            for (String name : new String[]{"playerConnection", "connection"}) {
+                try {
+                    Field f = c.getDeclaredField(name);
+                    f.setAccessible(true);
+                    return f;
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Send one pre-built NMS packet to a viewer via the resolved connection plumbing. */
+    private static boolean sendPacket(DragonStream s, Player viewer, Object packet) {
+        try {
+            Object handle = viewer.getClass().getMethod("getHandle").invoke(viewer);
+            Object connection = s.connectionField.get(handle);
+            if (connection == null) return false;
+            s.sendMethod.invoke(connection, packet);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** One absolute position+look resync to all viewers (post-mount / end-of-ride snapshots). */
+    private static void sendDragonResync(Entity dragon) {
+        DragonStream s = dragonStream;
+        if (s == null) return;
+        try {
+            Location at = dragon.getLocation();
+            Byte yawB = Byte.valueOf(angleByte(at.getYaw()));
+            Byte pitchB = Byte.valueOf(angleByte(at.getPitch()));
+            Object look = s.relMove.newInstance(Integer.valueOf(dragon.getEntityId()),
+                s.quantize(0), s.quantize(0), s.quantize(0), yawB, pitchB, Boolean.FALSE);
+            Object teleportPacket = null;
+            if (s.teleport != null) {
+                Object handle = dragon.getClass().getMethod("getHandle").invoke(dragon);
+                teleportPacket = s.teleport.newInstance(handle);
+            }
+            for (Player viewer : dragon.getWorld().getPlayers()) {
+                if (EntityVisibility.isSpectator(viewer)) continue;
+                if (viewer.getLocation().distanceSquared(at) > 160.0 * 160.0) continue;
+                sendPacket(s, viewer, look);
+                if (teleportPacket != null) sendPacket(s, viewer, teleportPacket);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     /** Blocks/tick the win dragon cruises (≈ winDragonFlightSpeed per ~3 ticks — gentle Hypixel pace). */
@@ -803,6 +1396,8 @@ final class WinEffectController implements Listener {
         if (world != null) {
             Entity dragon = entityByUuid(world, dragonId);
             if (dragon != null) {
+                // End-of-ride absolute snapshot (doc contract) before the despawn destroy packets go out.
+                sendDragonResync(dragon);
                 ejectPassengers(dragon);
                 dragon.remove();
             }
@@ -1055,19 +1650,29 @@ final class WinEffectController implements Listener {
         Vector dir = player.getEyeLocation().getDirection();
         if (dir.lengthSquared() < 1.0e-6) dir = new Vector(0, 0, 1);
         else dir.normalize();
-        // Mouth: ahead of dragon body along look (not player feet).
-        Location mouth = dragon.getLocation().clone().add(0.0, 3.0, 0.0).add(dir.clone().multiply(4.5));
-        Fireball fireball = spawnWinDragonFireball(player.getWorld(), mouth);
-        if (fireball == null) return true;
-        fireball.setDirection(dir);
-        fireball.setShooter(player);
-        fireball.setIsIncendiary(false);
-        fireball.setYield(winDragonFireballYield());
-        fireball.setMetadata(META_WIN_FIREBALL, new FixedMetadataValue(plugin, player.getUniqueId().toString()));
-        fireball.setVelocity(dir.clone().multiply(1.35));
-        Sounds.playAt(mouth, "ENTITY_GHAST_SHOOT", "GHAST_FIREBALL", "GHAST_MOAN");
-        Particles.play(null, mouth, 12, 0.25, "FLAME", "SMOKE", "CRIT");
-        final UUID ballId = fireball.getUniqueId();
+        boolean wither = dragon.getType() == EntityType.WITHER;
+        // Mouth: ahead of the mount's body along look (dragon head ~+3y, wither head ~+2.2y).
+        Location mouth = dragon.getLocation().clone()
+            .add(0.0, wither ? 2.2 : 3.0, 0.0)
+            .add(dir.clone().multiply(wither ? 3.0 : 4.5));
+        Fireball projectile = wither
+            ? spawnWinWitherSkull(player.getWorld(), mouth)
+            : spawnWinDragonFireball(player.getWorld(), mouth);
+        if (projectile == null) return true;
+        projectile.setDirection(dir);
+        projectile.setShooter(player);
+        projectile.setIsIncendiary(false);
+        projectile.setYield(winDragonFireballYield());
+        projectile.setMetadata(META_WIN_FIREBALL, new FixedMetadataValue(plugin, player.getUniqueId().toString()));
+        projectile.setVelocity(dir.clone().multiply(wither ? 1.5 : 1.35));
+        if (wither) {
+            Sounds.playAt(mouth, "ENTITY_WITHER_SHOOT", "ENTITY_WITHER_SHOOT", "WITHER_SHOOT");
+            Particles.play(null, mouth, 12, 0.25, "SMOKE", "LARGE_SMOKE", "CRIT");
+        } else {
+            Sounds.playAt(mouth, "ENTITY_GHAST_SHOOT", "GHAST_FIREBALL", "GHAST_MOAN");
+            Particles.play(null, mouth, 12, 0.25, "FLAME", "SMOKE", "CRIT");
+        }
+        final UUID ballId = projectile.getUniqueId();
         final World world = player.getWorld();
         Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
             @Override public void run() {
@@ -1092,6 +1697,16 @@ final class WinEffectController implements Listener {
             return world.spawn(mouth, Fireball.class);
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    /** Wither skull for the win wither's left-click shot (big blast, no fire); falls back to a fireball. */
+    private static Fireball spawnWinWitherSkull(World world, Location mouth) {
+        if (world == null || mouth == null) return null;
+        try {
+            return world.spawn(mouth, org.bukkit.entity.WitherSkull.class);
+        } catch (Throwable t) {
+            return spawnWinDragonFireball(world, mouth);
         }
     }
 
@@ -1175,6 +1790,17 @@ final class WinEffectController implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onWinDragonPortal(org.bukkit.event.entity.EntityCreatePortalEvent event) {
+        if (event.getEntity() != null && event.getEntity().hasMetadata(META_WIN_DRAGON)) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * Win mounts never acquire targets: the wither's AI would otherwise shoot skulls at players on servers
+     * where noAI is unavailable (1.8). Belt-and-braces for 1.9+ where noAI already prevents this.
+     */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onWinMountTarget(org.bukkit.event.entity.EntityTargetEvent event) {
         if (event.getEntity() != null && event.getEntity().hasMetadata(META_WIN_DRAGON)) {
             event.setCancelled(true);
         }

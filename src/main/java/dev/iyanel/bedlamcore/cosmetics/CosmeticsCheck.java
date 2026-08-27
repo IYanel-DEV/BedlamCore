@@ -73,8 +73,9 @@ public final class CosmeticsCheck {
         assertContains(winIds, "we_meteor");
         assertContains(winIds, "we_anvil");
         assertContains(winIds, "we_dragon");
+        assertContains(winIds, "we_wither");
         assertContains(winIds, "we_rainbow");
-        assertEquals(19, winIds.length);
+        assertEquals(20, winIds.length);
 
         assertEquals(CosmeticsService.CAT_WOOD_SKIN, CosmeticsService.normalizeCategory("Wood Skins"));
         assertEquals(CosmeticsService.CAT_FINAL_KILL_EFFECT, CosmeticsService.normalizeCategory("Final Kill Effects"));

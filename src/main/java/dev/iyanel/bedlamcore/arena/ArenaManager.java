@@ -229,6 +229,7 @@ public final class ArenaManager {
         clearArenaItems();
         displays.clearWildMobs();
         displays.purgeStrayArmorStands();
+        displays.applyShopSkins(); // teams are assigned now → skin shop NPCs per each team's Shopkeeper Skins cosmetic
         for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
             Player player = Bukkit.getPlayer(entry.getKey());
             if (player != null) {
@@ -608,6 +609,13 @@ public final class ArenaManager {
     public void applySoftSpectate(Player player) { softSpectate.applySoftSpectate(player); }
 
     public void afterRespawn(Player player) { softSpectate.afterRespawn(player); }
+
+    /** On death/respawn the client drops all fake packet-player NPCs (they are client-side only). Forget the
+     *  player from every shopkeeper-skin model so the display tick re-shows them — otherwise the skinned
+     *  shopkeeper stays invisible after a respawn. */
+    public void forgetShopViewers(Player player) {
+        displays.forgetViewer(player);
+    }
 
     private void checkWinner() {
         if (arena.state() != Arena.State.RUNNING) return;

@@ -4,7 +4,7 @@
 
 Independent project by [IYanel-DEV](https://github.com/IYanel-DEV). Not affiliated with Hypixel, Mojang, or Microsoft. Ships no third-party server code, maps, or branding.
 
-Current line: **0.10.41** · [Releases](https://github.com/IYanel-DEV/BedlamCore/releases) · [Repository](https://github.com/IYanel-DEV/BedlamCore)
+Current line: **0.10.79** · [Releases](https://github.com/IYanel-DEV/BedlamCore/releases) · [Repository](https://github.com/IYanel-DEV/BedlamCore)
 
 ---
 
@@ -58,7 +58,8 @@ More stills in [`docs/showcase/`](docs/showcase/): cosmetics shop, stats GUI, pl
 
 | Area | What you get |
 |------|----------------|
-| **Lobby** | Solo / Doubles queue NPCs (Citizens or built-in fallback), profile NPC + statistics GUI, cosmetics NPC (token shop), lobby scoreboard (level / tokens / kills / wins) |
+| **Lobby** | Solo / Doubles queue NPCs, profile NPC + statistics GUI, cosmetics NPC (token shop), lobby scoreboard (level / tokens / kills / wins) — all on BedlamCore's own built-in packet NPC system |
+| **NPCs** | Citizens-free fake players — real player models with skins, look-at rotation and arm-swing, no **Citizens** plugin required |
 | **Setup** | Compass-driven Lobby Setup and Game World Setup — drafts, Apply / Cancel, no command maze |
 | **Arenas** | Multi-world Solo & Doubles; waiting structure (`/bc spawnbuild`); spectator spawn; teams, beds, forges, shops, chests, gens |
 | **Templates** | Bundled map template **bedwars-e2560**; Import Maps flow for folder worlds |
@@ -73,7 +74,30 @@ More stills in [`docs/showcase/`](docs/showcase/): cosmetics shop, stats GUI, pl
 
 - **Java 8+** runtime on the server (bytecode is Java 8; build with a modern JDK + Gradle toolchain)
 - **Spigot / Paper 1.8.8 → 26.2** (one jar)
-- Optional: **Citizens** for real fake-player queue NPCs (armor-stand / mob fallback otherwise)
+- **No extra plugins required.** BedlamCore now ships its own **Citizens-free packet NPC system** — real fake-player models with skins and look-at for the queue, profile, cosmetics and in-match shopkeeper NPCs. The **Citizens** plugin is **no longer needed** (installing it is optional).
+
+---
+
+## What's New (since v0.10.37)
+
+### Cosmetics — new shop categories (live, not "Coming Soon")
+- **Shopkeeper Skins** — reskin your team's in-match shop NPCs (ITEM SHOP + TEAM UPGRADES) with real player skins. Team-shared: item-shop NPC = 1st teammate's skin, upgrades NPC = 2nd (solo → same). 50 skins.
+- **Projectile Trails** — equipped trail particles trail your arrows / eggs / fireballs for up to 5s.
+- **Bed Destroys** — fire an equipped effect at the bed when it's destroyed (explosion rings, fire column, frost/void spirals, lightning, enchant glyphs).
+- **Wood Skins** — placed planks become the equipped skin's real vanilla block variant (Hypixel-style), no resource pack.
+- **Final Kill Effects & Prestige Customizer** — new categories, now clickable/buyable (fixed shop click registration).
+
+### Rideable Win Dragon / Wither
+- **Win Dragon** is now rideable on every version (1.8 through 26.2) — fly toward look, look-up climbs / look-down dives, swept flight path carved to air, smooth relative-move streaming (no camera tweak / rubber-band).
+- **Wither win mount** fixed to fly head-first (no more backwards tail-first flight).
+- Drag-free flight on 1.8 (authoritative tracked position, no AI-drift).
+
+### Robustness & fixes
+- Shopkeeper skins no longer vanish after you leave your island or die/respawn (re-shown correctly).
+- Lobby NPCs no longer vanish until restart; queue/profile/cosmetics alive-loops retry safely.
+- Win dragon no longer freezes on 1.12.2 (packet-relayed position).
+- 1.8 GUI desync, Bridge Eggs, bed-adjacent builds and more match polish.
+- Multi-version test harness (1.8.8 / 1.12.2 / 1.16.5 / 1.20.4 / 26.2).
 
 ---
 

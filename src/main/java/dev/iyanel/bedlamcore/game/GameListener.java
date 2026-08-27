@@ -424,13 +424,16 @@ public final class GameListener implements Listener {
             event.setCancelled(true);
             return;
         }
+        boolean adminSneak = event.getPlayer().isSneaking() && plugin.isAdmin(event.getPlayer());
         if (plugin.npcs().isCosmetics(clicked)) {
             event.setCancelled(true);
-            plugin.gui().openCosmetics(event.getPlayer());
+            if (adminSneak) plugin.gui().openSpecialNpcEditor(event.getPlayer(), "COSMETICS");
+            else plugin.gui().openCosmetics(event.getPlayer());
             return;
         }
         if (plugin.npcs().isProfile(clicked)) {
             event.setCancelled(true);
+            if (adminSneak) { plugin.gui().openSpecialNpcEditor(event.getPlayer(), "PROFILE"); return; }
             UUID owner = plugin.npcs().profileOwner(clicked);
             if (owner == null || owner.equals(event.getPlayer().getUniqueId())) {
                 plugin.gui().openProfileStats(event.getPlayer());
@@ -440,7 +443,10 @@ public final class GameListener implements Listener {
         GameType mode = plugin.npcs().mode(clicked);
         if (mode != null) {
             event.setCancelled(true);
-            plugin.gui().openQueue(event.getPlayer(), mode);
+            // Admin config editor on shift-right-click. Left-click can't be used: the body is
+            // setInvulnerable(true) (freeze), so an attack fires no EntityDamageByEntityEvent.
+            if (event.getPlayer().isSneaking() && plugin.isAdmin(event.getPlayer())) plugin.gui().openNpcEditor(event.getPlayer(), mode);
+            else plugin.gui().openQueue(event.getPlayer(), mode);
             return;
         }
         ArenaManager manager = plugin.games().arenaInWorld(clicked.getWorld().getName());
@@ -543,12 +549,27 @@ public final class GameListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onNpcHit(EntityDamageByEntityEvent event) {
-        GameType mode = plugin.npcs().mode(event.getEntity());
-        if (mode == null || !(event.getDamager() instanceof Player)) return;
+        if (!(event.getDamager() instanceof Player)) return;
+        Entity body = event.getEntity();
+        GameType mode = plugin.npcs().mode(body);
+        boolean cosmetics = plugin.npcs().isCosmetics(body);
+        boolean profile = plugin.npcs().isProfile(body);
+        if (mode == null && !cosmetics && !profile) return;
         event.setCancelled(true);
         Player player = (Player) event.getDamager();
-        if (player.isSneaking() && plugin.isAdmin(player)) plugin.gui().openNpcEditor(player, mode);
-        else plugin.gui().openQueue(player, mode);
+        boolean adminSneak = player.isSneaking() && plugin.isAdmin(player);
+        if (mode != null) { if (adminSneak) plugin.gui().openNpcEditor(player, mode); else plugin.gui().openQueue(player, mode); }
+        else if (cosmetics) { if (adminSneak) plugin.gui().openSpecialNpcEditor(player, "COSMETICS"); else plugin.gui().openCosmetics(player); }
+        else { if (adminSneak) plugin.gui().openSpecialNpcEditor(player, "PROFILE"); else plugin.gui().openProfileStats(player); }
+    }
+
+    /** NPC bodies (queue/cosmetics/profile) are left hittable (so left-click opens the GUI) — cancel every
+     *  non-attack damage cause (fire/void/suffocation) so they can never actually die. Attacks: onNpcHit. */
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onQueueNpcDamage(EntityDamageEvent event) {
+        if (event instanceof EntityDamageByEntityEvent) return;
+        Entity body = event.getEntity();
+        if (plugin.npcs().mode(body) != null || plugin.npcs().isCosmetics(body) || plugin.npcs().isProfile(body)) event.setCancelled(true);
     }
 
     @EventHandler public void onNpcTarget(EntityTargetEvent event) {
@@ -958,6 +979,10 @@ public final class GameListener implements Listener {
         }
         event.setRespawnLocation(manager.respawnLocation(event.getPlayer()));
         final Player player = event.getPlayer();
+        // Respawn resets the client's entity view — drop the player from every shopkeeper-skin model so the
+        // display tick re-shows them (skinned shopkeepers otherwise vanish after death; real villagers re-sent
+        // by the server are unaffected).
+        manager.forgetShopViewers(player);
         Bukkit.getScheduler().runTask(plugin, new Runnable() { @Override public void run() { manager.afterRespawn(player); } });
     }
 
@@ -1102,11 +1127,13 @@ public final class GameListener implements Listener {
             || clean.equals("Import Maps") || clean.equals("Import As")
             || clean.equals("Templates") || clean.equals("Template Mode")
             || clean.equals("World Actions") || clean.equals("Confirm World Delete") || clean.equals("Game Setup") || clean.equals("Team Setup")
-            || clean.equals("NPC Editor") || clean.equals("Solo Games") || clean.equals("Doubles Games") || clean.equals("Item Shop")
+            || clean.equals("NPC Editor") || clean.equals("Skin Presets") || clean.equals("Cosmetics NPC") || clean.equals("Profile NPC")
+            || clean.equals("Solo Games") || clean.equals("Doubles Games") || clean.equals("Item Shop")
             || clean.equals("Quick Buy") || clean.equals("Team Upgrades") || clean.equals("Upgrades & Traps") || clean.equals("Spectate")
             || clean.equals("Cosmetics") || clean.equals("My Cosmetics")
             || clean.equals("Kill Messages") || clean.equals("Kill Effects") || clean.equals("Win Effects")
             || clean.equals("Wood Skins") || clean.equals("Final Kill Effects") || clean.equals("Prestige Customizer")
+            || clean.equals("Bed Destroys") || clean.equals("Projectile Trails") || clean.equals("Shopkeeper Skins")
             || clean.equals("Bed Wars Statistics")
             || clean.startsWith("Play Bed Wars ") || clean.startsWith("Map Selector ");
     }

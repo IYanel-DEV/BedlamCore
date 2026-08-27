@@ -1,6 +1,7 @@
 package dev.iyanel.bedlamcore.arena;
 
 import dev.iyanel.bedlamcore.compat.EntityVisibility;
+import dev.iyanel.bedlamcore.compat.PacketNpcs;
 import dev.iyanel.bedlamcore.game.GameRules;
 import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.util.Locations;
@@ -12,10 +13,13 @@ import org.bukkit.World;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Monster;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.metadata.FixedMetadataValue;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayList;
@@ -31,6 +35,10 @@ final class ArenaDisplayService {
     private final Map<UUID, Location> displayPins = new HashMap<UUID, Location>();
     private final Map<UUID, Boolean> displayHolograms = new HashMap<UUID, Boolean>();
     private final Map<UUID, String> generatorKinds = new HashMap<UUID, String>();
+    /** Shopkeeper-skin packet models per shop-villager uuid (team-shared, one skin each). */
+    private final Map<UUID, PacketNpcs.Model> shopModels = new HashMap<UUID, PacketNpcs.Model>();
+    /** Shop villagers whose skin is still downloading — retried from the display loop once cached. */
+    private final Map<UUID, String> shopSkinPending = new HashMap<UUID, String>();
     private int displayTask = -1;
     private int visibilityTick;
 
@@ -39,6 +47,17 @@ final class ArenaDisplayService {
     }
 
     boolean owns(UUID uuid) { return displays.containsKey(uuid); }
+
+    /** Drop a viewer from every shop skin model's shown set (death/respawn). A fake-player NPC is client-side
+     *  only and not tracked by the server entity tracker, so a respawning/teleporting client drops the fake
+     *  entity regardless of distance. Forgetting lets ensureViewers re-show it on the next tick — otherwise the
+     *  skinned shopkeeper stays invisible after the player dies and respawns (real villager shopkeepers are
+     *  unaffected; the server re-sends real entities automatically). */
+    void forgetViewer(Player viewer) {
+        if (viewer == null) return;
+        UUID id = viewer.getUniqueId();
+        for (PacketNpcs.Model model : shopModels.values()) model.forget(id);
+    }
 
     String shop(Entity entity) {
         if (!entity.hasMetadata("bedlamShop") || entity.getMetadata("bedlamShop").isEmpty()) return null;
@@ -53,8 +72,8 @@ final class ArenaDisplayService {
         purgeStrayArmorStands();
         Arena arena = manager.arena();
         for (TeamColor team : arena.settings().configuredTeams()) {
-            spawnShop(arena.settings().team(team).itemShop(), "ITEM", ChatColor.GREEN + "ITEM SHOP");
-            spawnShop(arena.settings().team(team).upgradeShop(), "UPGRADE", ChatColor.AQUA + "TEAM UPGRADES");
+            spawnShop(arena.settings().team(team).itemShop(), "ITEM", ChatColor.GREEN + "ITEM SHOP", team);
+            spawnShop(arena.settings().team(team).upgradeShop(), "UPGRADE", ChatColor.AQUA + "TEAM UPGRADES", team);
         }
         for (Location location : arena.settings().diamondGenerators()) spawnGeneratorDisplay(location, Material.DIAMOND_BLOCK, "diamond");
         for (Location location : arena.settings().emeraldGenerators()) spawnGeneratorDisplay(location, Material.EMERALD_BLOCK, "emerald");
@@ -68,6 +87,9 @@ final class ArenaDisplayService {
                     if (entity.getVelocity().lengthSquared() > 0.0001) entity.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
                     if (entity.hasMetadata("bedlamGeneratorDisplay")) pin.setYaw(pin.getYaw() + 3F);
                     if (entity.getLocation().distanceSquared(pin) > 0.0001 || entity.hasMetadata("bedlamGeneratorDisplay")) entity.teleport(pin);
+                    // Shop villagers: smooth per-tick look-at toward the nearest player (kills the jerky vanilla
+                    // head-track). Skinned shops drive their packet model; plain villagers get real look packets.
+                    if (entity.hasMetadata("bedlamShop")) tickShop(entry.getKey(), entity, pin);
                 }
                 if (++visibilityTick % GameRules.DISPLAY_VISIBILITY_INTERVAL == 0) updateDisplayVisibility();
             }
@@ -77,6 +99,9 @@ final class ArenaDisplayService {
     void clear() {
         if (displayTask != -1) Bukkit.getScheduler().cancelTask(displayTask);
         displayTask = -1;
+        for (PacketNpcs.Model model : shopModels.values()) PacketNpcs.destroy(model);
+        shopModels.clear();
+        shopSkinPending.clear();
         for (Entity entity : displays.values()) if (entity != null) entity.remove();
         displays.clear();
         displayPins.clear();
@@ -136,20 +161,89 @@ final class ArenaDisplayService {
         }
     }
 
-    private void spawnShop(Location location, String kind, String name) {
+    private void spawnShop(Location location, String kind, String name, TeamColor team) {
         if (location == null || location.getWorld() == null) return;
         Location pin = location.getBlock().getLocation().add(0.5, 0.0, 0.5);
         pin.setYaw(location.getYaw());
         pin.setPitch(0F);
         Entity villager = location.getWorld().spawnEntity(pin, EntityType.VILLAGER);
         villager.setMetadata("bedlamShop", new FixedMetadataValue(manager.plugin(), kind));
+        villager.setMetadata("bedlamShopTeam", new FixedMetadataValue(manager.plugin(), team.name()));
         // Holograms carry the label; hide vanilla nametag when looking at the villager.
         villager.setCustomName(" ");
         villager.setCustomNameVisible(false);
         LobbyNpcService.freeze(villager, false);
         pin(villager, pin, false);
+        // Shopkeeper Skins are applied at match start (applyShopSkins) — teams aren't assigned yet during WAITING.
         spawnHologram(pin.clone().add(0, GameRules.labelY(GameRules.NPC_HOLO_TOP, 0), 0), name);
         spawnHologram(pin.clone().add(0, GameRules.labelY(GameRules.NPC_HOLO_TOP, 1), 0), ChatColor.YELLOW + "Right Click");
+    }
+
+    /** Called at match start (teams now assigned): skin each shop villager per its team's equipped shopkeeper
+     *  skins. Item-shop NPC = 1st member's skin, upgrades = 2nd (solo → same). Null → plain villager. */
+    void applyShopSkins() {
+        for (Map.Entry<UUID, Entity> entry : new HashMap<UUID, Entity>(displays).entrySet()) {
+            Entity entity = entry.getValue();
+            if (entity == null || !entity.hasMetadata("bedlamShop")) continue;
+            if (shopModels.containsKey(entry.getKey()) || shopSkinPending.containsKey(entry.getKey())) continue;
+            TeamColor team = shopTeam(entity);
+            if (team == null) continue;
+            String kind = entity.getMetadata("bedlamShop").get(0).asString();
+            String skin = manager.plugin().cosmetics().shopkeeperSkin(manager.arena(), team, "UPGRADE".equals(kind));
+            Location pin = displayPins.get(entry.getKey());
+            if (skin != null && pin != null) attachShopSkin(entity, skin, pin);
+        }
+    }
+
+    private TeamColor shopTeam(Entity entity) {
+        if (!entity.hasMetadata("bedlamShopTeam") || entity.getMetadata("bedlamShopTeam").isEmpty()) return null;
+        try {
+            return TeamColor.valueOf(entity.getMetadata("bedlamShopTeam").get(0).asString());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** Hide the villager body (invisible click hitbox) and render a packet fake-player with the skin on top.
+     *  When the skin is still downloading, record it for a retry from the display loop. */
+    private void attachShopSkin(Entity villager, String skinKey, Location pin) {
+        if (villager instanceof LivingEntity) {
+            try {
+                ((LivingEntity) villager).addPotionEffect(new PotionEffect(
+                    PotionEffectType.INVISIBILITY, Integer.MAX_VALUE, 0, false, false), true);
+            } catch (Throwable ignored) { }
+        }
+        PacketNpcs.fetchSkin(manager.plugin(), skinKey, false);
+        Object profile = PacketNpcs.cachedProfile(skinKey, false);
+        if (profile == null) { shopSkinPending.put(villager.getUniqueId(), skinKey); return; }
+        PacketNpcs.Model model = PacketNpcs.create(manager.plugin(), pin, "NPC", profile);
+        if (model != null) {
+            shopModels.put(villager.getUniqueId(), model);
+            PacketNpcs.ensureViewers(model, 48.0);
+        }
+    }
+
+    /** Per-tick shop NPC upkeep: face the nearest player. Skinned shops drive their packet model (and retry the
+     *  attach once the async skin lands); plain villagers get real look packets so the client actually sees the turn. */
+    private void tickShop(UUID id, Entity entity, Location pin) {
+        float[] look = LobbyNpcService.faceNearestPlayerInRange(entity, pin);
+        float yaw = look != null ? look[0] : pin.getYaw();
+        float pitch = look != null ? look[1] : pin.getPitch();
+        PacketNpcs.Model model = shopModels.get(id);
+        if (model == null) {
+            String pending = shopSkinPending.get(id);
+            if (pending != null && PacketNpcs.cachedProfile(pending, false) != null) {
+                attachShopSkin(entity, pending, pin);
+                shopSkinPending.remove(id);
+                model = shopModels.get(id);
+            }
+        }
+        if (model != null) {
+            PacketNpcs.look(model, yaw, pitch);
+            if (visibilityTick % 20 == 0) PacketNpcs.ensureViewers(model, 48.0);
+        } else {
+            PacketNpcs.lookEntity(entity, yaw, pitch);
+        }
     }
 
     private void spawnGeneratorDisplay(Location location, Material block, String kind) {
