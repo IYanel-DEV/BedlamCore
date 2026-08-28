@@ -1,195 +1,236 @@
-# BedlamCore
+[CENTER][COLOR=#C0392B][B]⚠ BETA — report any errors[/B][/COLOR]
+This plugin is in active [B]beta[/B]. Every release is tested on Spigot/Paper 1.8.8 through 26.2, but you may still hit rough edges. Found a bug or got an error? Please report it on [URL='https://github.com/IYanel-DEV/BedlamCore/issues']GitHub Issues[/URL] so it gets fixed fast.[/CENTER]
 
-**Bed Wars that feels finished — GUI-first setup, one jar from Spigot 1.8.8 to Paper 26.2.**
+[CENTER]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/banner-bedlamcore.jpg[/IMG]
 
-Author: **IYanel-DEV** · Current line: **0.10.39**  
+[SIZE=6][B][COLOR=#9B59B6]BedlamCore[/COLOR][/B][/SIZE]
+[SIZE=4][I]Bed Wars that feels finished[/I][/SIZE]
+
+[B]GUI-first setup · Solo & Doubles · One jar · Spigot 1.8.8 → Paper 26.2[/B]
+
+Author: [URL='https://github.com/IYanel-DEV']IYanel-DEV[/URL] · Current: [B]v0.10.91[/B]
+[URL='https://github.com/IYanel-DEV/BedlamCore']GitHub[/URL] · [URL='https://github.com/IYanel-DEV/BedlamCore/releases']Download jar[/URL]
+
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/logo-bedlamcore-spigot.png[/IMG]
+[/CENTER]
+
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR]
+[SIZE=5][B]Purple bed. Real matches. Compass setup.[/B][/SIZE]
+[COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+
+[B]BedlamCore[/B] is a GUI-first Bed Wars engine for Spigot and Paper.
+
+Lobby and arenas are configured with a [B]hotbar compass[/B] — drafts, Apply, Cancel — not a command maze. Players queue on [B]Solo / Doubles NPCs[/B], earn [B]tokens / XP / levels[/B], buy [B]cosmetics[/B], and play the full loop: waiting structure → forge & gens → Quick Buy → upgrades & traps → beds → [B]soft spectate[/B] → victory → Play Again.
+
+Bundled map template: [B]bedwars-e2560[/B]. Import your own folder worlds too.
+
+[B]One jar.[/B] Spigot [B]1.8.8[/B] through Paper [B]26.2[/B].
+
 Independent project. Not affiliated with Hypixel, Mojang, or Microsoft.
 
----
+[CENTER]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/banner-bedlamcore-features.jpg[/IMG]
+[/CENTER]
 
-## Upload these images (SpigotMC)
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+[SIZE=5][B][COLOR=#9B59B6]◆ What's new[/COLOR][/B][/SIZE]
 
-### Resource icon (required size)
+[SIZE=4][B]v0.10.91[/B][/SIZE]
+[LIST]
+[*][B]SQLite / MySQL storage[/B] — keep stats in a database instead of [ICODE]stats.yml[/ICODE] (drivers bundled); share one MySQL across servers; migrate with [ICODE]/bc storage migrate[/ICODE]. YAML stays the default and byte-identical
+[*][B]PlaceholderAPI[/B] — [ICODE]%bedlamcore_*%[/ICODE] placeholders for tab, scoreboards & holograms (tokens, level, KDR/FKDR, per-mode stats, prestige, live player counts). Optional soft dependency
+[*][B]Prestige in lobby chat[/B] — your equipped Prestige colours your chat name, not just the tab list ([ICODE]chat.prestige-in-lobby[/ICODE])
+[*][B]Fix[/B] — Party / Party Invite menus no longer let you pull the buttons out of the GUI
+[/LIST]
 
-| File | Role |
-|------|------|
-| `docs/spigotmc/icon-96.png` | **Upload resource icon** — exactly **96×96** (also `docs/brand/spigotmc-icon-96.png`) |
+[SIZE=4][B]Since v0.10.37[/B][/SIZE]
+[LIST]
+[*][B]3v3v3v3 Trios & 4v4v4v4 Quads[/B] — new game modes: queue NPCs, quick join / browse, import & templates, per-mode stats and leaderboard tabs
+[*][B]Party system[/B] — invite friends with [ICODE]/party[/ICODE], queue together onto the same team (works via the built-in provider, or bridge BungeeParties / Party and Friends)
+[*][B]Leaderboards[/B] — Hypixel-style floating lobby board + [ICODE]/leaderboard[/ICODE] GUI / chat rankings with per-mode tabs
+[*][B]Reconnect grace[/B] — keep your bed and team slot reserved for 60s after a disconnect; rejoin with [ICODE]/rejoin[/ICODE]
+[*][B]Bundled "Chained" map[/B] — a 4-island template, playable only as Trios (4×3) or Quads (4×4)
+[*][B]Refreshed waiting spawn building[/B] — new default build, now pixel-identical on 1.8 and 1.13+ (stair/slab facing + fence connections fixed)
+[*][B]Citizens-free NPCs[/B] — queue NPCs use the built-in system; Citizens optional
+[*][B]New cosmetics[/B] — Wood Skins, Final Kill Effects, Prestige, Projectile Trails, Bed Destroys; rideable win Dragon & Wither
+[*]Stability fixes for Paper 1.21+/26.2, cosmetics shop pagination, and the whole match loop
+[/LIST]
 
-Do not use `logo-bedlamcore-purple-bed.png` or other full-res logos as the resource icon — Spigot rejects non-96×96 icons.
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+[SIZE=5][B][COLOR=#9B59B6]◆ Features[/COLOR][/B][/SIZE]
 
-### Gallery / description body
+[SIZE=4][B]Lobby[/B][/SIZE]
+[LIST]
+[*]Solo & Doubles [B]queue NPCs[/B] (Citizens, or built-in armor-stand / mob fallback)
+[*][B]Profile NPC[/B] + statistics GUI
+[*][B]Cosmetics NPC[/B] — token shop (kill-message packs and more)
+[*]Lobby [B]scoreboard[/B] — level / tokens / kills / wins
+[*]Configurable footer ([ICODE]play.bedlam[/ICODE])
+[/LIST]
 
-`DESCRIPTION.bbcode` already embeds GitHub raw URLs for compressed files under `docs/spigotmc/images/` — paste BBCode as-is (no Spigot gallery upload required). Full-res sources stay in `docs/brand/` and `docs/showcase/`.
+[SIZE=4][B]Setup[/B][/SIZE]
+[LIST]
+[*]Compass-driven [B]Lobby Setup[/B] and [B]Game World Setup[/B]
+[*]Transactional drafts — [B]Apply[/B] saves, [B]Cancel[/B] discards
+[*]Waiting structure via [ICODE]/bc spawnbuild[/ICODE] (two-click golden axe)
+[*]Spectator spawn, teams, beds, forges, shops, chests, diamond/emerald gens
+[*][B]Build border[/B] from waiting + spectator midpoint (setup outline; match builds stay inside)
+[/LIST]
 
-| # | File (`docs/spigotmc/images/`) | Role |
-|---|------|------|
-| 1 | `banner-bedlamcore.jpg` | Hero banner |
-| 2 | `logo-bedlamcore-spigot.png` | Logo (compressed 512×512) |
-| 3 | `banner-bedlamcore-features.jpg` | Features strip |
-| 4 | `lobby.png` | Lobby + profile hologram |
-| 5 | `queue-npcs.png` | Solo / Doubles queue NPCs |
-| 6 | `cosmetics.png` | Cosmetics NPC |
-| 7 | `profile.png` | Profile NPC hologram |
-| 8 | `setup.png` | Bedlam Setup compass GUI |
-| 9 | `game-worlds.png` | Game Worlds + bedwars-e2560 |
-| 10 | `templates.png` | Bundled map templates |
-| 11 | `waiting.png` | Waiting structure |
-| 12 | `team-island.png` | Team island |
-| 13 | `forge.png` | Team forge |
-| 14 | `diamond-gen.png` | Diamond generator |
-| 15 | `emerald-gen.png` | Emerald generator |
-| 16 | `quick-buy.png` | Item Shop Quick Buy |
-| 17 | `upgrades.png` | Upgrades & Traps |
-| 18 | `punch-deposit.png` | Punch-to-deposit |
-| 19 | `victory.png` | Victory / Play Again |
-| 20 | `cosmetics-shop.png` | Cosmetics shop (optional) |
-| 21 | `stats.png` | Stats GUI (optional) |
-| 22 | `play-menu.png` | Play menu (optional) |
-| 23 | `shops.png` | Shop NPCs (optional) |
+[SIZE=4][B]Arenas & templates[/B][/SIZE]
+[LIST]
+[*]Multi-world [B]Solo[/B] and [B]Doubles[/B]
+[*]Bundled template [B]bedwars-e2560[/B]
+[*][B]Import Maps[/B] for folder worlds
+[*]Pristine world snapshots between matches · crash-safe YAML / world replace
+[/LIST]
 
----
+[SIZE=4][B]Match[/B][/SIZE]
+[LIST]
+[*]Item Shop [B]Quick Buy[/B] (Blocks / Melee / Armor / Tools / Ranged / Potions / Utility)
+[*][B]Upgrades & Traps[/B] GUI
+[*]Team forge share · diamond & emerald [B]tier[/B] gens
+[*]Bridge Egg · Dream Defender
+[*]Punch-to-deposit [B]team chests[/B]
+[*][B]Soft spectate[/B] — adventure + flight + invis (not SPECTATOR gamemode)
+[*]Match rewards · win effects / dragon · Play Again
+[/LIST]
 
-## Tagline
+[SIZE=4][B]Economy & data[/B][/SIZE]
+[LIST]
+[*]Tokens / XP / levels — stored in [ICODE]stats.yml[/ICODE], [B]SQLite[/B] or [B]MySQL[/B] ([ICODE]storage.backend[/ICODE]; drivers bundled)
+[*][B]PlaceholderAPI[/B] [ICODE]%bedlamcore_*%[/ICODE] expansion (optional)
+[*]Admin: [ICODE]/bc token add[/ICODE] · [ICODE]/bc xp add[/ICODE] · [ICODE]/bc storage migrate[/ICODE]
+[/LIST]
 
-Purple-bed Bed Wars. Compass setup. Lobby NPCs. Real matches. One jar.
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+[SIZE=5][B][COLOR=#9B59B6]◆ Screenshots[/COLOR][/B][/SIZE]
 
----
+[CENTER]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/lobby.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/queue-npcs.png[/IMG]
 
-## Overview
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/cosmetics.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/profile.png[/IMG]
 
-BedlamCore is a **GUI-first Bed Wars engine** for Spigot and Paper.
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/setup.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/game-worlds.png[/IMG]
 
-You set up the lobby and arenas with a **hotbar compass** — drafts, Apply, Cancel — not a command maze. Players queue through **Solo / Doubles NPCs**, earn **tokens / XP / levels**, buy **cosmetics**, and play a full loop: waiting structure → forge & gens → Quick Buy shop → upgrades & traps → beds → **soft spectate** → victory rewards → Play Again.
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/templates.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/waiting.png[/IMG]
 
-Bundled map template: **bedwars-e2560**. Import your own folder worlds too.
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/team-island.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/forge.png[/IMG]
 
-**One jar.** Spigot **1.8.8** through Paper **26.2**.
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/diamond-gen.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/emerald-gen.png[/IMG]
 
----
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/quick-buy.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/upgrades.png[/IMG]
 
-## Features
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/punch-deposit.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/victory.png[/IMG]
+[/CENTER]
 
-### Lobby
-- Solo & Doubles **queue NPCs** (Citizens, or built-in armor-stand / mob fallback)
-- **Profile NPC** + statistics GUI
-- **Cosmetics NPC** (token shop — kill-message packs and more)
-- Lobby **scoreboard** (level / tokens / kills / wins)
-- Configurable scoreboard footer (`play.bedlam`)
+[SPOILER="More stills (optional)"]
+[CENTER]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/cosmetics-shop.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/stats.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/play-menu.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/shops.png[/IMG]
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/logo-bedlamcore-spigot.png[/IMG]
+[/CENTER]
+[/SPOILER]
 
-### Setup
-- Compass-driven **Lobby Setup** and **Game World Setup**
-- Transactional drafts — **Apply** saves, **Cancel** discards
-- Waiting structure via `/bc spawnbuild` (two-click golden axe)
-- Spectator spawn, teams, beds, forges, shops, chests, diamond/emerald gens
-- **Build border** radius from waiting + spectator midpoint (outline in setup; match builds stay inside)
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+[SIZE=5][B][COLOR=#9B59B6]◆ Installation[/COLOR][/B][/SIZE]
+[LIST=1]
+[*]Download [B]BedlamCore-0.10.91.jar[/B] from [URL='https://github.com/IYanel-DEV/BedlamCore/releases']GitHub Releases[/URL]
+[*]Drop into [ICODE]plugins/[/ICODE] and restart
+[*]Join as op — hotbar [B]Bedlam Setup[/B] compass opens Lobby Setup (lobby) or that world’s arena draft (game world)
+[*]Finish Lobby Setup (spawn + NPCs), then create or import game worlds — [B]Apply[/B] saves, [B]Cancel[/B] discards
+[*]Players join via queue NPCs (or [ICODE]/bedlam[/ICODE] fallbacks). Ops: [ICODE]/bedlam forcestart[/ICODE] in a waiting arena for solo testing
+[/LIST]
 
-### Arenas & templates
-- Multi-world **Solo** and **Doubles**
-- Bundled template **bedwars-e2560**
-- **Import Maps** for folder worlds
-- Pristine world snapshots between matches; crash-safe YAML / world replace
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+[SIZE=5][B][COLOR=#9B59B6]◆ Quick setup[/COLOR][/B][/SIZE]
 
-### Match
-- Item Shop **Quick Buy** (Blocks / Melee / Armor / Tools / Ranged / Potions / Utility)
-- **Upgrades & Traps** GUI
-- Team forge share, diamond & emerald **tier** gens
-- Bridge Egg, Dream Defender
-- Punch-to-deposit **team chests**
-- **Soft spectate** — adventure + flight + invis (not `SPECTATOR` gamemode)
-- Match rewards, win effects / dragon presentation, Play Again
+[SPOILER="Lobby setup"]
+[LIST=1]
+[*]Op in lobby → open the [B]compass[/B]
+[*][B]Lobby Setup[/B] → set network spawn
+[*]Place [B]Solo[/B] and [B]Doubles[/B] queue NPCs (placer → place; shift-click edits mob/skin/look-at)
+[*]Optional: Profile + Cosmetics NPCs
+[*][B]Apply[/B]
+[/LIST]
+[/SPOILER]
 
-### Economy & persistence
-- Tokens / XP / levels in `stats.yml`
-- Admin: `/bc token add`, `/bc xp add`
-- Inventory cleared on leave; ender chests do not persist across matches
+[SPOILER="Game world / templates / border"]
+[LIST=1]
+[*]Compass → [B]Game World Setup[/B] → create Solo/Doubles void world, or [B]Templates[/B] / [B]Import Map[/B]
+[*]Set waiting spawn, spectator, teams, beds, forges, shops, chests, gens
+[*][ICODE]/bc spawnbuild[/ICODE] — waiting cuboid (glass ≠ valid corner; diamond block = relative spawn anchor)
+[*]Set [B]build border[/B] radius once waiting + spectator exist (default [B]64[/B])
+[*][B]Apply[/B] — waiting paste stripped, pristine snapshot taken, back to lobby
+[/LIST]
+Bundled showcase map: [B]bedwars-e2560[/B].
+[/SPOILER]
 
----
-
-## Installation
-
-1. Download `BedlamCore-0.10.39.jar` from [GitHub Releases](https://github.com/IYanel-DEV/BedlamCore/releases).
-2. Drop it in `plugins/` and restart.
-3. Join as an operator — hotbar **Bedlam Setup** compass opens Lobby Setup (lobby) or that world’s arena draft (game world).
-4. Finish Lobby Setup (spawn + NPCs), then create or import game worlds. **Apply** saves; **Cancel** discards.
-5. Players join via queue NPCs (or `/bedlam` fallbacks). Ops: `/bedlam forcestart` in a waiting arena for solo testing.
-
----
-
-## Basic setup tutorial
-
-### Lobby
-1. Op in the lobby → open the **compass**.
-2. **Lobby Setup** → set network spawn.
-3. Place **Solo** and **Doubles** queue NPCs (placer item → place; shift-click edits mob/skin/look-at).
-4. Optional: **Profile** and **Cosmetics** NPCs.
-5. **Apply**.
-
-### Game world / template
-1. Compass → **Game World Setup** → create Solo or Doubles void world, or open **Templates** / **Import Map**.
-2. Teleport into the arena. Set waiting spawn, spectator, teams, beds, forges, shops, chests, gens.
-3. `/bc spawnbuild` — waiting cuboid (glass is not a valid corner; one diamond block = relative spawn anchor).
-4. Set **build border** radius once waiting + spectator exist (default **64**).
-5. **Apply** — waiting paste stripped, world saved, pristine snapshot taken, back to lobby.
-
-Showcase waiting / island shots use the bundled **bedwars-e2560** template.
-
-### Match flow
+[SPOILER="Match flow"]
 Queue NPC → waiting + countdown → team spawn → forge / shop / upgrades → beds → soft spectate on final death → victory → Play Again / lobby.
 
----
+Inventory cleared on leave. Ender chests do not persist across matches.
+[/SPOILER]
 
-## Commands
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+[SIZE=5][B][COLOR=#9B59B6]◆ Commands[/COLOR][/B][/SIZE]
+[LIST]
+[*][ICODE]/bedlam[/ICODE] ([ICODE]/bc[/ICODE]) — [ICODE]menu[/ICODE] · [ICODE]solo[/ICODE] · [ICODE]doubles[/ICODE] · [ICODE]leave[/ICODE] · [ICODE]spawnbuild[/ICODE] · [ICODE]forcestart[/ICODE] · [ICODE]reload[/ICODE] · [ICODE]token[/ICODE] · [ICODE]xp[/ICODE]
+[*][ICODE]/leave[/ICODE] — leave match / return to lobby
+[*][ICODE]/bc token add <player> <amount>[/ICODE] — admin tokens
+[*][ICODE]/bc xp add <player> <amount>[/ICODE] — admin XP
+[/LIST]
+Primary UX: setup compass + lobby NPCs. Commands are fallbacks and admin tools.
+Console may use [ICODE]reload[/ICODE], [ICODE]token[/ICODE], and [ICODE]xp[/ICODE].
 
-| Command | Purpose |
-|---------|---------|
-| `/bedlam` (`/bc`) | Fallback hub: `menu`, `solo`, `doubles`, `leave`, `spawnbuild`, `forcestart`, `reload`, `token`, `xp` |
-| `/leave` | Leave match / return to lobby |
+[SPOILER="Permissions"]
+[LIST]
+[*][ICODE]bedlam.admin[/ICODE] — default [B]op[/B] — configure arenas, force-start, setup (includes token/xp)
+[*][ICODE]bedlam.token.add[/ICODE] — default [B]op[/B] — [ICODE]/bc token add[/ICODE]
+[*][ICODE]bedlam.xp.add[/ICODE] — default [B]op[/B] — [ICODE]/bc xp add[/ICODE]
+[*][ICODE]bedlam.play[/ICODE] — default [B]true[/B] — join games
+[*][ICODE]bedlam.lobby.build[/ICODE] — default [B]false[/B] — break/place in lobby world
+[/LIST]
+[/SPOILER]
 
-Primary UX is the setup compass and lobby NPCs. Commands are fallbacks and admin tools.
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+[SIZE=5][B][COLOR=#9B59B6]◆ Requirements[/COLOR][/B][/SIZE]
+[LIST]
+[*][B]Java 8+[/B] runtime (Java 8 bytecode)
+[*][B]Spigot / Paper 1.8.8 → 26.2[/B] — one jar
+[*]Optional: [B]Citizens[/B] for real fake-player queue NPCs
+[*]Optional: [B]PlaceholderAPI[/B] for [ICODE]%bedlamcore_*%[/ICODE] placeholders; [B]MySQL[/B] server if you use the MySQL backend
+[/LIST]
 
-**Economy (admin):**
-- `/bc token add <player> <amount>`
-- `/bc xp add <player> <amount>`  
-Console may use `reload`, `token`, and `xp`.
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+[SIZE=5][B][COLOR=#9B59B6]◆ License[/COLOR][/B][/SIZE]
+[B]Proprietary — All Rights Reserved[/B] © 2026 IYanel-DEV
 
----
+[LIST]
+[*][B]Use freely unmodified[/B] — download, install, and run the official jar on your servers without asking
+[*]Public mirrors of the [B]unmodified[/B] official jar OK with attribution + link to the repo
+[*][B]Modification[/B], derivative works, redistributing modified builds, and rebranding need [B]prior written permission[/B]
+[/LIST]
+Full text: [URL='https://github.com/IYanel-DEV/BedlamCore/blob/main/LICENSE']LICENSE on GitHub[/URL]
 
-## Permissions
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR]
 
-| Permission | Default | Purpose |
-|------------|---------|---------|
-| `bedlam.admin` | op | Configure arenas, force-start, setup (includes token/xp add) |
-| `bedlam.token.add` | op | `/bc token add` |
-| `bedlam.xp.add` | op | `/bc xp add` |
-| `bedlam.play` | true | Join games |
-| `bedlam.lobby.build` | false | Break/place in the lobby world |
+[SIZE=4][B]Download[/B][/SIZE]
+[URL='https://github.com/IYanel-DEV/BedlamCore/releases']github.com/IYanel-DEV/BedlamCore/releases[/URL]
 
----
+[SIZE=4][B]Source & issues[/B][/SIZE]
+[URL='https://github.com/IYanel-DEV/BedlamCore']github.com/IYanel-DEV/BedlamCore[/URL]
 
-## Requirements
-
-- **Java 8+** runtime (plugin bytecode is Java 8)
-- **Spigot / Paper 1.8.8 → 26.2** (one jar)
-- Optional: **Citizens** for real fake-player queue NPCs
-
----
-
-## License
-
-**Proprietary — All Rights Reserved** (© 2026 IYanel-DEV).
-
-- **Use freely unmodified** — download, install, and run the official jar on your servers without asking.
-- Public mirrors of the **unmodified** official jar are allowed with attribution and a link to the repository.
-- **Modification**, derivative works, redistributing modified builds, and rebranding require **prior written permission**.
-
-Full text: [LICENSE](https://github.com/IYanel-DEV/BedlamCore/blob/main/LICENSE) on GitHub.
-
----
-
-## Links
-
-- **GitHub:** https://github.com/IYanel-DEV/BedlamCore  
-- **Releases (jar):** https://github.com/IYanel-DEV/BedlamCore/releases  
-- **Author:** https://github.com/IYanel-DEV  
-
-Not affiliated with Hypixel, Mojang, or Microsoft. Ships no third-party server code, maps, or branding.
+[IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/logo-bedlamcore-spigot.png[/IMG]
+[/CENTER]

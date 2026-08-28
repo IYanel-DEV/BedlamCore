@@ -1,54 +1,53 @@
-# BedlamCore v0.10.39 — Release notes
+[CENTER][SIZE=5][B][COLOR=#9B59B6]BedlamCore v0.10.91[/COLOR][/B][/SIZE]
+[SIZE=4][I]Databases, placeholders & a party-menu fix[/I][/SIZE][/CENTER]
 
-**Author:** IYanel-DEV  
-**Artifact:** `BedlamCore-0.10.39.jar`  
-**Download:** https://github.com/IYanel-DEV/BedlamCore/releases  
-**Compatibility:** Java 8+ · Spigot / Paper **1.8.8 → 26.2** (one jar)
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
 
----
+[COLOR=#C0392B][B]⚠ BETA[/B][/COLOR] — every build is validated on Spigot/Paper 1.8.8 → 26.2, but the plugin is still in active beta. If you hit an error, please report it on [URL='https://github.com/IYanel-DEV/BedlamCore/issues']GitHub Issues[/URL].
 
-## What’s new in 0.10.39
+[SIZE=5][B]What's new in v0.10.91[/B][/SIZE]
 
-### Admin economy
-- `/bc token add <player> <amount>` — grant tokens (online or known offline)
-- `/bc xp add <player> <amount>` — grant XP (levels update from the existing stats curve)
-- Permissions: `bedlam.token.add`, `bedlam.xp.add` (both default op; also under `bedlam.admin`)
-- Console can run `token` / `xp` (same as `reload`)
+A small, additive release. Existing servers upgrade in place — the [B]YAML default is byte-identical[/B], so nothing changes until you opt in.
 
-### Paper 26.2 world border fix
-- Hiding the setup border no longer uses diameter `6e7` (Paper rejects it and could crash **Cancel** / **Apply**)
-- Diameters are clamped to Paper’s max (`59_999_968`)
-- Border restore/hide on cancel and apply is guarded so a bad border size cannot leave orphan setup state
+[SIZE=4][B]◆ SQLite & MySQL storage[/B][/SIZE]
+[LIST]
+[*]Player stats/cosmetics can now live in [B]SQLite[/B] or [B]MySQL[/B] instead of [ICODE]stats.yml[/ICODE] — pick it in [ICODE]config.yml[/ICODE] under [ICODE]storage.backend[/ICODE]
+[*]Drivers are [B]bundled in the jar[/B] (SQLite + HikariCP + MySQL) — no extra downloads
+[*]Share one MySQL database across [B]multiple servers[/B] (lobby + game nodes) so stats follow the player
+[*]One-shot migration: [ICODE]/bc storage migrate <sqlite|mysql>[/ICODE] copies your existing [ICODE]stats.yml[/ICODE] into the database (the YAML file is left untouched)
+[*][B]Default stays [ICODE]yaml[/ICODE][/B] — same file, same keys, same 5-second flush as before. Invalid config falls back to YAML instead of disabling the plugin
+[/LIST]
 
----
+[SIZE=4][B]◆ PlaceholderAPI support[/B][/SIZE]
+[LIST]
+[*]New [ICODE]%bedlamcore_*%[/ICODE] expansion — use your Bed Wars stats in tab, scoreboards, holograms and any PAPI-aware plugin
+[*]Tokens, XP, level & progress, kills/deaths, final kills/deaths, wins/losses, beds, winstreaks, [B]KDR/FKDR[/B], per-mode stats ([ICODE]%bedlamcore_wins_trios%[/ICODE] …), equipped prestige colour/name, and live [ICODE]player_count[/ICODE] / [ICODE]waiting_<mode>[/ICODE] counts
+[*]Fully optional soft dependency — the plugin boots fine without PlaceholderAPI. Full list in [ICODE]docs/PLACEHOLDERS.md[/ICODE]
+[/LIST]
 
-## Since v0.10.37 (gap)
+[SIZE=4][B]◆ Prestige in lobby chat[/B][/SIZE]
+[LIST]
+[*]Your equipped [B]Prestige[/B] cosmetic now colours your name in lobby chat, not just the tab list
+[*]Toggle with [ICODE]chat.prestige-in-lobby[/ICODE] (default on); in-match team-coloured names are unchanged
+[/LIST]
 
-If your last jar was **0.10.37**, this update is the two items above — plus version bump to **0.10.39**.
+[SIZE=4][B]◆ Fixes[/B][/SIZE]
+[LIST]
+[*][B]Party menu[/B] — clicking the [ICODE]Create Party[/ICODE] / party buttons could pick the item up out of the GUI instead of running the action. The Party and Party Invite menus now cancel clicks like every other menu
+[/LIST]
 
-If you are jumping from an older public line (**≤ 0.10.1**), you also pick up everything that landed in the **0.10.37** public gap release:
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
 
-- Bundled map template **bedwars-e2560** + template / import tooling
-- Match **build border**
-- Cosmetics shop (token sink)
-- Profile NPC + lobby polish
-- Win effects / dragon presentation
-- Dream Defender, forge/gens polish, soft spectate, team chest, Bridge Egg, match rewards
-- Persistence hardening (atomic saves, stats/profile, game-worlds / template checks)
+[SIZE=5][B]Download[/B][/SIZE]
+[LIST]
+[*][B]BedlamCore-0.10.91.jar[/B] — [URL='https://github.com/IYanel-DEV/BedlamCore/releases']GitHub Releases[/URL]
+[*]One jar for Spigot/Paper [B]1.8.8 → 26.2[/B], Java 8+ (Java 8 bytecode)
+[/LIST]
 
-Full feature surface: see `docs/spigotmc/DESCRIPTION.md` or the resource description.
+[SIZE=4][B]SHA-256[/B][/SIZE]
+[ICODE]98C15E4A30FCD0A922A7003D4936B48A7C4C16F1E252109C40831B448BF007AC[/ICODE]
 
----
+[SIZE=4][B]Report bugs[/B][/SIZE]
+[URL='https://github.com/IYanel-DEV/BedlamCore/issues']github.com/IYanel-DEV/BedlamCore/issues[/URL]
 
-## Upgrade
-
-1. Stop the server.
-2. Replace `plugins/BedlamCore-*.jar` with `BedlamCore-0.10.39.jar`.
-3. Start. No config migration required for the 0.10.37 → 0.10.39 delta.
-4. Optional smoke: Lobby Setup cancel on Paper 26.2; `/bc token add` / `/bc xp add` as op.
-
----
-
-## License reminder
-
-Use the **unmodified** official jar freely on your servers. Modification / rebrand / redistributing modified builds needs permission. See [LICENSE](https://github.com/IYanel-DEV/BedlamCore/blob/main/LICENSE).
+Independent project. Not affiliated with Hypixel, Mojang, or Microsoft.

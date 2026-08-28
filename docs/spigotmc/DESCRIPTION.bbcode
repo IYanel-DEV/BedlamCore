@@ -1,3 +1,6 @@
+[CENTER][COLOR=#C0392B][B]⚠ BETA — report any errors[/B][/COLOR]
+This plugin is in active [B]beta[/B]. Every release is tested on Spigot/Paper 1.8.8 through 26.2, but you may still hit rough edges. Found a bug or got an error? Please report it on [URL='https://github.com/IYanel-DEV/BedlamCore/issues']GitHub Issues[/URL] so it gets fixed fast.[/CENTER]
+
 [CENTER]
 [IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/banner-bedlamcore.jpg[/IMG]
 
@@ -6,15 +9,15 @@
 
 [B]GUI-first setup · Solo & Doubles · One jar · Spigot 1.8.8 → Paper 26.2[/B]
 
-Author: [URL=https://github.com/IYanel-DEV]IYanel-DEV[/URL] · Current: [B]v0.10.39[/B]
-[URL=https://github.com/IYanel-DEV/BedlamCore]GitHub[/URL] · [URL=https://github.com/IYanel-DEV/BedlamCore/releases]Download jar[/URL]
+Author: [URL='https://github.com/IYanel-DEV']IYanel-DEV[/URL] · Current: [B]v0.10.91[/B]
+[URL='https://github.com/IYanel-DEV/BedlamCore']GitHub[/URL] · [URL='https://github.com/IYanel-DEV/BedlamCore/releases']Download jar[/URL]
 
 [IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/logo-bedlamcore-spigot.png[/IMG]
 [/CENTER]
 
-[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
-[CENTER][SIZE=5][B]Purple bed. Real matches. Compass setup.[/B][/SIZE][/CENTER]
-[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR]
+[SIZE=5][B]Purple bed. Real matches. Compass setup.[/B][/SIZE]
+[COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
 
 [B]BedlamCore[/B] is a GUI-first Bed Wars engine for Spigot and Paper.
 
@@ -29,6 +32,30 @@ Independent project. Not affiliated with Hypixel, Mojang, or Microsoft.
 [CENTER]
 [IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/banner-bedlamcore-features.jpg[/IMG]
 [/CENTER]
+
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
+[SIZE=5][B][COLOR=#9B59B6]◆ What's new[/COLOR][/B][/SIZE]
+
+[SIZE=4][B]v0.10.91[/B][/SIZE]
+[LIST]
+[*][B]SQLite / MySQL storage[/B] — keep stats in a database instead of [ICODE]stats.yml[/ICODE] (drivers bundled); share one MySQL across servers; migrate with [ICODE]/bc storage migrate[/ICODE]. YAML stays the default and byte-identical
+[*][B]PlaceholderAPI[/B] — [ICODE]%bedlamcore_*%[/ICODE] placeholders for tab, scoreboards & holograms (tokens, level, KDR/FKDR, per-mode stats, prestige, live player counts). Optional soft dependency
+[*][B]Prestige in lobby chat[/B] — your equipped Prestige colours your chat name, not just the tab list ([ICODE]chat.prestige-in-lobby[/ICODE])
+[*][B]Fix[/B] — Party / Party Invite menus no longer let you pull the buttons out of the GUI
+[/LIST]
+
+[SIZE=4][B]Since v0.10.37[/B][/SIZE]
+[LIST]
+[*][B]3v3v3v3 Trios & 4v4v4v4 Quads[/B] — new game modes: queue NPCs, quick join / browse, import & templates, per-mode stats and leaderboard tabs
+[*][B]Party system[/B] — invite friends with [ICODE]/party[/ICODE], queue together onto the same team (works via the built-in provider, or bridge BungeeParties / Party and Friends)
+[*][B]Leaderboards[/B] — Hypixel-style floating lobby board + [ICODE]/leaderboard[/ICODE] GUI / chat rankings with per-mode tabs
+[*][B]Reconnect grace[/B] — keep your bed and team slot reserved for 60s after a disconnect; rejoin with [ICODE]/rejoin[/ICODE]
+[*][B]Bundled "Chained" map[/B] — a 4-island template, playable only as Trios (4×3) or Quads (4×4)
+[*][B]Refreshed waiting spawn building[/B] — new default build, now pixel-identical on 1.8 and 1.13+ (stair/slab facing + fence connections fixed)
+[*][B]Citizens-free NPCs[/B] — queue NPCs use the built-in system; Citizens optional
+[*][B]New cosmetics[/B] — Wood Skins, Final Kill Effects, Prestige, Projectile Trails, Bed Destroys; rideable win Dragon & Wither
+[*]Stability fixes for Paper 1.21+/26.2, cosmetics shop pagination, and the whole match loop
+[/LIST]
 
 [CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
 [SIZE=5][B][COLOR=#9B59B6]◆ Features[/COLOR][/B][/SIZE]
@@ -70,10 +97,11 @@ Independent project. Not affiliated with Hypixel, Mojang, or Microsoft.
 [*]Match rewards · win effects / dragon · Play Again
 [/LIST]
 
-[SIZE=4][B]Economy[/B][/SIZE]
+[SIZE=4][B]Economy & data[/B][/SIZE]
 [LIST]
-[*]Tokens / XP / levels in [ICODE]stats.yml[/ICODE]
-[*]Admin: [ICODE]/bc token add[/ICODE] · [ICODE]/bc xp add[/ICODE]
+[*]Tokens / XP / levels — stored in [ICODE]stats.yml[/ICODE], [B]SQLite[/B] or [B]MySQL[/B] ([ICODE]storage.backend[/ICODE]; drivers bundled)
+[*][B]PlaceholderAPI[/B] [ICODE]%bedlamcore_*%[/ICODE] expansion (optional)
+[*]Admin: [ICODE]/bc token add[/ICODE] · [ICODE]/bc xp add[/ICODE] · [ICODE]/bc storage migrate[/ICODE]
 [/LIST]
 
 [CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
@@ -118,7 +146,7 @@ Independent project. Not affiliated with Hypixel, Mojang, or Microsoft.
 [CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
 [SIZE=5][B][COLOR=#9B59B6]◆ Installation[/COLOR][/B][/SIZE]
 [LIST=1]
-[*]Download [B]BedlamCore-0.10.39.jar[/B] from [URL=https://github.com/IYanel-DEV/BedlamCore/releases]GitHub Releases[/URL]
+[*]Download [B]BedlamCore-0.10.91.jar[/B] from [URL='https://github.com/IYanel-DEV/BedlamCore/releases']GitHub Releases[/URL]
 [*]Drop into [ICODE]plugins/[/ICODE] and restart
 [*]Join as op — hotbar [B]Bedlam Setup[/B] compass opens Lobby Setup (lobby) or that world’s arena draft (game world)
 [*]Finish Lobby Setup (spawn + NPCs), then create or import game worlds — [B]Apply[/B] saves, [B]Cancel[/B] discards
@@ -182,6 +210,7 @@ Console may use [ICODE]reload[/ICODE], [ICODE]token[/ICODE], and [ICODE]xp[/ICOD
 [*][B]Java 8+[/B] runtime (Java 8 bytecode)
 [*][B]Spigot / Paper 1.8.8 → 26.2[/B] — one jar
 [*]Optional: [B]Citizens[/B] for real fake-player queue NPCs
+[*]Optional: [B]PlaceholderAPI[/B] for [ICODE]%bedlamcore_*%[/ICODE] placeholders; [B]MySQL[/B] server if you use the MySQL backend
 [/LIST]
 
 [CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
@@ -193,15 +222,15 @@ Console may use [ICODE]reload[/ICODE], [ICODE]token[/ICODE], and [ICODE]xp[/ICOD
 [*]Public mirrors of the [B]unmodified[/B] official jar OK with attribution + link to the repo
 [*][B]Modification[/B], derivative works, redistributing modified builds, and rebranding need [B]prior written permission[/B]
 [/LIST]
-Full text: [URL=https://github.com/IYanel-DEV/BedlamCore/blob/main/LICENSE]LICENSE on GitHub[/URL]
+Full text: [URL='https://github.com/IYanel-DEV/BedlamCore/blob/main/LICENSE']LICENSE on GitHub[/URL]
 
-[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR][/CENTER]
-[CENTER]
+[CENTER][COLOR=#CCCCCC]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/COLOR]
+
 [SIZE=4][B]Download[/B][/SIZE]
-[URL=https://github.com/IYanel-DEV/BedlamCore/releases]github.com/IYanel-DEV/BedlamCore/releases[/URL]
+[URL='https://github.com/IYanel-DEV/BedlamCore/releases']github.com/IYanel-DEV/BedlamCore/releases[/URL]
 
 [SIZE=4][B]Source & issues[/B][/SIZE]
-[URL=https://github.com/IYanel-DEV/BedlamCore]github.com/IYanel-DEV/BedlamCore[/URL]
+[URL='https://github.com/IYanel-DEV/BedlamCore']github.com/IYanel-DEV/BedlamCore[/URL]
 
 [IMG]https://raw.githubusercontent.com/IYanel-DEV/BedlamCore/main/docs/spigotmc/images/logo-bedlamcore-spigot.png[/IMG]
 [/CENTER]

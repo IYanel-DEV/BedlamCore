@@ -1,6 +1,6 @@
 # SpigotMC listing kit
 
-Paste-ready copy for [SpigotMC.org](https://www.spigotmc.org/) resource pages. Version target: **0.10.39** (`build.gradle.kts`).
+Paste-ready copy for [SpigotMC.org](https://www.spigotmc.org/) resource pages. Version target: **0.10.91** (`build.gradle.kts`).
 
 ## Files
 
@@ -17,7 +17,7 @@ Paste-ready copy for [SpigotMC.org](https://www.spigotmc.org/) resource pages. V
 
 1. **Upload resource icon** — Spigot requires exactly **96×96**. Use `docs/spigotmc/icon-96.png` (same file: `docs/brand/spigotmc-icon-96.png`). Do **not** upload the full purple-bed logo as the resource icon (Spigot rejects oversized icons).
 2. **Paste BBCode as-is** — open `DESCRIPTION.bbcode` and paste into the Description field. All `[IMG]` tags already use **GitHub raw** URLs under `docs/spigotmc/images/` — no Spigot “Upload Images” step is required for the gallery. Preview before saving.
-3. **Attach the jar** — `BedlamCore-0.10.39.jar` from [GitHub Releases](https://github.com/IYanel-DEV/BedlamCore/releases) (or your tested local build). Set version **0.10.39**, link the GitHub repo, and paste `RELEASE_NOTES.bbcode` into the update changelog.
+3. **Attach the jar** — `BedlamCore-0.10.91.jar` from [GitHub Releases](https://github.com/IYanel-DEV/BedlamCore/releases) (or your tested local build). Set version **0.10.91**, link the GitHub repo, and paste `RELEASE_NOTES.bbcode` into the update changelog.
 
 ## BBCode tips
 
