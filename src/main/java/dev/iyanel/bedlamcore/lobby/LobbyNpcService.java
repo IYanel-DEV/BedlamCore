@@ -8,6 +8,8 @@ import dev.iyanel.bedlamcore.compat.Skins;
 import dev.iyanel.bedlamcore.game.GameRules;
 import dev.iyanel.bedlamcore.game.NpcSoundListener;
 import dev.iyanel.bedlamcore.game.ProfileStats;
+import dev.iyanel.bedlamcore.leaderboard.LeaderboardCategory;
+import dev.iyanel.bedlamcore.leaderboard.LeaderboardService;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Chunk;
@@ -23,6 +25,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.Zombie;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.inventory.EntityEquipment;
@@ -41,6 +44,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -53,6 +57,16 @@ public final class LobbyNpcService implements Listener {
     public static final String META_COSMETICS = "bedlamCosmetics";
     public static final String META_PROFILE = "bedlamProfile";
     public static final String META_PROFILE_OWNER = "bedlamProfileOwner";
+    public static final String META_LEADERBOARD = "bedlamLeaderboard";
+    /** Default skin for the lobby leaderboard NPC when the admin hasn't set one. */
+    public static final String LEADERBOARD_SKIN = "Hypixel";
+    /** Bottom line Y of the leaderboard board column; the title/rows stack rises from here. */
+    public static final double LEADERBOARD_HOLO_BOTTOM = 2.4;
+    /** Feet Y of the lowest click proxy, and vertical spacing between stacked proxies (< 1.975 hitbox → no gap). */
+    private static final double LEADERBOARD_PROXY_BOTTOM = 0.3;
+    private static final double LEADERBOARD_PROXY_STEP = 1.8;
+    /** Hidden board-line placeholder: renders as nothing but is non-blank so reloaded orphans get scrubbed. */
+    private static final String BLANK_LINE = ChatColor.DARK_GRAY.toString();
     /** Dream Defender / team pets — spared by monster purge. */
     public static final String META_PET = "bedlamPet";
     /** Profile hologram stack top (6 stat lines rise from here). */
@@ -89,6 +103,15 @@ public final class LobbyNpcService implements Listener {
     private UUID profileEntity;
     private final List<UUID> profileHolograms = new ArrayList<UUID>();
     private Location profilePin;
+    /** Leaderboard board: a hologram-only text column (no body/model) + invisible click proxies. */
+    private final List<UUID> leaderboardProxies = new ArrayList<UUID>();
+    private final List<UUID> leaderboardHolograms = new ArrayList<UUID>();
+    private Location leaderboardPin;
+    private boolean respawningLeaderboard;
+    private long lastLeaderboardSpawnTick;
+    private int leaderboardRefreshTick;
+    /** Last rendered board text per line — diffed so only changed lines re-set (no lobby flicker). */
+    private final List<String> leaderboardLastLines = new ArrayList<String>();
     /** Name whose skull is currently on the shared profile body — only re-equip when the nearest player changes. */
     private String profileHeadOwner;
     private int profileRefreshTick;
@@ -122,9 +145,11 @@ public final class LobbyNpcService implements Listener {
             @Override public void run() {
                 ensureCosmeticsAlive();
                 ensureProfileAlive();
+                ensureLeaderboardAlive();
                 ensureQueueNpcsAlive();
                 pinEntities();
                 updateProfileDisplay();
+                updateLeaderboardDisplay();
                 long now = System.currentTimeMillis();
                 if (now - lastSweepTick >= 10000L) { lastSweepTick = now; sweepStrayLobbyMobs(); }
                 if (++visibilityTick % GameRules.DISPLAY_VISIBILITY_INTERVAL == 0) updateHologramVisibility();
@@ -157,17 +182,23 @@ public final class LobbyNpcService implements Listener {
         scrubReloadedBodies(plugin.lobby().cosmeticsNpc());
         scrubReloadedHolograms(plugin.lobby().profileNpc());
         scrubReloadedBodies(plugin.lobby().profileNpc());
+        scrubReloadedHolograms(plugin.lobby().leaderboardNpc());
+        scrubReloadedBodies(plugin.lobby().leaderboardNpc());
         for (GameType type : GameType.values()) {
             LobbySettings.NpcSettings settings = plugin.lobby().npc(type);
             if (settings.location() != null) spawn(type, settings);
         }
         spawnCosmetics(plugin.lobby().cosmeticsNpc());
         spawnProfile(plugin.lobby().profileNpc());
+        if (GameRules.LEADERBOARD_ENABLED && GameRules.LEADERBOARD_NPC_ENABLED) {
+            spawnLeaderboard(plugin.lobby().leaderboardNpc());
+        }
     }
 
     /** Lobby world anchor for cleanup sweeps: live pins first, then saved config locations. */
     private Location lobbyAnchor() {
         if (profilePin != null) return profilePin;
+        if (leaderboardPin != null) return leaderboardPin;
         if (cosmeticsPin != null) return cosmeticsPin;
         if (plugin.lobby() == null) return null;
         if (plugin.lobby().spawn() != null) return plugin.lobby().spawn();
@@ -315,8 +346,41 @@ public final class LobbyNpcService implements Listener {
         Location useLoc = faceLocation != null ? faceLocation : body.getLocation();
         PacketNpcs.Model model = PacketNpcs.create(plugin, useLoc, name, profile);
         if (model != null) {
+            final Entity npcBody = body;
+            model.onClick(new PacketNpcs.ClickHandler() {
+                @Override public void click(Player viewer) { handleNpcClick(viewer, npcBody); }
+            });
             packetModels.put(body.getUniqueId(), model);
             PacketNpcs.ensureViewers(model, 48.0);
+        }
+    }
+
+    /** Route a click on a lobby NPC body (cosmetics / profile / queue) to its GUI. Shared by the real-body
+     *  interact event and the packet fake-player click interceptor; admins sneak-clicking open the config editor. */
+    public void handleNpcClick(Player viewer, Entity body) {
+        if (viewer == null || body == null) return;
+        boolean adminSneak = viewer.isSneaking() && plugin.isAdmin(viewer);
+        if (isCosmetics(body)) {
+            if (adminSneak) plugin.gui().openSpecialNpcEditor(viewer, "COSMETICS");
+            else plugin.gui().openCosmetics(viewer);
+            return;
+        }
+        if (isProfile(body)) {
+            if (adminSneak) { plugin.gui().openSpecialNpcEditor(viewer, "PROFILE"); return; }
+            UUID owner = profileOwner(body);
+            if (owner == null || owner.equals(viewer.getUniqueId())) plugin.gui().openProfileStats(viewer);
+            return;
+        }
+        if (isLeaderboard(body)) {
+            if (adminSneak) { plugin.gui().openSpecialNpcEditor(viewer, "LEADERBOARD"); return; }
+            if (EntityVisibility.isSpectator(viewer)) return; // spectators can't open lobby GUIs
+            plugin.gui().openLeaderboard(viewer);
+            return;
+        }
+        GameType mode = mode(body);
+        if (mode != null) {
+            if (adminSneak) plugin.gui().openNpcEditor(viewer, mode);
+            else plugin.gui().openQueue(viewer, mode);
         }
     }
 
@@ -339,11 +403,13 @@ public final class LobbyNpcService implements Listener {
         if (location == null || location.getWorld() == null) return null;
         // Kill any reloaded orphan body sitting on the pin before spawning — the exact cause of duplicate NPCs.
         scrubReloadedBodies(location);
-        // Own packet fake-player first (Citizens-free). Use a villager body (like cosmetics/queue NPCs)
-        // so the client raycast reaches the real entity through the packet model — armor-stand bodies
-        // are invisible to the client's interaction ray when a packet player model sits on top.
+        // Own packet fake-player first (Citizens-free). Body is an ARMOR STAND hidden via setVisible(false) —
+        // NOT a villager with an invisibility potion. The potion is client-rendered as swirling particles on 1.8
+        // (the particles=false flag is ignored by the 1.8 client) and its hitbox fought the click. Clicks land on
+        // the fake-player model via the Netty interceptor (reliable now that the shown-set is refreshed on world
+        // change), so the body no longer needs to be the raycast target.
         Entity body = null;
-        if (PacketNpcs.available()) body = location.getWorld().spawnEntity(location, EntityType.VILLAGER);
+        if (PacketNpcs.available()) body = location.getWorld().spawnEntity(location, EntityType.ARMOR_STAND);
         if (body == null) body = spawnCitizenProfile(location);
         // Fallback: visible armor stand with head (no packet model, no right-click)
         if (body == null) body = spawnProfileStand(location);
@@ -494,6 +560,163 @@ public final class LobbyNpcService implements Listener {
         profilePin = null;
     }
 
+    // ------------------------------------------------------------------ lobby leaderboard NPC + board
+
+    /**
+     * Spawn the Hypixel-style leaderboard: a floating text column (title + subtitle + top rows) with NO
+     * body/model underneath — plus invisible, hittable click proxies stacked up the column so a click
+     * anywhere on the board opens the GUI. Returns {@code null} (there is no body to hand back).
+     */
+    public Entity spawnLeaderboard(Location location) {
+        Location previous = leaderboardPin == null ? null : leaderboardPin.clone();
+        removeLeaderboard();
+        scrubOrphanHolograms(previous);
+        scrubOrphanPapers(previous);
+        scrubOrphanHolograms(location);
+        scrubOrphanPapers(location);
+        if (location == null || location.getWorld() == null) return null;
+        // Delete any leftover invisible villager body from an older build sitting on the pin.
+        scrubReloadedBodies(location);
+        leaderboardPin = location.clone();
+        leaderboardHolograms.clear();
+        leaderboardLastLines.clear();
+        leaderboardProxies.clear();
+        // Bottom-anchored column built from the ACTUAL rendered lines — never from capacity (3+topN). The old
+        // capacity build padded missing rows with blank stands AND raised the whole board's top by (capacity-1)
+        // lines, so the board floated ever higher as topN grew and showed empty slots. With real line count the
+        // footer sits at LEADERBOARD_HOLO_BOTTOM and the title rises only as far as there is content: a short
+        // board hugs the ground, a full board is tall — no blanks, no sky-float.
+        List<String> lines = currentBoardLines();
+        int n = lines.size();
+        double top = LEADERBOARD_HOLO_BOTTOM + Math.max(0, n - 1) * GameRules.HOLO_LINE;
+        for (int i = 0; i < n; i++) {
+            ArmorStand stand = hologram(location.clone().add(0, GameRules.labelY(top, i), 0), lines.get(i));
+            leaderboardHolograms.add(stand.getUniqueId());
+            leaderboardLastLines.add(lines.get(i));
+        }
+        // Invisible full-size hittable armor-stand proxies covering the whole text column, so any reasonable
+        // click on the board (left or right) opens the GUI — no villager body (per the Hypixel-clean NPC rule).
+        for (double y = LEADERBOARD_PROXY_BOTTOM; y <= top + 0.2; y += LEADERBOARD_PROXY_STEP) {
+            ArmorStand proxy = spawnLeaderboardProxy(location.clone().add(0, y, 0));
+            leaderboardProxies.add(proxy.getUniqueId());
+        }
+        return null;
+    }
+
+    /** Invisible, silent, hittable armor stand (non-marker so it keeps a click hitbox) tagged as the board. */
+    private ArmorStand spawnLeaderboardProxy(Location location) {
+        ArmorStand stand = (ArmorStand) location.getWorld().spawnEntity(location, EntityType.ARMOR_STAND);
+        // Tag first; blank hidden name so a world-reloaded orphan is caught by the hologram scrubbers.
+        stand.setMetadata(META_LEADERBOARD, new FixedMetadataValue(plugin, true));
+        stand.setCustomName(BLANK_LINE);
+        stand.setCustomNameVisible(false);
+        stand.setVisible(false);
+        stand.setBasePlate(false);
+        stand.setArms(false);
+        stand.setGravity(false);
+        stand.setSmall(false); // full-size = a tall hitbox that spans a chunk of the column
+        invokeBoolean(stand, "setMarker", false);   // marker stands have NO hitbox — must stay non-marker
+        invokeBoolean(stand, "setCollidable", false);
+        invokeBoolean(stand, "setInvulnerable", false); // hittable so a LEFT-click fires onNpcHit
+        EntityEquipment gear = stand.getEquipment();
+        if (gear != null) {
+            gear.setHelmet(null); gear.setChestplate(null); gear.setLeggings(null);
+            gear.setBoots(null); gear.setItemInHand(null);
+        }
+        hideBodyName(stand);
+        mute(stand);
+        tracked.put(stand.getUniqueId(), stand);
+        pins.put(stand.getUniqueId(), location.clone());
+        return stand;
+    }
+
+    /** Chunk unload / body despawn — recreate the leaderboard body + board. */
+    public void ensureLeaderboardAlive() {
+        if (respawningLeaderboard) return;
+        if (!GameRules.LEADERBOARD_ENABLED || !GameRules.LEADERBOARD_NPC_ENABLED) return;
+        Location location = leaderboardPin != null ? leaderboardPin.clone()
+            : (plugin.lobby() == null ? null : plugin.lobby().leaderboardNpc());
+        if (location == null || location.getWorld() == null) return;
+        if (!chunkLoaded(location)) return;
+        if (leaderboardHologramsAlive() && leaderboardProxiesAlive()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastLeaderboardSpawnTick < 2000L) return;
+        respawningLeaderboard = true;
+        try {
+            spawnLeaderboard(location);
+            lastLeaderboardSpawnTick = System.currentTimeMillis();
+        } catch (Throwable t) {
+            warnRespawnFailure("leaderboard", t);
+        } finally {
+            respawningLeaderboard = false;
+        }
+    }
+
+    /** Refresh the board text (~1s cadence; the service itself throttles the underlying recompute). */
+    private void updateLeaderboardDisplay() {
+        if (leaderboardPin == null || leaderboardPin.getWorld() == null || leaderboardHolograms.isEmpty()) return;
+        if (++leaderboardRefreshTick % 20 != 0) return;
+        List<String> lines = currentBoardLines();
+        // Line-count changed (players became ranked / dropped out): the column must grow or shrink. Rebuild it
+        // atomically from the pin so there are never blank holes or a stale proxy stack of the wrong height.
+        if (lines.size() != leaderboardHolograms.size()) { spawnLeaderboard(leaderboardPin.clone()); return; }
+        for (int i = 0; i < leaderboardHolograms.size(); i++) {
+            String text = lines.get(i);
+            if (text.equals(leaderboardLastLines.get(i))) continue; // diff: only touch changed lines (no flicker)
+            Entity holo = find(leaderboardHolograms.get(i));
+            if (holo == null) continue;
+            holo.setCustomName(text);
+            holo.setCustomNameVisible(true);
+            leaderboardLastLines.set(i, text);
+        }
+    }
+
+    private List<String> currentBoardLines() {
+        LeaderboardService service = plugin.leaderboards();
+        if (service == null) return new ArrayList<String>();
+        return service.boardLines(LeaderboardCategory.WINS, null);
+    }
+
+    private boolean leaderboardHologramsAlive() {
+        if (leaderboardHolograms.isEmpty()) return false;
+        for (UUID uuid : leaderboardHolograms) if (!alive(uuid)) return false;
+        return true;
+    }
+
+    private boolean leaderboardProxiesAlive() {
+        if (leaderboardProxies.isEmpty()) return false;
+        for (UUID uuid : leaderboardProxies) if (!alive(uuid)) return false;
+        return true;
+    }
+
+    public boolean isLeaderboard(Entity entity) {
+        return entity != null && entity.hasMetadata(META_LEADERBOARD);
+    }
+
+    public void removeLeaderboard() {
+        Location scrubAt = leaderboardPin == null ? null : leaderboardPin.clone();
+        for (UUID uuid : new ArrayList<UUID>(leaderboardHolograms)) {
+            pins.remove(uuid);
+            Entity entity = tracked.remove(uuid);
+            if (entity != null) entity.remove();
+            else removeWorldEntity(uuid, scrubAt);
+        }
+        leaderboardHolograms.clear();
+        leaderboardLastLines.clear();
+        for (UUID uuid : new ArrayList<UUID>(leaderboardProxies)) {
+            pins.remove(uuid);
+            lookAtPlayers.remove(uuid);
+            Entity entity = tracked.remove(uuid);
+            if (entity != null) entity.remove();
+            else removeWorldEntity(uuid, scrubAt);
+        }
+        leaderboardProxies.clear();
+        scrubOrphanHolograms(scrubAt);
+        scrubOrphanPapers(scrubAt);
+        scrubReloadedBodies(scrubAt);
+        leaderboardPin = null;
+    }
+
     public Entity spawnCosmetics(Location location) {
         Location previous = cosmeticsPin == null ? null : cosmeticsPin.clone();
         removeCosmetics();
@@ -502,10 +725,11 @@ public final class LobbyNpcService implements Listener {
         if (location == null || location.getWorld() == null) return null;
         // Kill any reloaded orphan body sitting on the pin before spawning — prevents the duplicate villager.
         scrubReloadedBodies(location);
-        // Own packet fake-player first (invisible villager hitbox + player model); Citizens / plain villager
-        // only as fallbacks.
+        // Own packet fake-player first: an ARMOR STAND body hidden via setVisible(false) (no invisibility potion
+        // → no 1.8 particle swirls, no fighting hitbox); the fake-player model is the click target via the Netty
+        // interceptor. Citizens / plain villager only as fallbacks.
         Entity entity = null;
-        if (PacketNpcs.available()) entity = location.getWorld().spawnEntity(location, EntityType.VILLAGER);
+        if (PacketNpcs.available()) entity = location.getWorld().spawnEntity(location, EntityType.ARMOR_STAND);
         if (entity == null) entity = spawnCitizenNamed(location, "Cosmetics", EntityType.VILLAGER);
         if (entity == null) entity = location.getWorld().spawnEntity(location, EntityType.VILLAGER);
         String cosmeticsSkin = plugin.lobby() != null && plugin.lobby().cosmeticsSkin() != null ? plugin.lobby().cosmeticsSkin() : PROFILE_SKIN;
@@ -570,6 +794,20 @@ public final class LobbyNpcService implements Listener {
         // ensureViewers re-shows (else NPCs stay invisible after relog until a full respawn).
         UUID viewer = event.getPlayer().getUniqueId();
         for (PacketNpcs.Model model : packetModels.values()) model.forget(viewer);
+        PacketNpcs.clearViewer(viewer); // reconnect gets a fresh channel — re-install the click interceptor
+    }
+
+    /**
+     * Root cause of "NPC clicks go dead after a game (1.8)": a fake-player model is client-side only, so a
+     * lobby → arena → lobby round trip (no quit) leaves the viewer flagged as still-shown even though the
+     * client dropped the model on the world change. show() then skips the re-spawn and the model is invisible +
+     * unclickable until relog — with no hidden body to fall back on. Forgetting every model on ANY world change
+     * makes the next ensureViewers tick re-send the spawn the moment they are back in the lobby.
+     */
+    @EventHandler
+    public void onWorldChange(PlayerChangedWorldEvent event) {
+        UUID viewer = event.getPlayer().getUniqueId();
+        for (PacketNpcs.Model model : packetModels.values()) model.forget(viewer);
     }
 
     @EventHandler
@@ -590,6 +828,14 @@ public final class LobbyNpcService implements Listener {
                 @Override public void run() { if (!respawningProfile) ensureProfileAlive(); }
             });
         }
+        Location leaderboard = leaderboardPin != null ? leaderboardPin.clone()
+            : (plugin.lobby() == null ? null : plugin.lobby().leaderboardNpc());
+        if (leaderboard != null && leaderboard.getWorld() != null
+            && event.getWorld().equals(leaderboard.getWorld()) && sameChunk(event.getChunk(), leaderboard)) {
+            Bukkit.getScheduler().runTask(plugin, new Runnable() {
+                @Override public void run() { if (!respawningLeaderboard) ensureLeaderboardAlive(); }
+            });
+        }
     }
 
     public boolean isCosmetics(Entity entity) {
@@ -602,12 +848,14 @@ public final class LobbyNpcService implements Listener {
         if (location == null || location.getWorld() == null) return null;
         // Kill any reloaded orphan body sitting on the pin before spawning — prevents duplicate queue NPCs.
         scrubReloadedBodies(location);
-        // Fake Player mode (settings.human): the configured body (default villager) becomes the invisible click
-        // hitbox and a packet player model renders on top. Mob mode: the configured entity shows as a real mob,
-        // no packet overlay. Skin: configured, else the shared profile skin.
+        // Fake Player mode (settings.human): the body is an ARMOR STAND hidden via setVisible(false) — no
+        // invisibility potion (its particles show on 1.8 and its hitbox fought clicks) — and a packet player model
+        // renders on top; clicks land on the model via the Netty interceptor. Mob mode: the configured entity
+        // shows as a real mob, no packet overlay. Skin: configured, else the shared profile skin.
         String skin = settings.skin() != null && !settings.skin().isEmpty() ? settings.skin() : PROFILE_SKIN;
         Entity entity = null;
-        if (PacketNpcs.available()) entity = location.getWorld().spawnEntity(location, settings.entityType());
+        if (PacketNpcs.available()) entity = location.getWorld().spawnEntity(location,
+            settings.human() ? EntityType.ARMOR_STAND : settings.entityType());
         if (entity == null) entity = spawnCitizen(mode, settings);
         if (entity == null) {
             if (settings.human()) entity = spawnHumanStand(location, settings.skin());
@@ -639,10 +887,21 @@ public final class LobbyNpcService implements Listener {
         removeHolograms(mode);
         scrubOrphanHolograms(location);
         List<UUID> ids = new ArrayList<UUID>();
-        ids.add(hologram(location.clone().add(0, GameRules.labelY(GameRules.LOBBY_NPC_HOLO_TOP, 0), 0), mode == GameType.SOLO ? ChatColor.AQUA + "" + ChatColor.BOLD + "SOLO QUEUE" : ChatColor.GOLD + "" + ChatColor.BOLD + "DOUBLES QUEUE").getUniqueId());
+        ids.add(hologram(location.clone().add(0, GameRules.labelY(GameRules.LOBBY_NPC_HOLO_TOP, 0), 0), queueTitle(mode)).getUniqueId());
         ids.add(hologram(location.clone().add(0, GameRules.labelY(GameRules.LOBBY_NPC_HOLO_TOP, 1), 0), ChatColor.YELLOW + "Click to play!").getUniqueId());
-        ids.add(hologram(location.clone().add(0, GameRules.labelY(GameRules.LOBBY_NPC_HOLO_TOP, 2), 0), ChatColor.GRAY + (mode == GameType.SOLO ? "1 per team" : "2 per team")).getUniqueId());
+        ids.add(hologram(location.clone().add(0, GameRules.labelY(GameRules.LOBBY_NPC_HOLO_TOP, 2), 0), ChatColor.GRAY + (mode.teamSize() + " per team")).getUniqueId());
         holograms.put(mode, ids);
+    }
+
+    /** SOLO/DOUBLES titles kept byte-identical to the historical labels; new modes use their display name. */
+    private static String queueTitle(GameType mode) {
+        switch (mode) {
+            case SOLO: return ChatColor.AQUA + "" + ChatColor.BOLD + "SOLO QUEUE";
+            case DOUBLES: return ChatColor.GOLD + "" + ChatColor.BOLD + "DOUBLES QUEUE";
+            case TRIOS: return ChatColor.DARK_GREEN + "" + ChatColor.BOLD + "3v3v3v3 QUEUE";
+            case QUADS: return ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "4v4v4v4 QUEUE";
+            default: return ChatColor.GOLD + "" + ChatColor.BOLD + mode.displayName().toUpperCase() + " QUEUE";
+        }
     }
 
     private ArmorStand hologram(Location location, String text) {
@@ -674,6 +933,7 @@ public final class LobbyNpcService implements Listener {
         groups.addAll(holograms.values());
         if (!cosmeticsHolograms.isEmpty()) groups.add(cosmeticsHolograms);
         if (!profileHolograms.isEmpty()) groups.add(profileHolograms);
+        if (!leaderboardHolograms.isEmpty()) groups.add(leaderboardHolograms);
         for (List<UUID> ids : groups) {
             for (UUID uuid : ids) {
                 Entity entity = find(uuid);
@@ -692,6 +952,7 @@ public final class LobbyNpcService implements Listener {
         List<UUID> bodyIds = new ArrayList<UUID>(entities.values());
         if (cosmeticsEntity != null) bodyIds.add(cosmeticsEntity);
         if (profileEntity != null) bodyIds.add(profileEntity);
+        bodyIds.addAll(leaderboardProxies);
         for (UUID uuid : bodyIds) {
             Entity entity = find(uuid);
             Location pin = pins.get(uuid);
@@ -718,6 +979,7 @@ public final class LobbyNpcService implements Listener {
         if (entity == null) return false;
         return entity.hasMetadata(META_MODE) || entity.hasMetadata(META_HOLO) || entity.hasMetadata(META_SILENT)
             || entity.hasMetadata(META_COSMETICS) || entity.hasMetadata(META_PROFILE)
+            || entity.hasMetadata(META_LEADERBOARD)
             || entity.hasMetadata(META_PET)
             || entity.hasMetadata("bedlamShop")
             || entity.hasMetadata("bedlamGeneratorDisplay") || entity.hasMetadata("bedlamHologram");
@@ -739,6 +1001,7 @@ public final class LobbyNpcService implements Listener {
 
     public void removeAll() {
         removeProfile();
+        removeLeaderboard();
         removeCosmetics();
         for (GameType type : GameType.values()) remove(type);
         for (Entity entity : new ArrayList<Entity>(tracked.values())) {
@@ -821,6 +1084,8 @@ public final class LobbyNpcService implements Listener {
             tracked.remove(entity.getUniqueId());
             cosmeticsHolograms.remove(entity.getUniqueId());
             profileHolograms.remove(entity.getUniqueId());
+            leaderboardHolograms.remove(entity.getUniqueId());
+            leaderboardProxies.remove(entity.getUniqueId());
             for (List<UUID> ids : holograms.values()) ids.remove(entity.getUniqueId());
             entity.remove();
         }
@@ -1042,7 +1307,7 @@ public final class LobbyNpcService implements Listener {
             // spawn (freeze) — repeating it here reset the entity's navigation and nudged its position (jitter).
             if (remute && !entity.hasMetadata(META_HOLO)
                 && (entity.hasMetadata(META_MODE) || entity.hasMetadata(META_COSMETICS)
-                || entity.hasMetadata(META_PROFILE))) {
+                || entity.hasMetadata(META_PROFILE) || entity.hasMetadata(META_LEADERBOARD))) {
                 mute(entity);
                 hideBodyName(entity);
             }
@@ -1120,6 +1385,7 @@ public final class LobbyNpcService implements Listener {
         if (uuid == null) return false;
         if (uuid.equals(cosmeticsEntity) || cosmeticsHolograms.contains(uuid)) return true;
         if (uuid.equals(profileEntity) || profileHolograms.contains(uuid)) return true;
+        if (leaderboardProxies.contains(uuid) || leaderboardHolograms.contains(uuid)) return true;
         for (UUID id : entities.values()) if (uuid.equals(id)) return true;
         for (List<UUID> ids : holograms.values()) if (ids.contains(uuid)) return true;
         return false;
@@ -1278,9 +1544,18 @@ public final class LobbyNpcService implements Listener {
      * Pure enough for GameRulesCheck via {@link #inLookRange(double)}.
      */
     public static float[] faceNearestPlayerInRange(Entity entity, Location location) {
+        return faceNearestPlayerInRange(entity, location, null);
+    }
+
+    /** Nearest player within {@link #LOOK_RANGE}, or null to keep placement facing. Never tracks spectators or
+     *  dead players; {@code ignore} additionally skips arena soft-spectators / respawning / eliminated players so
+     *  in-match shop NPCs only turn toward players who are actually alive and in play. */
+    public static float[] faceNearestPlayerInRange(Entity entity, Location location, Set<UUID> ignore) {
         PlayerTarget nearest = null;
         for (org.bukkit.entity.Player player : entity.getWorld().getPlayers()) {
             if (player.equals(entity)) continue;
+            if (player.isDead() || EntityVisibility.isSpectator(player)) continue;
+            if (ignore != null && ignore.contains(player.getUniqueId())) continue;
             double distance = player.getLocation().distanceSquared(location);
             if (!inLookRange(distance)) continue;
             if (nearest == null || distance < nearest.distance) nearest = new PlayerTarget(player.getEyeLocation(), distance);
@@ -1388,7 +1663,9 @@ public final class LobbyNpcService implements Listener {
         boolean modern = true;
         try { Entity.class.getMethod("setRotation", float.class, float.class); }
         catch (NoSuchMethodException e) { modern = false; }
-        if (!modern) living.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, Integer.MAX_VALUE, 255), true);
+        // Armor-stand bodies never move (no AI/navigation), so SLOW is pointless there AND the 1.8 client renders
+        // its particles — the exact swirl the invisible packet-NPC body must not show. Skip it for armor stands.
+        if (!modern && !(living instanceof ArmorStand)) living.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, Integer.MAX_VALUE, 255), true);
         invokeBoolean(living, "setAI", false);
         invokeBoolean(living, "setGravity", false);
         mute(living);

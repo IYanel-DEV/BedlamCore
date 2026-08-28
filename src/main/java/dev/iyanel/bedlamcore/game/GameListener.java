@@ -210,6 +210,7 @@ public final class GameListener implements Listener {
         Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
             @Override public void run() {
                 Player player = event.getPlayer();
+                if (plugin.games().reconnect().restore(player)) return; // reconnected into a live match — skip lobby
                 if (plugin.getConfig().getBoolean("lobby.teleport-on-join", true) && plugin.lobby().spawn() != null) player.teleport(plugin.lobby().spawn());
                 giveNavigation(player);
                 plugin.views().updateAll();
@@ -222,7 +223,7 @@ public final class GameListener implements Listener {
         wetSpongePlacements.remove(event.getPlayer().getUniqueId());
         InvisArmor.clear(event.getPlayer());
         plugin.gui().disconnect(event.getPlayer());
-        plugin.games().leave(event.getPlayer());
+        plugin.games().handleDisconnect(event.getPlayer());
         EntityVisibility.clearViewer(event.getPlayer().getUniqueId());
     }
 
@@ -440,6 +441,13 @@ public final class GameListener implements Listener {
             }
             return;
         }
+        // Leaderboard board (hologram-only + invisible proxies): route BEFORE the queue check so it can't be
+        // shadowed. Cancelling also kills the 1.8 villager-trade GUI from any stale/old-build body.
+        if (plugin.npcs().isLeaderboard(clicked)) {
+            event.setCancelled(true);
+            plugin.npcs().handleNpcClick(event.getPlayer(), clicked);
+            return;
+        }
         GameType mode = plugin.npcs().mode(clicked);
         if (mode != null) {
             event.setCancelled(true);
@@ -466,7 +474,10 @@ public final class GameListener implements Listener {
      */
     @EventHandler
     public void onNpcInteractAt(PlayerInteractAtEntityEvent event) {
-        if (!plugin.npcs().isProfile(event.getRightClicked())) return;
+        Entity clicked = event.getRightClicked();
+        boolean profile = plugin.npcs().isProfile(clicked);
+        boolean leaderboard = plugin.npcs().isLeaderboard(clicked);
+        if (!profile && !leaderboard) return;
         // getHand() only exists on 1.9+; on those versions this fires once per hand — skip the off-hand so the
         // GUI opens once. Reflection keeps it compiling against the 1.8 API (no off-hand there).
         try {
@@ -474,6 +485,9 @@ public final class GameListener implements Listener {
             if (hand != null && !"HAND".equals(hand.toString())) return;
         } catch (ReflectiveOperationException ignored) { }
         event.setCancelled(true);
+        // Leaderboard proxies are armor stands: this is the right-click path. Route through handleNpcClick so
+        // admin-sneak opens the editor and everyone else opens the GUI.
+        if (leaderboard) { plugin.npcs().handleNpcClick(event.getPlayer(), clicked); return; }
         plugin.gui().openProfileStats(event.getPlayer());
     }
 
@@ -554,11 +568,13 @@ public final class GameListener implements Listener {
         GameType mode = plugin.npcs().mode(body);
         boolean cosmetics = plugin.npcs().isCosmetics(body);
         boolean profile = plugin.npcs().isProfile(body);
-        if (mode == null && !cosmetics && !profile) return;
+        boolean leaderboard = plugin.npcs().isLeaderboard(body);
+        if (mode == null && !cosmetics && !profile && !leaderboard) return;
         event.setCancelled(true);
         Player player = (Player) event.getDamager();
         boolean adminSneak = player.isSneaking() && plugin.isAdmin(player);
-        if (mode != null) { if (adminSneak) plugin.gui().openNpcEditor(player, mode); else plugin.gui().openQueue(player, mode); }
+        if (leaderboard) { plugin.npcs().handleNpcClick(player, body); }
+        else if (mode != null) { if (adminSneak) plugin.gui().openNpcEditor(player, mode); else plugin.gui().openQueue(player, mode); }
         else if (cosmetics) { if (adminSneak) plugin.gui().openSpecialNpcEditor(player, "COSMETICS"); else plugin.gui().openCosmetics(player); }
         else { if (adminSneak) plugin.gui().openSpecialNpcEditor(player, "PROFILE"); else plugin.gui().openProfileStats(player); }
     }
@@ -892,6 +908,19 @@ public final class GameListener implements Listener {
         }
     }
 
+    /** Post-spawn damage immunity: a freshly (re)spawned player takes no damage for a few seconds; the shield
+     *  drops the moment they attack, so it can't be used to camp. Disabled by default (spawn-protection-seconds 0). */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onSpawnProtection(EntityDamageByEntityEvent event) {
+        if (GameRules.SPAWN_PROTECTION_SECONDS <= 0 || !(event.getEntity() instanceof Player)) return;
+        Player victim = (Player) event.getEntity();
+        ArenaManager manager = plugin.games().arena(victim);
+        if (manager == null || manager.arena().state() != Arena.State.RUNNING) return;
+        Player attacker = combatPlayer(event.getDamager());
+        if (attacker != null && plugin.games().arena(attacker) == manager) manager.clearSpawnProtection(attacker.getUniqueId());
+        if (manager.isSpawnProtected(victim.getUniqueId())) event.setCancelled(true);
+    }
+
     private static Player combatPlayer(Entity damager) {
         if (damager instanceof Player) return (Player) damager;
         if (damager instanceof org.bukkit.entity.Projectile) {
@@ -993,6 +1022,10 @@ public final class GameListener implements Listener {
     @EventHandler public void onChat(AsyncPlayerChatEvent event) {
         if (plugin.gui().acceptSkinInput(event.getPlayer(), event.getMessage())) event.setCancelled(true);
         else if (plugin.gui().acceptRadiusInput(event.getPlayer(), event.getMessage())) event.setCancelled(true);
+        else if (plugin.partyService() != null && plugin.partyService().isChatToggled(event.getPlayer().getUniqueId())) {
+            event.setCancelled(true); // routed into the party channel instead of normal chat
+            plugin.partyService().sendPartyChat(event.getPlayer(), event.getMessage());
+        }
         else plugin.views().formatChat(event);
     }
 
@@ -1127,7 +1160,8 @@ public final class GameListener implements Listener {
             || clean.equals("Import Maps") || clean.equals("Import As")
             || clean.equals("Templates") || clean.equals("Template Mode")
             || clean.equals("World Actions") || clean.equals("Confirm World Delete") || clean.equals("Game Setup") || clean.equals("Team Setup")
-            || clean.equals("NPC Editor") || clean.equals("Skin Presets") || clean.equals("Cosmetics NPC") || clean.equals("Profile NPC")
+            || clean.equals("NPC Editor") || clean.equals("Skin Presets") || clean.equals("Cosmetics NPC") || clean.equals("Profile NPC") || clean.equals("Leaderboard NPC")
+            || clean.equals("Leaderboards") || clean.startsWith("Leaderboard: ")
             || clean.equals("Solo Games") || clean.equals("Doubles Games") || clean.equals("Item Shop")
             || clean.equals("Quick Buy") || clean.equals("Team Upgrades") || clean.equals("Upgrades & Traps") || clean.equals("Spectate")
             || clean.equals("Cosmetics") || clean.equals("My Cosmetics")

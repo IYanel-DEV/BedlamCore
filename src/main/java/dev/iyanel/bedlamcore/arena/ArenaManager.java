@@ -47,6 +47,8 @@ public final class ArenaManager {
     /** Last enemy who damaged this player (void / fall credit when getKiller is null). */
     private final Map<UUID, UUID> lastDamager = new java.util.HashMap<UUID, UUID>();
     private final Map<UUID, Long> lastDamageAt = new java.util.HashMap<UUID, Long>();
+    /** Spawn-protection expiry (ms epoch) per player; empty/absent = not protected. */
+    private final Map<UUID, Long> spawnProtect = new java.util.HashMap<UUID, Long>();
     private final java.util.Random deathRandom = new java.util.Random();
     /** Foot block + facing from last ensureBeds (exact 2-cell footprint). */
     private final Map<TeamColor, Location> bedFeet = new java.util.EnumMap<TeamColor, Location>(TeamColor.class);
@@ -124,6 +126,19 @@ public final class ArenaManager {
         return true;
     }
 
+    /** Seat a whole party in join order (leader first). Capacity is validated by the caller; each online
+     *  member is first moved out of any waiting arena so the party stays contiguous in {@link Arena#players()}. */
+    public boolean joinParty(List<Player> members) {
+        if (members == null || members.isEmpty()) return false;
+        boolean any = false;
+        for (Player member : members) {
+            if (member == null) continue;
+            plugin.games().leave(member); // leave any current waiting arena first (mirrors quickJoin)
+            if (join(member)) any = true;
+        }
+        return any;
+    }
+
     public void leave(Player player) {
         if (!arena.contains(player.getUniqueId())) return;
         boolean announceQuit = arena.state() == Arena.State.WAITING || arena.state() == Arena.State.COUNTDOWN;
@@ -149,6 +164,43 @@ public final class ArenaManager {
         if (arena.state() == Arena.State.COUNTDOWN && arena.players().size() < minimumPlayers()) cancelCountdown();
     }
 
+    /** Tell the arena a participant dropped and has {@code seconds}s to /rejoin before their slot is freed. */
+    public void announceReconnectHold(String name, int seconds) {
+        announce(ChatColor.YELLOW + name + " disconnected — " + seconds + "s to /rejoin.");
+    }
+
+    /** A held participant reconnected within grace: respawn them at base on their retained team. False when the
+     *  match is no longer running (ended / reset while they were away) so the caller sends them to the lobby. */
+    public boolean restoreDisconnect(Player player) {
+        TeamColor team = arena.team(player.getUniqueId());
+        if (team == null || arena.state() != Arena.State.RUNNING) return false;
+        spawnPlayer(player, team);
+        announce(ChatColor.GREEN + player.getName() + " reconnected!");
+        return true;
+    }
+
+    /** Grace lapsed for a disconnected participant: run the removal that {@link #leave(Player)} deferred, including
+     *  the last-alive bed teardown and winner check. The player is offline, so {@code name} is captured at drop. */
+    public void dropDisconnected(UUID uuid, String name) {
+        TeamColor team = arena.players().remove(uuid);
+        arena.eliminated().remove(uuid);
+        arena.clearPlayerState(uuid);
+        softSpectate.clear(uuid);
+        lastDamager.remove(uuid);
+        lastDamageAt.remove(uuid);
+        // Party drops reuse the reconnect-grace path; releasing membership here lets a teammate re-invite.
+        if (plugin.partyService() != null) plugin.partyService().releaseMembership(uuid);
+        if (arena.state() == Arena.State.RUNNING && team != null) {
+            rewards.creditPlay(uuid);
+            if (arena.aliveCount(team) == 0 && arena.bedAlive(team)) {
+                arena.destroyBed(team);
+                removeBedBlocks(arena.settings().team(team).bed());
+            }
+            checkWinner();
+        }
+        announce(ChatColor.YELLOW + name + " did not reconnect.");
+    }
+
     public boolean forceStart() {
         if (arena.state() == Arena.State.RUNNING || arena.state() == Arena.State.ENDING || arena.players().isEmpty()) return false;
         cancelCountdown();
@@ -159,7 +211,7 @@ public final class ArenaManager {
     private void beginCountdown() {
         if (arena.state() != Arena.State.WAITING) return;
         arena.state(Arena.State.COUNTDOWN);
-        final int start = plugin.getConfig().getInt("countdown-seconds", 10);
+        final int start = plugin.settings().countdownSeconds();
         countdownRemaining = start;
         countdownTask = new BukkitRunnable() {
             private int seconds = start;
@@ -218,7 +270,34 @@ public final class ArenaManager {
             plugin.worlds().lockAlwaysDay(world); // force day on WAITING→RUNNING even if night during wait
         }
         Map<TeamColor, Integer> sizes = arena.teamSizes();
+        int teamSize = arena.settings().gameType().teamSize();
+        // Party-aware team assignment: keep each party together as same-team blocks of up to teamSize
+        // (a Doubles pair → one team; a party of 4 → two teams of 2), then fill solos via leastPopulated.
+        // With no parties this reduces to the original join-order leastPopulated loop (solo unchanged).
+        dev.iyanel.bedlamcore.party.PartyService parties = plugin.partyService();
+        java.util.LinkedHashMap<UUID, List<UUID>> groups = new java.util.LinkedHashMap<UUID, List<UUID>>();
+        List<UUID> solos = new ArrayList<UUID>();
         for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
+            UUID key = parties == null ? null : parties.partyKey(uuid);
+            if (key == null) { solos.add(uuid); continue; }
+            List<UUID> group = groups.get(key);
+            if (group == null) { group = new ArrayList<UUID>(); groups.put(key, group); }
+            group.add(uuid);
+        }
+        for (List<UUID> group : groups.values()) {
+            int[] blocks = GameRules.partitionParty(group.size(), teamSize);
+            int index = 0;
+            for (int b = 0; b < blocks.length; b++) {
+                TeamColor team = GameRules.leastPopulated(teams, sizes);
+                for (int i = 0; i < blocks[b]; i++) {
+                    UUID uuid = group.get(index++);
+                    arena.players().put(uuid, team);
+                    arena.markOccupied(team);
+                    sizes.put(team, sizes.get(team) + 1);
+                }
+            }
+        }
+        for (UUID uuid : solos) {
             TeamColor team = GameRules.leastPopulated(teams, sizes);
             arena.players().put(uuid, team);
             arena.markOccupied(team);
@@ -623,7 +702,12 @@ public final class ArenaManager {
         for (TeamColor team : arena.settings().configuredTeams()) {
             int living = 0;
             for (Map.Entry<UUID, TeamColor> entry : arena.players().entrySet()) {
-                if (entry.getValue() == team && !arena.eliminated().contains(entry.getKey()) && Bukkit.getPlayer(entry.getKey()) != null) living++;
+                if (entry.getValue() != team || arena.eliminated().contains(entry.getKey())) continue;
+                // A disconnected player inside their reconnect grace still holds the slot — count them alive so the
+                // match does not end (nor the bed free) while they can still /rejoin.
+                boolean present = Bukkit.getPlayer(entry.getKey()) != null
+                    || (plugin.games() != null && plugin.games().reconnect().has(entry.getKey()));
+                if (present) living++;
             }
             if (GameRules.teamContending(arena.bedAlive(team), living, arena.wasOccupiedThisMatch(team))) contending.add(team);
         }
@@ -642,11 +726,12 @@ public final class ArenaManager {
         }
         Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
             @Override public void run() { reset(); }
-        }, plugin.getConfig().getInt("ending-seconds", 8) * 20L);
+        }, plugin.settings().endingSeconds() * 20L);
     }
 
     public void reset() {
         cancelAllTasks();
+        if (plugin.games() != null) plugin.games().reconnect().clearForArena(this);
         World world = Bukkit.getWorld(arena.settings().worldName());
         if (world != null) plugin.cosmetics().clearWorldEffects(world);
         for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
@@ -663,6 +748,7 @@ public final class ArenaManager {
         softSpectate.clearAll();
         lastDamager.clear();
         lastDamageAt.clear();
+        spawnProtect.clear();
         waitingStructure.remove();
         displays.clear();
         arena.placedBlocks().clear();
@@ -699,6 +785,7 @@ public final class ArenaManager {
 
     public void shutdown() {
         cancelAllTasks();
+        if (plugin.games() != null) plugin.games().reconnect().clearForArena(this);
         World world = Bukkit.getWorld(arena.settings().worldName());
         if (world != null) plugin.cosmetics().clearWorldEffects(world);
         for (UUID uuid : new ArrayList<UUID>(arena.players().keySet())) {
@@ -736,7 +823,22 @@ public final class ArenaManager {
     public void spawnPlayer(Player player, TeamColor team) {
         softSpectate.clear(player.getUniqueId());
         loadout.spawnPlayer(player, team);
+        int secs = GameRules.SPAWN_PROTECTION_SECONDS;
+        if (secs > 0) spawnProtect.put(player.getUniqueId(), System.currentTimeMillis() + secs * 1000L);
+        else spawnProtect.remove(player.getUniqueId());
     }
+
+    /** True while the player is still inside their post-spawn damage-immunity window. */
+    public boolean isSpawnProtected(UUID uuid) {
+        Long until = spawnProtect.get(uuid);
+        if (until == null) return false;
+        if (System.currentTimeMillis() < until) return true;
+        spawnProtect.remove(uuid);
+        return false;
+    }
+
+    /** End spawn protection early (the player attacked, or left). */
+    public void clearSpawnProtection(UUID uuid) { spawnProtect.remove(uuid); }
 
     public void giveOwnedTools(Player player) { loadout.giveOwnedTools(player); }
 
@@ -1050,8 +1152,7 @@ public final class ArenaManager {
     }
 
     private int minimumPlayers() {
-        String mode = arena.settings().gameType().name().toLowerCase();
-        return plugin.getConfig().getInt("modes." + mode + ".minimum-players", 2);
+        return plugin.settings().minimumPlayers(arena.settings().gameType().name());
     }
 
     private static int[] computeBounds(ArenaSettings settings) {

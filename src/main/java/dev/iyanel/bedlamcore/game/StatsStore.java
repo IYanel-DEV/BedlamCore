@@ -29,6 +29,8 @@ public final class StatsStore {
     private final File file;
     private final Map<UUID, Record> records = new LinkedHashMap<UUID, Record>();
     private boolean dirty;
+    /** Fired (null-safe) after any mutation so the leaderboard cache can mark itself stale. */
+    private Runnable onChange;
 
     public StatsStore(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -44,6 +46,16 @@ public final class StatsStore {
         return record == null ? new Record() : record;
     }
 
+    /** Register a listener invoked after every mutation (leaderboard staleness signal). */
+    public void setChangeListener(Runnable listener) {
+        this.onChange = listener;
+    }
+
+    /** Read-only view of all records, keyed by UUID. For main-thread ranking only. */
+    public Map<UUID, Record> snapshot() {
+        return java.util.Collections.unmodifiableMap(records);
+    }
+
     /** Twenty-one shop buy-keys; never null. Unset players get {@link #DEFAULT_FAVORITES}. */
     public String[] favorites(UUID uuid) {
         Record record = records.get(uuid);
@@ -56,12 +68,13 @@ public final class StatsStore {
         Record record = ensure(uuid);
         if (record.favorites == null) record.favorites = DEFAULT_FAVORITES.clone();
         record.favorites[slot] = key == null ? "" : key;
-        dirty = true;
+        touch(record);
     }
 
     public void setFavorites(UUID uuid, String[] favorites) {
-        ensure(uuid).favorites = padFavorites(favorites);
-        dirty = true;
+        Record record = ensure(uuid);
+        record.favorites = padFavorites(favorites);
+        touch(record);
     }
 
     public void apply(UUID uuid, int tokens, int xp, int kills, int beds, int wins, int games) {
@@ -84,14 +97,14 @@ public final class StatsStore {
             slice.wins += wins;
             slice.games += games;
         }
-        dirty = true;
+        touch(record);
     }
 
     public void addFinalKill(UUID uuid, GameType mode) {
         Record record = ensure(uuid);
         record.finalKills++;
         if (mode != null) record.mode(mode).finalKills++;
-        dirty = true;
+        touch(record);
     }
 
     public void addDeath(UUID uuid, GameType mode, boolean finalDeath) {
@@ -103,20 +116,21 @@ public final class StatsStore {
             slice.deaths++;
             if (finalDeath) slice.finalDeaths++;
         }
-        dirty = true;
+        touch(record);
     }
 
     public void addBedLost(UUID uuid, GameType mode) {
         Record record = ensure(uuid);
         record.bedsLost++;
         if (mode != null) record.mode(mode).bedsLost++;
-        dirty = true;
+        touch(record);
     }
 
     public void noteWin(UUID uuid, GameType mode) {
         Record record = ensure(uuid);
         record.winstreak = ProfileStats.nextWinstreak(record.winstreak, true);
-        dirty = true;
+        if (record.winstreak > record.bestWinstreak) record.bestWinstreak = record.winstreak;
+        touch(record);
     }
 
     public void noteLoss(UUID uuid, GameType mode) {
@@ -124,7 +138,7 @@ public final class StatsStore {
         record.losses++;
         record.winstreak = ProfileStats.nextWinstreak(record.winstreak, false);
         if (mode != null) record.mode(mode).losses++;
-        dirty = true;
+        touch(record);
     }
 
     public boolean spendTokens(UUID uuid, int amount) {
@@ -132,7 +146,7 @@ public final class StatsStore {
         Record record = ensure(uuid);
         if (record.tokens < amount) return false;
         record.tokens -= amount;
-        dirty = true;
+        touch(record);
         return true;
     }
 
@@ -144,8 +158,9 @@ public final class StatsStore {
 
     public void ownCosmetic(UUID uuid, String id) {
         if (id == null || id.isEmpty()) return;
-        ensure(uuid).cosmeticsOwned.add(id);
-        dirty = true;
+        Record record = ensure(uuid);
+        record.cosmeticsOwned.add(id);
+        touch(record);
     }
 
     public String equippedCosmetic(UUID uuid, String category) {
@@ -161,7 +176,7 @@ public final class StatsStore {
         Record record = ensure(uuid);
         if (id == null || id.isEmpty()) record.cosmeticsEquipped.remove(category);
         else record.cosmeticsEquipped.put(category, id);
-        dirty = true;
+        touch(record);
     }
 
     /** Disk write if dirty. Periodic flush + plugin disable. */
@@ -184,8 +199,12 @@ public final class StatsStore {
             yaml.set(path + ".final-deaths", record.finalDeaths);
             yaml.set(path + ".beds-lost", record.bedsLost);
             yaml.set(path + ".winstreak", record.winstreak);
+            yaml.set(path + ".best-winstreak", record.bestWinstreak);
+            if (record.lastSeen > 0L) yaml.set(path + ".last-seen", record.lastSeen);
             writeMode(yaml, path + ".solo", record.solo);
             writeMode(yaml, path + ".doubles", record.doubles);
+            writeMode(yaml, path + ".trios", record.trios);
+            writeMode(yaml, path + ".quads", record.quads);
             if (record.favorites != null) {
                 yaml.set(path + ".favorites", Arrays.asList(padFavorites(record.favorites)));
             }
@@ -218,6 +237,18 @@ public final class StatsStore {
         return record;
     }
 
+    /** Stamp last-activity, flag the file dirty, and fire the change listener. */
+    private void touch(Record record) {
+        if (record != null) record.lastSeen = System.currentTimeMillis();
+        markDirty();
+    }
+
+    private void markDirty() {
+        dirty = true;
+        Runnable listener = onChange;
+        if (listener != null) listener.run();
+    }
+
     private void load() {
         if (!file.isFile()) return;
         YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
@@ -240,9 +271,13 @@ public final class StatsStore {
                 record.finalDeaths = yaml.getInt(path + ".final-deaths");
                 record.bedsLost = yaml.getInt(path + ".beds-lost");
                 record.winstreak = yaml.getInt(path + ".winstreak");
+                record.bestWinstreak = yaml.getInt(path + ".best-winstreak", record.winstreak);
+                record.lastSeen = yaml.getLong(path + ".last-seen", 0L);
                 record.level = GameRules.levelFromXp(record.xp);
                 readMode(yaml, path + ".solo", record.solo);
                 readMode(yaml, path + ".doubles", record.doubles);
+                readMode(yaml, path + ".trios", record.trios);
+                readMode(yaml, path + ".quads", record.quads);
                 List<?> fav = yaml.getList(path + ".favorites");
                 if (fav != null) {
                     String[] slots = new String[FAVORITE_SLOTS];
@@ -358,15 +393,27 @@ public final class StatsStore {
         public int finalDeaths;
         public int bedsLost;
         public int winstreak;
+        /** Highest winstreak ever reached; updated whenever the live winstreak exceeds it. */
+        public int bestWinstreak;
+        /** Epoch millis of the last stat write; 0 for legacy files. Powers future weekly/monthly windows. */
+        public long lastSeen;
         public final ModeStats solo = new ModeStats();
         public final ModeStats doubles = new ModeStats();
+        public final ModeStats trios = new ModeStats();
+        public final ModeStats quads = new ModeStats();
         /** Null = never customized (use defaults). Length {@link #FAVORITE_SLOTS}; "" = empty slot. */
         public String[] favorites;
         public final Set<String> cosmeticsOwned = new LinkedHashSet<String>();
         public final Map<String, String> cosmeticsEquipped = new LinkedHashMap<String, String>();
 
         public ModeStats mode(GameType type) {
-            return type == GameType.DOUBLES ? doubles : solo;
+            if (type == null) return solo;
+            switch (type) {
+                case DOUBLES: return doubles;
+                case TRIOS: return trios;
+                case QUADS: return quads;
+                default: return solo;
+            }
         }
 
         @Override public int games() { return games; }

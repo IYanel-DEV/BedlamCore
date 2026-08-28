@@ -1,8 +1,10 @@
 package dev.iyanel.bedlamcore.world;
 
+import dev.iyanel.bedlamcore.arena.GameType;
 import dev.iyanel.bedlamcore.util.AtomicFiles;
 
 import java.util.Arrays;
+import java.util.EnumSet;
 
 /** Dependency-free smoke check for template world-name remapping. */
 public final class MapTemplatesCheck {
@@ -22,6 +24,19 @@ public final class MapTemplatesCheck {
         assertEquals("bedwars-e2560", preferredWorld("bedwars-e2560", false));
         assertEquals("bedwars-e2560_doubles", preferredWorld("bedwars-e2560", true));
         assertTrue(Arrays.asList("bedwars-e2560").contains(MapTemplates.BEDWARS_E2560));
+        // chained template: bundled id, Trios/Quads only, and world-name remap works like e2560.
+        MapTemplates templates = new MapTemplates(null);
+        assertTrue(templates.list().contains(MapTemplates.CHAINED));
+        assertTrue(templates.allowedModes(MapTemplates.CHAINED).equals(EnumSet.of(GameType.TRIOS, GameType.QUADS)));
+        assertTrue(templates.allowedModes(MapTemplates.BEDWARS_E2560).equals(EnumSet.of(GameType.SOLO, GameType.DOUBLES)));
+        String chainedYaml = ""
+            + "arena:\n"
+            + "  mode: TRIOS\n"
+            + "  world: chained\n"
+            + "  waiting-spawn: chained,2.6,114.1,0.4,271.7,90.0\n";
+        String chainedRemap = remapWorld(chainedYaml, "chained", "chained_trios");
+        assertTrue(chainedRemap.contains("world: chained_trios"));
+        assertTrue(chainedRemap.contains("chained_trios,2.6,114.1,0.4"));
         // prepareCopiedWorldFolder: drop locks + modern entity trees before Paper converts 1.8 anvil.
         java.nio.file.Path tmp = java.nio.file.Files.createTempDirectory("bedlam-tmpl");
         try {

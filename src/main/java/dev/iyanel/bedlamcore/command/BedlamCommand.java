@@ -28,6 +28,14 @@ public final class BedlamCommand implements CommandExecutor {
             if (plugin.games().arena(player) == null) plugin.listener().giveNavigation(player);
             return true;
         }
+        if (command.getName().equalsIgnoreCase("rejoin")) {
+            if (!(sender instanceof Player)) { sender.sendMessage("Players only."); return true; }
+            Player player = (Player) sender;
+            if (!plugin.games().reconnect().restore(player)) {
+                player.sendMessage(ChatColor.RED + "No match to rejoin.");
+            }
+            return true;
+        }
         String action = args.length == 0 ? "menu" : args[0].toLowerCase();
         if (action.equals("token") || action.equals("xp")) {
             return economyAdd(sender, action, args);
@@ -50,8 +58,10 @@ public final class BedlamCommand implements CommandExecutor {
         if (action.equals("menu")) plugin.gui().openMain(player);
         else if (action.equals("solo")) plugin.games().quickJoin(player, GameType.SOLO);
         else if (action.equals("doubles") || action.equals("duals")) plugin.games().quickJoin(player, GameType.DOUBLES);
+        else if (action.equals("trios") || action.equals("3v3")) plugin.games().quickJoin(player, GameType.TRIOS);
+        else if (action.equals("quads") || action.equals("4v4")) plugin.games().quickJoin(player, GameType.QUADS);
         else if (action.equals("leave")) plugin.games().leave(player);
-        else player.sendMessage(ChatColor.YELLOW + "/bedlam [menu|solo|doubles|leave|spawnbuild|forcestart|reload|token|xp]");
+        else player.sendMessage(ChatColor.YELLOW + "/bedlam [menu|solo|doubles|trios|quads|leave|spawnbuild|forcestart|reload|token|xp]");
         return true;
     }
 

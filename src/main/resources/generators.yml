@@ -1,0 +1,50 @@
+# ==========================================================================================
+# generators.yml — BedlamCore resource generator engine (team forges + diamond/emerald gens).
+# All values are optional: delete a key to use its default. Bad/missing values fall back safely.
+# Legacy config.yml keys (generator-periods.*, generator-upgrades.*) still work if present.
+# ==========================================================================================
+
+# --- Team forge + mid-gen DROP PERIODS (ticks; 20 ticks = 1 second). Range 1..72000. ---
+generator-periods:
+  iron: 20        # ticks between iron drops at a team forge (default 20 = every 1.0s)
+  gold: 80        # ticks between gold drops at a team forge (default 80 = every 4.0s)
+  diamond: 600    # ticks between diamond drops at a mid diamond gen, tier 1 (default 600 = 30s)
+  emerald: 1200   # ticks between emerald drops at a mid emerald gen, tier 1 (default 1200 = 60s)
+
+# --- Mid-gen tier timings. tier-N-seconds = match seconds until that tier; ---
+# --- tier-N-period = the faster drop period (ticks) once that tier is reached. ---
+generator-upgrades:
+  diamond:
+    tier-2-seconds: 360   # seconds into the match when diamonds reach tier 2 (default 360 = 6:00)
+    tier-3-seconds: 720   # seconds into the match when diamonds reach tier 3 (default 720 = 12:00)
+    tier-2-period: 460    # ticks between diamond drops at tier 2 (default 460 = 23s)
+    tier-3-period: 240    # ticks between diamond drops at tier 3 (default 240 = 12s)
+  emerald:
+    tier-2-seconds: 720   # seconds into the match when emeralds reach tier 2 (default 720 = 12:00)
+    tier-3-seconds: 1080  # seconds into the match when emeralds reach tier 3 (default 1080 = 18:00)
+    tier-2-period: 900    # ticks between emerald drops at tier 2 (default 900 = 45s)
+    tier-3-period: 600    # ticks between emerald drops at tier 3 (default 600 = 30s)
+
+# --- Forge pickup sharing geometry (blocks). ---
+share-radius: 2.5       # horizontal blocks a forge drop is shared to nearby teammates (default 2.5, range 0..256)
+standing-radius: 1.2    # closer than this counts as standing on the forge, default pickup sound (default 1.2)
+share-y-slack: 3.0      # vertical blocks of slack when checking forge share range (default 3.0)
+drop-y: 0.15            # extra Y above the forge block top for ground fallback drops (default 0.15)
+ground-cap-radius: 2.5  # radius (blocks) used to count already-dropped items for the ground cap (default 2.5)
+forge-level-max: 4      # highest team forge upgrade level (default 4, range 1..64)
+
+# --- Ground-stack CAPS: a source stops dropping while at least this many are already on the ground. ---
+caps:
+  diamond: 4       # max diamonds on the ground per island diamond gen (default 4)
+  emerald: 4       # max emeralds on the ground per emerald gen (default 4)
+  iron: 64         # max iron on the ground at a team forge below max level (default 64)
+  gold: 16         # max gold on the ground at a team forge below max level (default 16)
+  iron-maxed: 124  # iron ground cap once the forge is at max level (default 124)
+  gold-maxed: 32   # gold ground cap once the forge is at max level (default 32)
+
+# --- Rare forge bonus: chance PER forge iron/gold tick to also drop a diamond/emerald (fraction 0..1). ---
+forge-bonus:
+  l2-diamond: 0.02   # diamond chance per tick at forge level 2 (default 0.02 = 2%)
+  l2-emerald: 0.01   # emerald chance per tick at forge level 2 (default 0.01 = 1%)
+  l3-diamond: 0.04   # diamond chance per tick at forge level 3+ (default 0.04 = 4%)
+  l3-emerald: 0.025  # emerald chance per tick at forge level 3+ (default 0.025 = 2.5%)

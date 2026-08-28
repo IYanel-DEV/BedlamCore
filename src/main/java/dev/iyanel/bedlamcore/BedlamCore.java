@@ -14,8 +14,12 @@ import dev.iyanel.bedlamcore.game.NetworkViewService;
 import dev.iyanel.bedlamcore.game.SidebarService;
 import dev.iyanel.bedlamcore.game.StatsStore;
 import dev.iyanel.bedlamcore.gui.GuiController;
+import dev.iyanel.bedlamcore.leaderboard.LeaderboardService;
 import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.lobby.LobbySettings;
+import dev.iyanel.bedlamcore.party.BedlamPartyApi;
+import dev.iyanel.bedlamcore.party.PartyService;
+import dev.iyanel.bedlamcore.command.PartyCommand;
 import dev.iyanel.bedlamcore.world.GameWorlds;
 import dev.iyanel.bedlamcore.world.MapTemplates;
 import org.bukkit.command.CommandSender;
@@ -33,21 +37,27 @@ public final class BedlamCore extends JavaPlugin {
     private NetworkViewService views;
     private SidebarService sidebars;
     private StatsStore stats;
+    private LeaderboardService leaderboards;
     private CosmeticsService cosmetics;
     private GuiController gui;
     private GameListener listener;
+    private PartyService party;
+    private dev.iyanel.bedlamcore.config.BedlamSettings settings;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        settings = new dev.iyanel.bedlamcore.config.BedlamSettings(this); // loads game.yml/generators.yml, applies GameRules
         repository = new ArenaRepository(this);
         waitingTemplates = new WaitingTemplateService(this);
         stats = new StatsStore(this);
+        leaderboards = new LeaderboardService(this, stats); // before LobbyNpcService: the board reads cached rankings
         cosmetics = new CosmeticsService(this);
         lobby = repository.loadLobby();
         worlds = new GameWorlds(this);
         templates = new MapTemplates(this);
         npcs = new LobbyNpcService(this);
+        party = new PartyService(this); // before GameService: party-aware quickJoin reads through it
         games = new GameService(this, repository.loadArenas());
         views = new NetworkViewService(this);
         gui = new GuiController(this);
@@ -62,6 +72,16 @@ public final class BedlamCore extends JavaPlugin {
         if (command != null) command.setExecutor(new BedlamCommand(this));
         PluginCommand leave = getCommand("leave");
         if (leave != null) leave.setExecutor(new BedlamCommand(this));
+        PluginCommand rejoin = getCommand("rejoin");
+        if (rejoin != null) rejoin.setExecutor(new BedlamCommand(this));
+        PartyCommand partyCommand = new PartyCommand(this);
+        PluginCommand partyCmd = getCommand("party");
+        if (partyCmd != null) { partyCmd.setExecutor(partyCommand); partyCmd.setTabCompleter(partyCommand); }
+        PluginCommand partyChat = getCommand("pc");
+        if (partyChat != null) partyChat.setExecutor(partyCommand);
+        dev.iyanel.bedlamcore.command.LeaderboardCommand leaderboardCommand = new dev.iyanel.bedlamcore.command.LeaderboardCommand(this);
+        PluginCommand leaderboard = getCommand("leaderboard");
+        if (leaderboard != null) { leaderboard.setExecutor(leaderboardCommand); leaderboard.setTabCompleter(leaderboardCommand); }
         npcs.respawnAll();
         // No JVM shutdown hook: onDisable() already saves while worlds are loaded. A second save from a
         // shutdown-hook thread runs after (or races) world unload, so Locations.encode() sees null worlds
@@ -83,6 +103,8 @@ public final class BedlamCore extends JavaPlugin {
         }
         // Unload arena worlds without save (clears win-dragon grief from memory; disk pristine untouched).
         try { if (games != null) games.shutdown(); } catch (Throwable ignored) { }
+        if (party != null) try { party.shutdown(); } catch (Throwable ignored) { }
+        if (leaderboards != null) try { leaderboards.shutdown(); } catch (Throwable ignored) { }
         if (stats != null) try { stats.save(); } catch (Throwable ignored) { }
     }
 
@@ -96,9 +118,15 @@ public final class BedlamCore extends JavaPlugin {
     public NetworkViewService views() { return views; }
     public SidebarService sidebars() { return sidebars; }
     public StatsStore stats() { return stats; }
+    public LeaderboardService leaderboards() { return leaderboards; }
     public CosmeticsService cosmetics() { return cosmetics; }
     public GuiController gui() { return gui; }
     public GameListener listener() { return listener; }
+    /** Public party API for other plugins (create/inspect/disband). */
+    public BedlamPartyApi party() { return party; }
+    /** Internal party manager (queueing, chat, provider registration). */
+    public PartyService partyService() { return party; }
+    public dev.iyanel.bedlamcore.config.BedlamSettings settings() { return settings; }
     public boolean isAdmin(CommandSender sender) { return sender.isOp() || sender.hasPermission("bedlam.admin"); }
 
     public void applyLobby(LobbySettings value) {
@@ -112,6 +140,9 @@ public final class BedlamCore extends JavaPlugin {
         npcs.removeAll();
         games.shutdown();
         reloadConfig();
+        settings.reload(); // re-read game.yml/generators.yml + re-apply GameRules
+        if (party != null) party.reload(); // re-select provider + reschedule invite expiry
+        if (leaderboards != null) leaderboards.reload(); // re-read tunables + recompute rankings
         cosmetics.reload();
         lobby = repository.loadLobby();
         games = new GameService(this, repository.loadArenas());

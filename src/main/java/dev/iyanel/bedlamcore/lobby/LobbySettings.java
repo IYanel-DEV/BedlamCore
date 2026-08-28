@@ -12,10 +12,13 @@ public final class LobbySettings {
     private final Map<GameType, NpcSettings> npcs = new EnumMap<GameType, NpcSettings>(GameType.class);
     private Location cosmeticsNpc;
     private Location profileNpc;
+    private Location leaderboardNpc;
     private String cosmeticsSkin;
     private String profileSkin;
+    private String leaderboardSkin;
     private boolean cosmeticsCape;
     private boolean profileCape;
+    private boolean leaderboardCape;
 
     public LobbySettings() {
         for (GameType type : GameType.values()) npcs.put(type, new NpcSettings());
@@ -28,14 +31,20 @@ public final class LobbySettings {
     public void cosmeticsNpc(Location value) { cosmeticsNpc = clone(value); }
     public Location profileNpc() { return clone(profileNpc); }
     public void profileNpc(Location value) { profileNpc = clone(value); }
+    public Location leaderboardNpc() { return clone(leaderboardNpc); }
+    public void leaderboardNpc(Location value) { leaderboardNpc = clone(value); }
     public String cosmeticsSkin() { return cosmeticsSkin; }
     public void cosmeticsSkin(String value) { cosmeticsSkin = value == null || value.trim().isEmpty() ? null : value.trim(); }
     public String profileSkin() { return profileSkin; }
     public void profileSkin(String value) { profileSkin = value == null || value.trim().isEmpty() ? null : value.trim(); }
+    public String leaderboardSkin() { return leaderboardSkin; }
+    public void leaderboardSkin(String value) { leaderboardSkin = value == null || value.trim().isEmpty() ? null : value.trim(); }
     public boolean cosmeticsCape() { return cosmeticsCape; }
     public void cosmeticsCape(boolean value) { cosmeticsCape = value; }
     public boolean profileCape() { return profileCape; }
     public void profileCape(boolean value) { profileCape = value; }
+    public boolean leaderboardCape() { return leaderboardCape; }
+    public void leaderboardCape(boolean value) { leaderboardCape = value; }
     public boolean complete() { return spawn != null && npc(GameType.SOLO).location() != null && npc(GameType.DOUBLES).location() != null; }
 
     public LobbySettings copy() {
@@ -43,10 +52,13 @@ public final class LobbySettings {
         copy.spawn(spawn);
         copy.cosmeticsNpc(cosmeticsNpc);
         copy.profileNpc(profileNpc);
+        copy.leaderboardNpc(leaderboardNpc);
         copy.cosmeticsSkin(cosmeticsSkin);
         copy.profileSkin(profileSkin);
+        copy.leaderboardSkin(leaderboardSkin);
         copy.cosmeticsCape(cosmeticsCape);
         copy.profileCape(profileCape);
+        copy.leaderboardCape(leaderboardCape);
         for (GameType type : GameType.values()) {
             copy.npc(type).location(npc(type).location());
             copy.npc(type).entityType(npc(type).entityType());

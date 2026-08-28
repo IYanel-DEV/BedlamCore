@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -30,7 +31,9 @@ import java.util.zip.ZipInputStream;
  */
 public final class MapTemplates {
     public static final String BEDWARS_E2560 = "bedwars-e2560";
-    private static final List<String> IDS = Collections.unmodifiableList(Arrays.asList(BEDWARS_E2560));
+    /** Chained: a 4-island bundled template, playable only as Trios (4x3) or Quads (4x4). */
+    public static final String CHAINED = "chained";
+    private static final List<String> IDS = Collections.unmodifiableList(Arrays.asList(BEDWARS_E2560, CHAINED));
     private static final Set<String> SKIP_COPY = new HashSet<String>(Arrays.asList(
         "arena.yml", "session.lock", "uid.dat", ".DS_Store"));
 
@@ -42,6 +45,16 @@ public final class MapTemplates {
 
     public List<String> list() {
         return IDS;
+    }
+
+    /**
+     * Modes a template may materialize as. {@code chained} is a 4-team island map → Trios/Quads only;
+     * {@code bedwars-e2560} (and any other id) stays Solo/Doubles. Enforced hard by {@link #materialize}
+     * and used by the setup GUI to render only the valid buttons.
+     */
+    public EnumSet<GameType> allowedModes(String id) {
+        if (CHAINED.equals(id)) return EnumSet.of(GameType.TRIOS, GameType.QUADS);
+        return EnumSet.of(GameType.SOLO, GameType.DOUBLES);
     }
 
     /** Extract jar zip to {@code plugins/BedlamCore/templates/<id>/} if missing {@code arena.yml}. */
@@ -77,6 +90,11 @@ public final class MapTemplates {
      */
     public ArenaSettings materialize(String templateId, GameType type) throws IOException {
         if (type == null) type = GameType.SOLO;
+        EnumSet<GameType> allowed = allowedModes(templateId);
+        if (!allowed.contains(type)) {
+            throw new IOException(templateId + " cannot be set up as " + type.displayName()
+                + "; allowed modes: " + allowed);
+        }
         Path templateDir = ensureExtracted(templateId);
         String worldName = resolveWorldName(templateId, type);
         if (plugin.games().byId(worldName) != null || plugin.games().arenaInWorld(worldName) != null) {

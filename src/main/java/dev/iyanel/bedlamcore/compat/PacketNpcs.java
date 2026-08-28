@@ -17,6 +17,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -56,6 +57,13 @@ public final class PacketNpcs {
     private static Constructor<?> propertyCtor3;   // (name, value, signature) — SIGNED textures
     private static Method propertiesPut;
     private static Method getPropertiesMethod;     // GameProfile getProperties() (legacy) or properties() (record, authlib 9.x)
+    // authlib 9.x (Paper 1.21+/26.x): properties() is an IMMUTABLE multimap and PropertyMap has no no-arg ctor
+    // (only PropertyMap(Multimap)). Build a mutable Guava multimap, wrap it in a PropertyMap, and pass that to
+    // the GameProfile(UUID,String,PropertyMap) record constructor.
+    private static Method multimapCreate;                // LinkedHashMultimap.create()
+    private static Method multimapPut;                   // Multimap.put(Object,Object)
+    private static Constructor<?> propertyMapWrapCtor;   // PropertyMap(Multimap)
+    private static Constructor<?> gameProfilePropMapCtor; // GameProfile(UUID,String,PropertyMap)
 
     // EntityPlayer construction path
     private static Method serverGetter;
@@ -93,6 +101,12 @@ public final class PacketNpcs {
     private static final Map<String, Object> profileCache = new ConcurrentHashMap<String, Object>();
     private static final AtomicInteger NEXT_ID = new AtomicInteger(0x40000000);
 
+    /** Callback fired (on the main thread) when a viewer right/left-clicks a fake-player model. The model has no
+     *  server entity, so the click arrives as an inbound interact packet intercepted on the viewer's channel. */
+    public interface ClickHandler {
+        void click(Player viewer);
+    }
+
     /** One packet NPC: prebuilt tab/spawn packets plus the id/uuid the look packets need. */
     public static final class Model {
         int entityId;
@@ -105,6 +119,7 @@ public final class PacketNpcs {
         Object tabRemove;                              // prebuilt tab-remove packet
         Object swing;                                  // cached arm-swing packet (nullable)
         Plugin plugin;                                 // for the delayed tab-remove
+        volatile ClickHandler onClick;                 // dispatched when a viewer clicks the model (nullable)
         final Map<UUID, Boolean> shown = new ConcurrentHashMap<UUID, Boolean>();
 
         Model(int entityId, UUID uuid, String name, Location location) {
@@ -114,11 +129,28 @@ public final class PacketNpcs {
             this.location = location.clone();
         }
 
+        /** Fire this model's action when a viewer clicks it — replaces the vanilla interact event a real body
+         *  would have fired (a fake player has no server entity). */
+        public void onClick(ClickHandler handler) {
+            this.onClick = handler;
+        }
+
         /** Drop one viewer from the shown set — a rejoining client never received the old spawn. */
         public void forget(UUID viewer) {
             shown.remove(viewer);
         }
     }
+
+    // ------------------------------------------------------------------ inbound click interception
+    // A fake-player model is client-side only, so a right/left-click on it never reaches the server as a Bukkit
+    // interact event — the client sends an inbound interact packet naming the model's (server-unknown) entity id.
+    // We add a reflective Netty inbound handler to each viewer's channel that spots those packets and routes them
+    // to the model's ClickHandler. Best-effort: any failure just leaves the (less reliable) real-body click path.
+    private static final Map<Integer, Model> MODELS_BY_ID = new ConcurrentHashMap<Integer, Model>();
+    private static final java.util.Set<UUID> INTERCEPTED =
+        java.util.Collections.newSetFromMap(new ConcurrentHashMap<UUID, Boolean>());
+    private static final Map<UUID, Long> LAST_CLICK = new ConcurrentHashMap<UUID, Long>();
+    private static volatile Plugin interceptPlugin;
 
     public static boolean available() {
         resolve();
@@ -237,6 +269,8 @@ public final class PacketNpcs {
                 return null;
             }
             model.plugin = plugin;
+            interceptPlugin = plugin;
+            MODELS_BY_ID.put(Integer.valueOf(model.entityId), model);
             return model;
         } catch (Throwable t) {
             logOnce("PacketNpcs model build failed at " + step + ": " + t);
@@ -260,6 +294,15 @@ public final class PacketNpcs {
         Bukkit.getLogger().info("[PacketNpcs] " + message + at);
     }
 
+    private static volatile boolean resolveDebugged;
+
+    /** One-shot startup diagnosis for the 26.2 packet player-model resolve path. */
+    private static void resolveDebug(String reason) {
+        if (resolveDebugged) return;
+        resolveDebugged = true;
+        Bukkit.getLogger().info("[PacketNpcs] 26.2 resolve diagnosis: " + reason);
+    }
+
     /** Send tab-add + spawn to one viewer, then remove the tab entry after a delay so the NPC does NOT clutter
      * the Tab player list. Safe now that textures are SIGNED: on 1.12.2 the client resolves a player entity's
      * skin from the tab list on first render (AbstractClientPlayer.getPlayerInfo) and then CACHES it on the
@@ -269,6 +312,7 @@ public final class PacketNpcs {
     public static void show(final Player viewer, final Model model) {
         if (viewer == null || model == null || !ok) return;
         if (model.shown.putIfAbsent(viewer.getUniqueId(), Boolean.TRUE) != null) return;
+        installInterceptor(viewer);
         try {
             send(viewer, model.tabAdd);
             send(viewer, model.spawn);
@@ -312,9 +356,196 @@ public final class PacketNpcs {
         }
     }
 
+    /** Add our reflective Netty inbound handler to a viewer's channel (idempotent per session). Best-effort: any
+     *  failure just skips interception and the real-body click path remains. */
+    /** Temporary click-path diagnostics (INFO log, capped so it can't spam). Flip off once the 1.8 click path is fixed. */
+    static final boolean DEBUG = true;
+    private static final AtomicInteger DEBUG_INBOUND = new AtomicInteger(0);
+
+    private static void installInterceptor(Player viewer) {
+        if (viewer == null || interceptPlugin == null) return;
+        if (!INTERCEPTED.add(viewer.getUniqueId())) return;
+        try {
+            Object handle = viewer.getClass().getMethod("getHandle").invoke(viewer);
+            Object connection = connectionField.get(handle);
+            Object channel = channelOf(connection);
+            if (channel == null) {
+                INTERCEPTED.remove(viewer.getUniqueId());
+                if (DEBUG) Bukkit.getLogger().info("[PacketNpcs][dbg] no channel for " + viewer.getName() + " — interceptor NOT installed");
+                return;
+            }
+            // Resolve pipeline methods from the PUBLIC interfaces (Channel / ChannelPipeline), never from the
+            // concrete impl class: DefaultChannelPipeline is not accessible from our classloader, so a Method
+            // taken off pipeline.getClass() throws IllegalAccessException on invoke (the 1.8 "interceptor never
+            // installed" bug — the fake-player click path was dead and only the real body registered clicks).
+            ClassLoader cl = channel.getClass().getClassLoader();
+            Class<?> channelIface = Class.forName("io.netty.channel.Channel", false, cl);
+            Class<?> pipelineIface = Class.forName("io.netty.channel.ChannelPipeline", false, cl);
+            Class<?> handlerIface = Class.forName("io.netty.channel.ChannelHandler", false, cl);
+            Object pipeline = channelIface.getMethod("pipeline").invoke(channel);
+            if (pipelineIface.getMethod("get", String.class).invoke(pipeline, "bedlam_npc_in") != null) return;
+            Object handler = createInboundHandler(cl, viewer);
+            try {
+                pipelineIface.getMethod("addBefore", String.class, String.class, handlerIface)
+                    .invoke(pipeline, "packet_handler", "bedlam_npc_in", handler);
+            } catch (Throwable noPacketHandler) {
+                pipelineIface.getMethod("addLast", String.class, handlerIface)
+                    .invoke(pipeline, "bedlam_npc_in", handler);
+            }
+            if (DEBUG) Bukkit.getLogger().info("[PacketNpcs][dbg] interceptor installed for " + viewer.getName());
+        } catch (Throwable t) {
+            INTERCEPTED.remove(viewer.getUniqueId());
+            if (DEBUG) Bukkit.getLogger().info("[PacketNpcs][dbg] interceptor install FAILED for " + viewer.getName() + ": " + t);
+        }
+    }
+
+    /** Forget a disconnected viewer so a reconnect (fresh channel) re-installs the interceptor. */
+    public static void clearViewer(UUID viewer) {
+        if (viewer == null) return;
+        INTERCEPTED.remove(viewer);
+        LAST_CLICK.remove(viewer);
+    }
+
+    /** The io.netty Channel reachable from the player's connection (listener → NetworkManager → channel). */
+    private static Object channelOf(Object listener) {
+        if (listener == null) return null;
+        try {
+            for (Class<?> c = listener.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+                for (Field f : c.getDeclaredFields()) {
+                    try {
+                        f.setAccessible(true);
+                        Object val = f.get(listener);
+                        if (val == null) continue;
+                        Object ch = channelField(val);
+                        if (ch != null) return ch;
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static Object channelField(Object holder) {
+        Class<?> channelClass;
+        try {
+            channelClass = Class.forName("io.netty.channel.Channel", false, holder.getClass().getClassLoader());
+        } catch (Throwable t) {
+            return null;
+        }
+        for (Class<?> c = holder.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Field f : c.getDeclaredFields()) {
+                if (!channelClass.isAssignableFrom(f.getType())) continue;
+                try {
+                    f.setAccessible(true);
+                    Object v = f.get(holder);
+                    if (v != null) return v;
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    /** A dynamic-proxy ChannelInboundHandler: inspects inbound interact packets, forwards every event unchanged. */
+    private static Object createInboundHandler(ClassLoader cl, final Player viewer) throws Exception {
+        Class<?> inbound = Class.forName("io.netty.channel.ChannelInboundHandler", false, cl);
+        java.lang.reflect.InvocationHandler h = new java.lang.reflect.InvocationHandler() {
+            @Override public Object invoke(Object proxy, java.lang.reflect.Method method, Object[] args) throws Throwable {
+                String n = method.getName();
+                Object ctx = (args != null && args.length > 0) ? args[0] : null;
+                if ("channelRead".equals(n) && args != null && args.length > 1) {
+                    try { onInbound(viewer, args[1]); } catch (Throwable ignored) { }
+                    return fire(ctx, "fireChannelRead", Object.class, args[1]);
+                }
+                if ("exceptionCaught".equals(n) && args != null && args.length > 1) {
+                    return fire(ctx, "fireExceptionCaught", Throwable.class, args[1]);
+                }
+                if ("userEventTriggered".equals(n) && args != null && args.length > 1) {
+                    return fire(ctx, "fireUserEventTriggered", Object.class, args[1]);
+                }
+                if ("channelRegistered".equals(n)) return fire0(ctx, "fireChannelRegistered");
+                if ("channelUnregistered".equals(n)) return fire0(ctx, "fireChannelUnregistered");
+                if ("channelActive".equals(n)) return fire0(ctx, "fireChannelActive");
+                if ("channelInactive".equals(n)) return fire0(ctx, "fireChannelInactive");
+                if ("channelReadComplete".equals(n)) return fire0(ctx, "fireChannelReadComplete");
+                if ("channelWritabilityChanged".equals(n)) return fire0(ctx, "fireChannelWritabilityChanged");
+                if ("isSharable".equals(n)) return Boolean.FALSE;
+                if ("equals".equals(n)) return Boolean.valueOf(proxy == (args != null ? args[0] : null));
+                if ("hashCode".equals(n)) return Integer.valueOf(System.identityHashCode(proxy));
+                if ("toString".equals(n)) return "bedlam_npc_in";
+                return null; // handlerAdded / handlerRemoved / anything else: no-op
+            }
+        };
+        return java.lang.reflect.Proxy.newProxyInstance(cl, new Class<?>[]{inbound}, h);
+    }
+
+    // Resolve fire* methods from the PUBLIC ChannelHandlerContext interface, NOT ctx.getClass() (a non-public
+    // impl like AbstractChannelHandlerContext → IllegalAccessException on invoke → the event is silently dropped).
+    // Dropping inbound events breaks EVERY client→server packet flowing through us: chat, window/inventory clicks,
+    // keepalive (→ disconnect). This is the same access bug that hid the interceptor install on 1.8.
+    private static volatile Class<?> ctxIfaceCache;
+    private static Class<?> ctxIface(Object ctx) throws ClassNotFoundException {
+        Class<?> cached = ctxIfaceCache;
+        if (cached != null) return cached;
+        cached = Class.forName("io.netty.channel.ChannelHandlerContext", false, ctx.getClass().getClassLoader());
+        ctxIfaceCache = cached;
+        return cached;
+    }
+
+    private static Object fire0(Object ctx, String method) {
+        try { return ctxIface(ctx).getMethod(method).invoke(ctx); } catch (Throwable ignored) { return null; }
+    }
+
+    private static Object fire(Object ctx, String method, Class<?> argType, Object arg) {
+        try { return ctxIface(ctx).getMethod(method, argType).invoke(ctx, arg); } catch (Throwable ignored) { return null; }
+    }
+
+    /** If an inbound packet is an interact/use-entity naming one of our model ids, dispatch that model's click on
+     *  the main thread. Debounced per viewer only to collapse the INTERACT_AT + INTERACT pair a single right-click
+     *  sends (1.8 and 1.9+ both send both, same tick). Window is short so a deliberate second click still registers
+     *  — 250ms swallowed retry clicks on 1.8, forcing the "click many times / shift-left" workaround. */
+    private static final long CLICK_DEDUP_MS = 60L;
+    private static void onInbound(final Player viewer, Object packet) {
+        if (packet == null || interceptPlugin == null) return;
+        String cn = packet.getClass().getName();
+        if (!cn.contains("UseEntity") && !cn.contains("Interact")) return;
+        int id = firstIntField(packet);
+        final Model model = MODELS_BY_ID.get(Integer.valueOf(id));
+        if (DEBUG && DEBUG_INBOUND.getAndIncrement() < 60) {
+            Bukkit.getLogger().info("[PacketNpcs][dbg] inbound " + cn + " id=" + id
+                + " model=" + (model != null) + " onClick=" + (model != null && model.onClick != null)
+                + " knownIds=" + MODELS_BY_ID.keySet());
+        }
+        if (model == null || model.onClick == null) return;
+        long now = System.currentTimeMillis();
+        Long last = LAST_CLICK.get(viewer.getUniqueId());
+        if (last != null && now - last.longValue() < CLICK_DEDUP_MS) return;
+        LAST_CLICK.put(viewer.getUniqueId(), Long.valueOf(now));
+        final ClickHandler handler = model.onClick;
+        try {
+            Bukkit.getScheduler().runTask(interceptPlugin, new Runnable() {
+                @Override public void run() { if (viewer.isOnline()) handler.click(viewer); }
+            });
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static int firstIntField(Object packet) {
+        for (Class<?> c = packet.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Field f : c.getDeclaredFields()) {
+                if (f.getType() != int.class) continue;
+                try { f.setAccessible(true); return f.getInt(packet); } catch (Throwable ignored) { }
+            }
+        }
+        return Integer.MIN_VALUE;
+    }
+
     /** Destroy for everyone and reset the shown set (body despawn / relocate). */
     public static void destroy(Model model) {
         if (model == null || destroyCtor == null) return;
+        MODELS_BY_ID.remove(Integer.valueOf(model.entityId), model);
         Object destroyPacket;
         try {
             destroyPacket = destroyCtor.newInstance(new int[]{model.entityId});
@@ -576,9 +807,13 @@ public final class PacketNpcs {
         return (byte) Math.floor(degrees * 256.0f / 360.0f);
     }
 
-    private static Object enumSetOf(Object constant) throws Exception {
-        Method of = Class.forName("java.util.EnumSet").getMethod("of", Object.class);
-        return of.invoke(null, constant);
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Object enumSetOf(Object constant) {
+        // EnumSet.of erases to of(Enum), not of(Object), so getMethod("of", Object.class) throws
+        // NoSuchMethodException. Build the set directly instead — no reflection, works on every JVM.
+        EnumSet set = EnumSet.noneOf(((Enum) constant).getDeclaringClass());
+        set.add(constant);
+        return set;
     }
 
     private static boolean send(Player viewer, Object packet) {
@@ -601,16 +836,38 @@ public final class PacketNpcs {
     private static Object withRandomUuid(Object profile) {
         try {
             Object name = profileNameAccessor().invoke(profile);
-            Object clone = profileCtor.newInstance(UUID.randomUUID(), name == null ? "§7§7" : name);
             Object srcProps = getPropertiesMethod.invoke(profile);
-            Object dstProps = getPropertiesMethod.invoke(clone);
             Object textures = srcProps.getClass().getMethod("get", Object.class).invoke(srcProps, "textures");
+            Object property = null;
             if (textures instanceof Iterable) {
-                for (Object property : (Iterable<?>) textures) propertiesPut.invoke(dstProps, "textures", property);
+                for (Object p : (Iterable<?>) textures) { property = p; break; }
             }
-            return clone;
+            return profileWith(UUID.randomUUID(), name == null ? "§7§7" : name.toString(), property);
         } catch (Throwable ignored) {
             return profile;
+        }
+    }
+
+    /** Build a GameProfile carrying {@code property} (may be null) across authlib versions. Legacy authlib exposes
+     *  a MUTABLE properties multimap (getProperties().put); authlib 9.x (Paper 1.21+/26.x) returns an IMMUTABLE
+     *  multimap and throws UnsupportedOperationException on put — there we populate a fresh mutable PropertyMap and
+     *  hand it to the GameProfile(UUID,String,PropertyMap) record constructor. */
+    private static Object profileWith(UUID uuid, String name, Object property) throws Exception {
+        Object profile = profileCtor.newInstance(uuid, name);
+        if (property == null) return profile;
+        try {
+            Object properties = getPropertiesMethod.invoke(profile);
+            propertiesPut.invoke(properties, "textures", property);
+            return profile;
+        } catch (Throwable immutable) {
+            if (gameProfilePropMapCtor == null || propertyMapWrapCtor == null
+                || multimapCreate == null || multimapPut == null) {
+                throw (immutable instanceof Exception) ? (Exception) immutable : new Exception(immutable);
+            }
+            Object multimap = multimapCreate.invoke(null);
+            multimapPut.invoke(multimap, "textures", property);
+            Object propMap = propertyMapWrapCtor.newInstance(multimap);
+            return gameProfilePropMapCtor.newInstance(uuid, name, propMap);
         }
     }
 
@@ -643,15 +900,13 @@ public final class PacketNpcs {
         // Stripping the cape would change the value and INVALIDATE that signature (isSignatureValid fails → same
         // default-skin fallback), so only strip capes from UNSIGNED (URL) values — signed skins keep their cape.
         if (textureValue != null && !cape && signature == null) textureValue = stripCape(textureValue);
-        Object profile = profileCtor.newInstance(uuid, "\u00A77\u00A77");
+        Object property = null;
         if (textureValue != null) {
-            Object properties = getPropertiesMethod.invoke(profile);
-            Object property = (signature != null && propertyCtor3 != null)
+            property = (signature != null && propertyCtor3 != null)
                 ? propertyCtor3.newInstance("textures", textureValue, signature)
                 : propertyCtor.newInstance("textures", textureValue);
-            propertiesPut.invoke(properties, "textures", property);
         }
-        return profile;
+        return profileWith(uuid, "\u00A77\u00A77", property);
     }
 
     /**
@@ -763,6 +1018,16 @@ public final class PacketNpcs {
             Method getProps = profilePropertiesAccessor();
             getPropertiesMethod = getProps;
             propertiesPut = getProps.getReturnType().getMethod("put", Object.class, Object.class);
+            // authlib 9.x immutable-properties path (best-effort; absent/unused on legacy authlib).
+            try {
+                Class<?> propMapClass = Class.forName("com.mojang.authlib.properties.PropertyMap");
+                Class<?> multimapClass = Class.forName("com.google.common.collect.Multimap");
+                multimapCreate = Class.forName("com.google.common.collect.LinkedHashMultimap").getMethod("create");
+                multimapPut = multimapClass.getMethod("put", Object.class, Object.class);
+                propertyMapWrapCtor = propMapClass.getConstructor(multimapClass);
+                gameProfilePropMapCtor = profileClass().getConstructor(UUID.class, String.class, propMapClass);
+            } catch (Throwable ignored) {
+            }
 
             // send plumbing
             String craftPkg = versioned ? "org.bukkit.craftbukkit." + v : "org.bukkit.craftbukkit";
@@ -995,14 +1260,28 @@ public final class PacketNpcs {
             }
 
             // 26.2 Entry path
+            StringBuilder dbg = new StringBuilder();
             try {
+                dbg.append("update=");
                 Class<?> update = Class.forName(
                     "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket");
-                Class<?> actionClass = Class.forName(
-                    "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$a");
+                dbg.append("ok");
+                // Inner-class names differ: Mojang-mapped 1.20.4 uses $a/$b, newer 26.x uses $Action/$Entry.
+                dbg.append(";action=");
+                Class<?> actionClass = classFor(
+                    "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$a",
+                    "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$Action");
+                if (actionClass == null) throw new ClassNotFoundException("player info action");
                 updateAddAction = actionClass.getEnumConstants()[0]; // ADD_PLAYER
-                Class<?> entryClass = Class.forName(
-                    "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$b");
+                dbg.append(actionClass.getSimpleName());
+                dbg.append(";entry=");
+                Class<?> entryClass = classFor(
+                    "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$b",
+                    "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$Entry");
+                if (entryClass == null) throw new ClassNotFoundException("player info entry");
+                dbg.append(entryClass.getSimpleName());
+                dbg.append(";gameProfile=").append(gameProfile == null ? "null" : gameProfile.getSimpleName());
+                entryCtor = null;
                 for (Constructor<?> ctor : entryClass.getConstructors()) {
                     Class<?>[] p = ctor.getParameterTypes();
                     if (p.length >= 2 && p[0] == UUID.class && p[1] == gameProfile) {
@@ -1011,7 +1290,10 @@ public final class PacketNpcs {
                         break;
                     }
                 }
+                dbg.append(";entryCtor=").append(entryCtor == null ? "null" : (entryNineArg ? "9arg" : "6arg"));
                 infoUpdateEntryListCtor = update.getConstructor(java.util.EnumSet.class, java.util.List.class);
+                dbg.append(";listCtor=ok");
+                if (entryCtor == null) throw new ClassNotFoundException("entry ctor");
                 // game type constant: prefer SURVIVAL, else the first constant
                 Class<?> gameType = entryCtor.getParameterTypes()[4];
                 try {
@@ -1019,35 +1301,63 @@ public final class PacketNpcs {
                 } catch (Throwable ignored) {
                     gameTypeConst = gameType.getEnumConstants()[0];
                 }
+                dbg.append(";gameType=").append(gameTypeConst == null ? "null" : "set");
                 // add-entity packet: (int, UUID, DDD, FF, EntityTypes, int, Vec3, double)
                 Class<?> addEntity = Class.forName(
                     "net.minecraft.network.protocol.game.ClientboundAddEntityPacket");
                 Class<?> vecClass = null;
                 Class<?> entityTypeClass = null;
+                addEntityCtor = null;
+                StringBuilder ae = new StringBuilder();
                 for (Constructor<?> ctor : addEntity.getConstructors()) {
                     Class<?>[] p = ctor.getParameterTypes();
-                    if (p.length == 11 && p[0] == int.class && p[1] == UUID.class
-                        && p[2] == double.class && p[5] == float.class
-                        && !p[8].isPrimitive() && p[9].getName().endsWith("Vec3")) {
+                    StringBuilder sig = new StringBuilder("(");
+                    for (int i = 0; i < p.length; i++) {
+                        if (i > 0) sig.append(",");
+                        sig.append(p[i].getSimpleName());
+                    }
+                    sig.append(")");
+                    if (ae.length() > 0) ae.append(" | ");
+                    ae.append(sig);
+                    if (p.length != 11 || p[0] != int.class || p[1] != UUID.class) continue;
+                    // The 11-arg spawn ctor is (int, UUID, DDD, FF, EntityType, int, Vec3, double).
+                    // Find the EntityType and Vec3 params by name rather than fixed index: arg 8 is a
+                    // primitive int sandwiched between them, which broke the old "p[8] non-primitive" check.
+                    Class<?> et = null, vec = null;
+                    for (Class<?> pc : p) {
+                        String sn = pc.getSimpleName();
+                        if (vec == null && sn.equals("Vec3")) vec = pc;
+                        else if (et == null && (sn.equals("EntityType") || sn.equals("EntityTypes"))) et = pc;
+                    }
+                    if (et != null && vec != null) {
                         addEntityCtor = ctor;
-                        entityTypeClass = p[8];
-                        vecClass = p[9];
+                        entityTypeClass = et;
+                        vecClass = vec;
                         break;
                     }
                 }
+                dbg.append(";addEntityCtor=").append(addEntityCtor == null ? "null" : "ok")
+                    .append(" [").append(ae).append("]");
                 if (addEntityCtor != null) {
                     vecCtor = vecClass.getConstructor(double.class, double.class, double.class);
-                    playerEntityType = entityTypeClass.getField("PLAYER").get(null);
+                    playerEntityType = resolvePlayerEntityType(entityTypeClass);
+                    dbg.append(";playerType=").append(playerEntityType == null ? "null" : "ok");
                 }
                 infoRemoveCtor = Class.forName(
                     "net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket")
                     .getConstructor(java.util.List.class);
+                dbg.append(";remove=ok");
                 if (entryCtor != null && addEntityCtor != null
                     && playerEntityType != null && infoRemoveCtor != null) {
                     finishResolve(true);
                     return;
                 }
-            } catch (Throwable ignored) {
+                dbg.append(";FINAL_NULL");
+                throw new ClassNotFoundException("final incomplete");
+            } catch (Throwable t) {
+                resolveDebug(dbg.length() == 0
+                    ? (t.getClass().getSimpleName() + ": " + t.getMessage())
+                    : (dbg.toString() + " -> threw " + t.getClass().getSimpleName() + ": " + t.getMessage()));
             }
             finishResolve(false);
         } catch (Throwable t) {
@@ -1128,6 +1438,26 @@ public final class PacketNpcs {
                 return Class.forName(name);
             } catch (Throwable ignored) {
             }
+        }
+        return null;
+    }
+
+    /** Resolve the EntityType.PLAYER constant. 1.20.4 and older keep it as a public static field on EntityType;
+     * 26.x moved type constants into the BuiltInRegistries.ENTITY_TYPE registry, looked up by Identifier. */
+    private static Object resolvePlayerEntityType(Class<?> entityTypeClass) {
+        try {
+            return entityTypeClass.getField("PLAYER").get(null);
+        } catch (Throwable ignored) {
+        }
+        try {
+            Class<?> registries = Class.forName("net.minecraft.core.registries.BuiltInRegistries");
+            Object registry = registries.getField("ENTITY_TYPE").get(null);
+            Class<?> ident = Class.forName("net.minecraft.resources.Identifier");
+            Object key = ident.getMethod("fromNamespaceAndPath", String.class, String.class)
+                .invoke(null, "minecraft", "player");
+            Class<?> registryIface = Class.forName("net.minecraft.core.Registry");
+            return registryIface.getMethod("getValue", ident).invoke(registry, key);
+        } catch (Throwable ignored) {
         }
         return null;
     }

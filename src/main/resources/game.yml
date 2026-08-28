@@ -1,0 +1,143 @@
+# ==========================================================================================
+# game.yml — BedlamCore per-mode game rules and match balance.
+# All values are optional: delete a key to use its default. Bad/missing values fall back safely
+# (a warning is logged, the default is used). Legacy top-level keys in config.yml still work.
+#
+# Per-mode overrides: `modes.solo.*` / `modes.doubles.*` beat `defaults.*`, which beats the
+# hardcoded default. Today only minimum-players is mode-scoped; other blocks are global.
+# ==========================================================================================
+
+# --- Match timers (seconds; 0 allowed where noted). ---
+countdown-seconds: 10   # lobby countdown before a match starts (default 10, range 0..3600)
+respawn-seconds: 5      # respawn delay after a death when the bed is alive (default 5, 0 = instant)
+ending-seconds: 8       # victory screen hold before the arena resets (default 8)
+
+# --- Per-mode player counts. ---
+defaults:
+  minimum-players: 2    # players required to start the countdown (default 2, range 1..64)
+modes:
+  solo: {}              # e.g. minimum-players: 2  (overrides defaults for SOLO)
+  doubles: {}           # e.g. minimum-players: 2  (overrides defaults for DOUBLES)
+  trios: {}             # e.g. minimum-players: 2  (overrides defaults for TRIOS; 6 teams x 3)
+  quads: {}             # e.g. minimum-players: 2  (overrides defaults for QUADS; 8 teams x 4)
+
+# --- Rewards. Tokens buy cosmetics; XP drives level. All counts >= 0. ---
+rewards:
+  tokens:
+    play: 10        # tokens for playing a match (default 10)
+    kill: 5         # tokens per kill (default 5)
+    final-kill: 10  # tokens per final kill (default 10)
+    bed: 25         # tokens per bed broken (default 25)
+    win: 50         # tokens for winning (default 50)
+  xp:
+    play: 25        # XP for playing a match (default 25)
+    kill: 10        # XP per kill (default 10)
+    final-kill: 25  # XP per final kill (default 25)
+    bed: 50         # XP per bed broken (default 50)
+    win: 100        # XP for winning (default 100)
+
+# --- Level progression. ---
+progression:
+  xp-per-level: 5000  # flat XP per level (default 5000, range 1..100000000)
+  xp-bar-slots: 10    # segments in the lobby XP bar (default 10, range 1..100)
+
+# --- Shop drinkables. ticks = duration (20 ticks = 1s); amplifier 0-based (1 = level II). ---
+potions:
+  speed:
+    ticks: 900         # Speed potion duration (default 900 = 45s)
+    amplifier: 1       # potion level - 1 (default 1 = Speed II)
+    cost-emerald: 1    # emerald price (default 1)
+  jump:
+    ticks: 900         # Jump Boost duration (default 900 = 45s)
+    amplifier: 4       # potion level - 1 (default 4 = Jump Boost V)
+    cost-emerald: 1    # emerald price (default 1)
+  invis:
+    ticks: 600         # Invisibility duration (default 600 = 30s)
+    cost-emerald: 2    # emerald price (default 2)
+
+# --- Tools. ---
+tools:
+  tool-tier-max: 4   # highest pickaxe/axe tier: wood=1 .. diamond=4 (default 4, range 1..16)
+
+# --- Combat / void / projectiles. ---
+combat:
+  build-floor-below: 7      # blocks below island reference you may still build before deny (default 7)
+  combat-credit-ms: 15000   # ms a hostile hit still credits a later void/fall death (default 15000)
+  spawn-protection-seconds: 0  # damage immunity after (re)spawn; ends when you attack (default 0 = off)
+  heal-pool-radius: 8.0     # radius (blocks) of the Heal Pool base buff (default 8.0)
+  dream-defender-seconds: 240  # Iron Golem defender lifetime in seconds (default 240 = 4 min)
+  kill-loot:                # fraction (0..1) of a victim's carried ore the killer gets (floored)
+    iron: 1.0               # default 1.0 (100%)
+    gold: 0.5               # default 0.5 (50%)
+    diamond: 0.5            # default 0.5 (50%)
+    emerald: 0.5            # default 0.5 (50%)
+  fireball:
+    yield: 0.0            # TNT-style block-damage yield; 0 = map safe, custom KB only (default 0)
+    radius: 3.5          # blocks from blast that receive knockback (default 3.5)
+    kb-horizontal: 1.75  # horizontal knockback impulse (default 1.75)
+    kb-vertical: 0.5     # vertical knockback impulse (default 0.5)
+  bridge-egg:
+    max-path: 20        # path cells one Bridge Egg paints (default 20, range 1..1000)
+    dip-start: 0.6      # fraction of path that stays flat before stepping down (default 0.6, 0..1)
+    max-ticks: 40       # flight ticks before the trail stops, ~2s (default 40)
+    max-distance: 20.0  # straight-line flight cap in blocks (default 20.0)
+
+# --- Traps (Counter-Offensive / alarm zone geometry + rules). ---
+traps:
+  trigger-radius: 10.0          # ally buff sphere radius for Counter-Offensive (default 10.0)
+  pad-xz: 4.0                   # horizontal pad around the bed+spawn trap AABB (default 4.0)
+  y-below: 2.0                  # trap AABB extent below spawn Y (default 2.0)
+  y-above: 8.0                  # trap AABB extent above spawn Y (default 8.0)
+  forge-natural-range: 12.0     # include forge in the trap AABB when this close to bed/spawn (default 12.0)
+  queue-max: 3                  # max queued traps per team (default 3, range 1..64)
+  cooldown-ticks: 40            # re-arm delay after a trap fires (default 40)
+  magic-milk-immunity-ms: 30000 # ms Magic Milk suppresses enemy traps (default 30000)
+
+# --- Team upgrade / trap diamond costs. Single value, or a per-level list (index = current level; ---
+# --- the last entry is reused past its end). All costs are DIAMONDS and must be >= 0. ---
+upgrades:
+  sharpened-swords: 4        # one-off Sharpness I (default 4)
+  heal-pool: 1               # one-off Heal Pool (default 1)
+  reinforced-armor: [2, 4, 8, 16]  # Protection I..IV per level (default 2,4,8,16)
+  maniac-miner: [2, 4]       # Haste I..II per level (default 2,4)
+  iron-forge: [2, 4, 6, 8]   # forge level 1..4 (default 2,4,6,8)
+  cushioned-boots: [1, 2]    # Feather Falling I..II per level (default 1,2)
+  trap-queue: [1, 2, 4]      # cost of the 1st/2nd/3rd queued trap (default 1,2,4)
+
+# --- Shop offers. The item KEY (e.g. "16 Wool") is stable and must NOT change (Hypixel Quick Buy ---
+# --- import maps onto it). Per item: category, slot (0-53), price, currency (IRON_INGOT/GOLD_INGOT/ ---
+# --- EMERALD), name (item display), flavor/sub-flavor (lore lines). Omit a key to keep its default. ---
+shop:
+  items:
+    "16 Wool": { category: Blocks, slot: 19, price: 4, currency: IRON_INGOT, name: Wool, flavor: "Basic building block", sub-flavor: "Colored to your team" }
+    "16 Hardened Clay": { category: Blocks, slot: 20, price: 12, currency: IRON_INGOT, name: "Hardened Clay", flavor: "Sturdier than wool" }
+    "4 Blast-Proof Glass": { category: Blocks, slot: 21, price: 12, currency: IRON_INGOT, name: "Blast-Proof Glass", flavor: "See-through defense" }
+    "12 End Stone": { category: Blocks, slot: 22, price: 24, currency: IRON_INGOT, name: "End Stone", flavor: "Tough island block" }
+    "8 Ladders": { category: Blocks, slot: 23, price: 4, currency: IRON_INGOT, name: Ladder, flavor: "Climb enemy walls" }
+    "16 Oak Planks": { category: Blocks, slot: 24, price: 4, currency: GOLD_INGOT, name: Wood, flavor: "Cheap bridging wood" }
+    "4 Obsidian": { category: Blocks, slot: 25, price: 4, currency: EMERALD, name: Obsidian, flavor: "Blast-resistant cover" }
+    "8 Ice": { category: Blocks, slot: 28, price: 8, currency: GOLD_INGOT, name: Ice, flavor: "Slippery flooring" }
+    "Stone Sword": { category: Melee, slot: 19, price: 10, currency: IRON_INGOT, name: "Stone Sword", flavor: "Replaces a weaker sword" }
+    "Iron Sword": { category: Melee, slot: 20, price: 7, currency: GOLD_INGOT, name: "Iron Sword", flavor: "Replaces a weaker sword" }
+    "Diamond Sword": { category: Melee, slot: 21, price: 4, currency: EMERALD, name: "Diamond Sword", flavor: "Replaces a weaker sword" }
+    "Knockback Stick": { category: Melee, slot: 22, price: 5, currency: GOLD_INGOT, name: "Knockback Stick", flavor: "Knockback I stick" }
+    "Permanent Chainmail Armor": { category: Armor, slot: 19, price: 40, currency: IRON_INGOT, name: "Chainmail Armor", flavor: "Permanent chainmail legs + boots" }
+    "Permanent Iron Armor": { category: Armor, slot: 20, price: 12, currency: GOLD_INGOT, name: "Iron Armor", flavor: "Permanent iron helmet + chest" }
+    "Permanent Diamond Armor": { category: Armor, slot: 21, price: 6, currency: EMERALD, name: "Diamond Armor", flavor: "Permanent diamond helmet + chest" }
+    "Bow": { category: Ranged, slot: 19, price: 12, currency: GOLD_INGOT, name: Bow, flavor: "Unbreakable bow" }
+    "8 Arrows": { category: Ranged, slot: 20, price: 2, currency: GOLD_INGOT, name: Arrows, flavor: "Ammunition" }
+    "Punch Bow": { category: Ranged, slot: 21, price: 24, currency: GOLD_INGOT, name: "Punch Bow", flavor: "Bow with Punch I" }
+    "Speed II Potion (45 seconds)": { category: Potions, slot: 19, price: 1, currency: EMERALD, name: "Speed II Potion (45 seconds)", flavor: "Speed II for 45 seconds" }
+    "Jump V Potion (45 seconds)": { category: Potions, slot: 20, price: 1, currency: EMERALD, name: "Jump V Potion (45 seconds)", flavor: "Jump Boost V for 45 seconds" }
+    "Invisibility Potion (30 seconds)": { category: Potions, slot: 21, price: 2, currency: EMERALD, name: "Invisibility Potion (30 seconds)", flavor: "Full invisibility for 30 seconds", sub-flavor: "Armor hidden from enemies" }
+    "Golden Apple": { category: Utility, slot: 19, price: 3, currency: GOLD_INGOT, name: "Golden Apple", flavor: "Well-rounded healing" }
+    "16 Snowballs": { category: Utility, slot: 20, price: 16, currency: IRON_INGOT, name: Snowball, flavor: "Slow projectiles" }
+    "Fireball": { category: Utility, slot: 21, price: 40, currency: IRON_INGOT, name: Fireball, flavor: "Explosive knockback charge" }
+    "TNT": { category: Utility, slot: 22, price: 4, currency: GOLD_INGOT, name: TNT, flavor: "Auto-ignites when placed" }
+    "Ender Pearl": { category: Utility, slot: 23, price: 4, currency: EMERALD, name: "Ender Pearl", flavor: "Teleport across the map" }
+    "Water Bucket": { category: Utility, slot: 24, price: 3, currency: GOLD_INGOT, name: "Water Bucket", flavor: "One-use water place" }
+    "Magic Milk": { category: Utility, slot: 25, price: 4, currency: GOLD_INGOT, name: "Magic Milk", flavor: "30 seconds of trap immunity" }
+    "4 Sponges": { category: Utility, slot: 28, price: 3, currency: GOLD_INGOT, name: Sponge, flavor: "Soak up water" }
+    "Bridge Egg": { category: Utility, slot: 29, price: 1, currency: EMERALD, name: "Bridge Egg", flavor: "Throws a team-wool bridge", sub-flavor: "along its flight path" }
+    "Dream Defender": { category: Utility, slot: 30, price: 120, currency: IRON_INGOT, name: "Dream Defender", flavor: "Team-friendly Iron Golem", sub-flavor: "Guards nearby teammates for 4 minutes" }
+    "Pop-up Tower": { category: Utility, slot: 31, price: 24, currency: IRON_INGOT, name: "Pop-up Tower", flavor: "Right-click a block to deploy", sub-flavor: "an instant team-wool tower" }

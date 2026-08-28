@@ -19,7 +19,6 @@ import java.util.UUID;
 /** Team-aware, temporary Iron Golem defenders. Owned by ArenaManager. */
 final class DreamDefenderService {
     private static final double RANGE_SQUARED = 12.0 * 12.0;
-    private static final long LIFETIME_MILLIS = 4L * 60L * 1000L;
     private final ArenaManager manager;
     private final Map<UUID, IronGolem> golems = new HashMap<UUID, IronGolem>();
     private final Map<UUID, TeamColor> teams = new HashMap<UUID, TeamColor>();
@@ -48,7 +47,7 @@ final class DreamDefenderService {
         UUID id = golem.getUniqueId();
         golems.put(id, golem);
         teams.put(id, team);
-        expires.put(id, System.currentTimeMillis() + LIFETIME_MILLIS);
+        expires.put(id, System.currentTimeMillis() + dev.iyanel.bedlamcore.game.GameRules.DEFENDER_LIFETIME_MILLIS);
         ensureTask();
         return true;
     }

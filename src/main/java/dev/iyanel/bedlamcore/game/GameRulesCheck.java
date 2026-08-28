@@ -40,6 +40,13 @@ public final class GameRulesCheck {
         assertEquals(3, GameRules.generatorTier(720, 360, 720));
         assertEquals(1, GameType.SOLO.teamSize());
         assertEquals(2, GameType.DOUBLES.teamSize());
+        assertEquals(3, GameType.TRIOS.teamSize());
+        assertEquals(4, GameType.QUADS.teamSize());
+        assertEquals(GameType.TRIOS, GameType.parse("3v3v3v3"));
+        assertEquals(GameType.QUADS, GameType.parse("4v4v4v4"));
+        assertEquals(GameType.TRIOS, GameType.parse("trios"));
+        assertEquals(GameType.QUADS, GameType.parse("quad"));
+        assertEquals(GameType.SOLO, GameType.parse("nonsense"));
         assertEquals(85.0, GameRules.voidKillY(100.0));
         assertEquals(70.0, GameRules.voidKillY(100.0, 30.0));
         // Border: GUI radius → WB diameter 2r; mayPlace XZ = center ± radius
@@ -262,6 +269,99 @@ public final class GameRulesCheck {
         MapTemplatesCheck.run();
         CosmeticsCheck.run();
         ProfileStatsCheck.run();
+        // Config-driven cost tables: defaults match today, and level/index lookups clamp (never throw).
+        assertEquals(4, GameRules.sharpnessCost());
+        assertEquals(1, GameRules.healPoolCost());
+        assertEquals(2, GameRules.forgeUpgradeCost(0));
+        assertEquals(8, GameRules.forgeUpgradeCost(3));
+        assertEquals(8, GameRules.forgeUpgradeCost(99));   // past-end reuses last
+        assertEquals(2, GameRules.forgeUpgradeCost(-5));   // below-start clamps to first
+        assertEquals(2, GameRules.protectionCost(0));
+        assertEquals(16, GameRules.protectionCost(3));
+        assertEquals(16, GameRules.protectionCost(99));
+        assertEquals(2, GameRules.hasteCost(0));
+        assertEquals(4, GameRules.hasteCost(1));
+        assertEquals(4, GameRules.hasteCost(99));
+        assertEquals(1, GameRules.cushionedBootsCost(0));
+        assertEquals(2, GameRules.cushionedBootsCost(1));
+        assertEquals(2, GameRules.cushionedBootsCost(99));
+        assertEquals(4, GameRules.trapDiamondCost(99));    // clamps to last
+        // Kill-loot fractions floor and never go negative; defaults iron 100%, rest 50%.
+        assertEquals(240000L, GameRules.DEFENDER_LIFETIME_MILLIS);
+        assertEquals(0, GameRules.SPAWN_PROTECTION_SECONDS); // off by default = unchanged behavior
+        int[] neg = GameRules.killLootShares(new int[] {-4, -4, -4, -4});
+        assertEquals(0, neg[GameRules.RES_IRON]);
+        assertEquals(0, neg[GameRules.RES_GOLD]);
+        int[] odd = GameRules.killLootShares(new int[] {3, 3, 3, 3});
+        assertEquals(3, odd[GameRules.RES_IRON]);   // 100%
+        assertEquals(1, odd[GameRules.RES_GOLD]);   // 50% floored
+        // Party capacity: fits when it can join AND stay together. Doubles teamSize 2, 4 teams → cap 8.
+        assertTrue(GameRules.partyFitsMode(2, 2, 4));   // pair in Doubles
+        assertTrue(GameRules.partyFitsMode(4, 2, 4));   // two pairs
+        assertFalse(GameRules.partyFitsMode(9, 2, 4));  // oversize (cap 8)
+        assertFalse(GameRules.partyFitsMode(2, 1, 8));  // 2-party cannot stay together in Solo
+        assertTrue(GameRules.partyFitsMode(1, 1, 8));   // lone player in Solo is fine
+        assertFalse(GameRules.partyFitsMode(0, 2, 4));  // empty party never fits
+        assertTrue(GameRules.partyFitsMode(4, 4, 8));   // quad fits Quads as one team
+        assertTrue(GameRules.partyFitsMode(4, 3, 6));   // quad splits across Trios teams
+        // Party team-blocks: Doubles pair → one block of 2 (both same team); 4 → two blocks; 3 → 2+1.
+        int[] pair = GameRules.partitionParty(2, 2);
+        assertEquals(1, pair.length);
+        assertEquals(2, pair[0]);
+        int[] quad = GameRules.partitionParty(4, 2);
+        assertEquals(2, quad.length);
+        assertEquals(2, quad[0]);
+        assertEquals(2, quad[1]);
+        int[] trio = GameRules.partitionParty(3, 2);
+        assertEquals(2, trio.length);
+        assertEquals(2, trio[0]);
+        assertEquals(1, trio[1]);
+        assertEquals(0, GameRules.partitionParty(0, 2).length);
+        // Invite expiry: expired once now reaches the stored expiry.
+        assertTrue(GameRules.inviteExpired(1000L, 1000L));
+        assertTrue(GameRules.inviteExpired(1001L, 1000L));
+        assertFalse(GameRules.inviteExpired(999L, 1000L));
+        // Auto-disband once a party shrinks to one (or zero) members.
+        assertTrue(GameRules.partyDisbandsOnShrink(1));
+        assertTrue(GameRules.partyDisbandsOnShrink(0));
+        assertFalse(GameRules.partyDisbandsOnShrink(2));
+        // Provider selection: empty list / not-loaded → built-in (null); loaded external in auto → that name.
+        assertTrue(GameRules.selectProvider("auto", java.util.Collections.<String>emptyList(), Arrays.asList("BungeeParties")) == null);
+        assertTrue(GameRules.selectProvider("auto", Arrays.asList("BungeeParties"), java.util.Collections.<String>emptyList()) == null);
+        assertEquals("BungeeParties", GameRules.selectProvider("auto", Arrays.asList("BungeeParties"), Arrays.asList("BungeeParties")));
+        assertTrue(GameRules.selectProvider("bedlam", Arrays.asList("BungeeParties"), Arrays.asList("BungeeParties")) == null);
+        // Leaderboard ratios: denominator floored at 1 (no div-by-zero); rounded to one decimal.
+        assertEquals(5.0, GameRules.ratio1(5, 0));    // 0 deaths → kills exactly
+        assertEquals(0.0, GameRules.ratio1(0, 0));
+        assertEquals(2.5, GameRules.ratio1(5, 2));
+        assertEquals(1.3, GameRules.ratio1(4, 3));    // 1.333 → 1.3
+        assertEquals("5.0", GameRules.formatRatio1(GameRules.ratio1(5, 0)));
+        assertEquals("1.3", GameRules.formatRatio1(GameRules.ratio1(4, 3)));
+        // Minimum-games filter: at-or-above threshold qualifies; a negative threshold clamps to 0.
+        assertTrue(GameRules.qualifies(1, 1));
+        assertFalse(GameRules.qualifies(0, 1));
+        assertTrue(GameRules.qualifies(0, 0));
+        assertTrue(GameRules.qualifies(5, -3));
+        // Ordering: value DESC first.
+        assertTrue(GameRules.compareEntries(10, "bob", "u2", 5, "amy", "u1") < 0);
+        assertTrue(GameRules.compareEntries(5, "amy", "u1", 10, "bob", "u2") > 0);
+        // Tie on value → name case-insensitive ASC.
+        assertTrue(GameRules.compareEntries(7, "amy", "u2", 7, "Bob", "u1") < 0);
+        assertTrue(GameRules.compareEntries(7, "Bob", "u1", 7, "amy", "u2") > 0);
+        // Tie on value + name → UUID ASC for a stable total order.
+        assertTrue(GameRules.compareEntries(7, "Sam", "a", 7, "sam", "b") < 0);
+        assertEquals(0, GameRules.compareEntries(7, "Sam", "a", 7, "Sam", "a"));
+        // End-to-end rank lookup over a hand-built list (sorted with the same order).
+        String[][] rows = new String[][] {{"9", "bob", "u2"}, {"12", "amy", "u1"}, {"12", "amy", "u3"}};
+        java.util.Arrays.sort(rows, new java.util.Comparator<String[]>() {
+            @Override public int compare(String[] x, String[] y) {
+                return GameRules.compareEntries(Double.parseDouble(x[0]), x[1], x[2],
+                    Double.parseDouble(y[0]), y[1], y[2]);
+            }
+        });
+        assertEquals("u1", rows[0][2]); // 12/amy, uuid u1 before u3
+        assertEquals("u3", rows[1][2]);
+        assertEquals("u2", rows[2][2]); // 9/bob last
         System.out.println("BedlamCore game rules: PASS");
     }
 

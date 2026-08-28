@@ -102,7 +102,7 @@ final class SoftSpectateService {
         Location spawn = team == null ? null : arena.settings().team(team).spawn();
         if (spawn != null) player.teleport(spawn);
         applySoftSpectate(player);
-        final int seconds = Math.max(0, manager.plugin().getConfig().getInt("respawn-seconds", 5));
+        final int seconds = manager.plugin().settings().respawnSeconds();
         if (seconds <= 0) {
             respawning.remove(player.getUniqueId());
             if (team != null) manager.spawnPlayer(player, team);

@@ -50,10 +50,13 @@ public final class ArenaRepository {
         }
         lobby.cosmeticsNpc(decode(yaml.getString("lobby.cosmetics.location")));
         lobby.profileNpc(decode(yaml.getString("lobby.profile.location")));
+        lobby.leaderboardNpc(decode(yaml.getString("lobby.leaderboard.location")));
         lobby.cosmeticsSkin(yaml.getString("lobby.cosmetics.skin"));
         lobby.profileSkin(yaml.getString("lobby.profile.skin"));
+        lobby.leaderboardSkin(yaml.getString("lobby.leaderboard.skin"));
         lobby.cosmeticsCape(yaml.getBoolean("lobby.cosmetics.cape", false));
         lobby.profileCape(yaml.getBoolean("lobby.profile.cape", false));
+        lobby.leaderboardCape(yaml.getBoolean("lobby.leaderboard.cape", false));
         return lobby;
     }
 
@@ -106,10 +109,13 @@ public final class ArenaRepository {
         }
         yaml.set("lobby.cosmetics.location", Locations.encode(lobby.cosmeticsNpc()));
         yaml.set("lobby.profile.location", Locations.encode(lobby.profileNpc()));
+        yaml.set("lobby.leaderboard.location", Locations.encode(lobby.leaderboardNpc()));
         yaml.set("lobby.cosmetics.skin", lobby.cosmeticsSkin());
         yaml.set("lobby.profile.skin", lobby.profileSkin());
+        yaml.set("lobby.leaderboard.skin", lobby.leaderboardSkin());
         yaml.set("lobby.cosmetics.cape", lobby.cosmeticsCape());
         yaml.set("lobby.profile.cape", lobby.profileCape());
+        yaml.set("lobby.leaderboard.cape", lobby.leaderboardCape());
         for (ArenaSettings arena : arenas) {
             String root = "arenas." + arena.id();
             org.bukkit.World world = Bukkit.getWorld(arena.worldName());

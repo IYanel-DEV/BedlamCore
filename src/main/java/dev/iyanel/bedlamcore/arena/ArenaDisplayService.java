@@ -24,8 +24,10 @@ import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** Shop/gen holograms + pin/visibility tick. Owned by ArenaManager. */
@@ -80,6 +82,7 @@ final class ArenaDisplayService {
         if (displays.isEmpty()) return;
         displayTask = new BukkitRunnable() {
             @Override public void run() {
+                Set<UUID> outOfPlay = outOfPlayPlayers();
                 for (Map.Entry<UUID, Entity> entry : new HashMap<UUID, Entity>(displays).entrySet()) {
                     Entity entity = entry.getValue();
                     Location pin = displayPins.get(entry.getKey());
@@ -89,7 +92,7 @@ final class ArenaDisplayService {
                     if (entity.getLocation().distanceSquared(pin) > 0.0001 || entity.hasMetadata("bedlamGeneratorDisplay")) entity.teleport(pin);
                     // Shop villagers: smooth per-tick look-at toward the nearest player (kills the jerky vanilla
                     // head-track). Skinned shops drive their packet model; plain villagers get real look packets.
-                    if (entity.hasMetadata("bedlamShop")) tickShop(entry.getKey(), entity, pin);
+                    if (entity.hasMetadata("bedlamShop")) tickShop(entry.getKey(), entity, pin, outOfPlay);
                 }
                 if (++visibilityTick % GameRules.DISPLAY_VISIBILITY_INTERVAL == 0) updateDisplayVisibility();
             }
@@ -218,6 +221,16 @@ final class ArenaDisplayService {
         if (profile == null) { shopSkinPending.put(villager.getUniqueId(), skinKey); return; }
         PacketNpcs.Model model = PacketNpcs.create(manager.plugin(), pin, "NPC", profile);
         if (model != null) {
+            final Entity shopBody = villager;
+            model.onClick(new PacketNpcs.ClickHandler() {
+                @Override public void click(Player viewer) {
+                    if (manager.isSoftSpectating(viewer)) return;
+                    String kind = shop(shopBody);
+                    if (kind == null) return;
+                    if (kind.equals("ITEM")) manager.plugin().gui().openShop(viewer);
+                    else manager.plugin().gui().openUpgrades(viewer);
+                }
+            });
             shopModels.put(villager.getUniqueId(), model);
             PacketNpcs.ensureViewers(model, 48.0);
         }
@@ -225,8 +238,24 @@ final class ArenaDisplayService {
 
     /** Per-tick shop NPC upkeep: face the nearest player. Skinned shops drive their packet model (and retry the
      *  attach once the async skin lands); plain villagers get real look packets so the client actually sees the turn. */
-    private void tickShop(UUID id, Entity entity, Location pin) {
-        float[] look = LobbyNpcService.faceNearestPlayerInRange(entity, pin);
+    /** Players who must not draw a shop NPC's gaze: arena soft-spectators (invis, never GameMode.SPECTATOR),
+     *  respawning players in their death countdown, and eliminated players. True GameMode.SPECTATOR / dead
+     *  players are filtered inside faceNearestPlayerInRange itself. */
+    private Set<UUID> outOfPlayPlayers() {
+        Set<UUID> set = new HashSet<UUID>(manager.arena().eliminated());
+        World world = Bukkit.getWorld(manager.arena().settings().worldName());
+        if (world != null) {
+            for (Player player : world.getPlayers()) {
+                if (manager.isSoftSpectating(player) || manager.isRespawning(player.getUniqueId())) {
+                    set.add(player.getUniqueId());
+                }
+            }
+        }
+        return set;
+    }
+
+    private void tickShop(UUID id, Entity entity, Location pin, Set<UUID> outOfPlay) {
+        float[] look = LobbyNpcService.faceNearestPlayerInRange(entity, pin, outOfPlay);
         float yaw = look != null ? look[0] : pin.getYaw();
         float pitch = look != null ? look[1] : pin.getPitch();
         PacketNpcs.Model model = shopModels.get(id);

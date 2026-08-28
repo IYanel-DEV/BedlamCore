@@ -6,109 +6,116 @@ import java.util.List;
 import java.util.Map;
 
 public final class GameRules {
+    // Balance tunables below are non-final: byte-identical defaults here, reassigned from BedlamSettings at load
+    // (config.yml / game.yml / generators.yml) so an admin can retune without code. Structural/geometry/layout
+    // constants (ALWAYS_DAY_TIME, ARENA_BOUND_PAD, INVENTORY_TITLE_MAX, FAVORITE/QUICK_BUY slots, LEGACY_EQUIP_*,
+    // RES_*, DEFAULT_VOID_DEPTH) stay final on purpose — changing them breaks layout/protocol/save assumptions.
     /**
      * Place/break protect: plus (+) of 5 cells on the anchor Y — center + N/E/S/W.
      * (|dx|+|dz| <= 1, dy == 0). Used for diamond/emerald gens, forge, shops, chests.
      */
-    public static final int PROTECT_PLUS = 1;
+    public static int PROTECT_PLUS = 1;
     /** Midday for lobby/arena worlds with daylight cycle off. */
     public static final long ALWAYS_DAY_TIME = 6000L;
     /** Horizontal share radius (Hypixel-like: at forge or blocked/half away). */
-    public static final double FORGE_SHARE_RADIUS = 2.5;
+    public static double FORGE_SHARE_RADIUS = 2.5;
     /** Closer than this = standing on/at forge (default pickup sound). */
-    public static final double FORGE_STANDING_RADIUS = 1.2;
+    public static double FORGE_STANDING_RADIUS = 1.2;
     /** Vertical slack when checking forge share range. */
-    public static final double FORGE_SHARE_Y = 3.0;
+    public static double FORGE_SHARE_Y = 3.0;
     /** Extra Y above forge block top for ground fallback drops (lower than mid gens). */
-    public static final double FORGE_DROP_Y = 0.15;
+    public static double FORGE_DROP_Y = 0.15;
     /** Count nearby Item entities of that material (stack amounts, not inventory). */
-    public static final double GEN_GROUND_CAP_RADIUS = 2.5;
-    public static final int GEN_DIAMOND_GROUND_CAP = 4;
-    public static final int GEN_EMERALD_GROUND_CAP = 4;
-    public static final int FORGE_IRON_GROUND_CAP = 64;
-    public static final int FORGE_GOLD_GROUND_CAP = 16;
-    public static final int FORGE_IRON_GROUND_CAP_MAXED = 124;
-    public static final int FORGE_GOLD_GROUND_CAP_MAXED = 32;
-    public static final int FORGE_LEVEL_MAX = 4;
+    public static double GEN_GROUND_CAP_RADIUS = 2.5;
+    public static int GEN_DIAMOND_GROUND_CAP = 4;
+    public static int GEN_EMERALD_GROUND_CAP = 4;
+    public static int FORGE_IRON_GROUND_CAP = 64;
+    public static int FORGE_GOLD_GROUND_CAP = 16;
+    public static int FORGE_IRON_GROUND_CAP_MAXED = 124;
+    public static int FORGE_GOLD_GROUND_CAP_MAXED = 32;
+    public static int FORGE_LEVEL_MAX = 4;
     /** L2 rare diamond/emerald chances per forge iron/gold tick. */
-    public static final double FORGE_L2_DIAMOND = 0.02;
-    public static final double FORGE_L2_EMERALD = 0.01;
+    public static double FORGE_L2_DIAMOND = 0.02;
+    public static double FORGE_L2_EMERALD = 0.01;
     /** L3+ slightly higher but still rare. */
-    public static final double FORGE_L3_DIAMOND = 0.04;
-    public static final double FORGE_L3_EMERALD = 0.025;
+    public static double FORGE_L3_DIAMOND = 0.04;
+    public static double FORGE_L3_EMERALD = 0.025;
     /** Max blocks below team bed/spawn Y where placing is still allowed (void is bedY−15). */
-    public static final int BUILD_FLOOR_BELOW = 7;
-    public static final double DISPLAY_VIEW = 20.0;
+    public static int BUILD_FLOOR_BELOW = 7;
+    public static double DISPLAY_VIEW = 20.0;
     /** Recompute hologram/NPC hide-beyond-view every N ticks (pin/rotate stays every tick). */
-    public static final int DISPLAY_VISIBILITY_INTERVAL = 5;
-    public static final double HEAL_POOL_RADIUS = 8.0;
+    public static int DISPLAY_VISIBILITY_INTERVAL = 5;
+    public static double HEAL_POOL_RADIUS = 8.0;
     public static final int ARENA_BOUND_PAD = 40;
     /**
      * Hologram label stack: one top Y + HOLO_LINE gap. Marker feet at labelY(top, line);
      * nametag sits near feet — tune tops so text sits just above NPC head / chest / gen pin.
      */
-    public static final double HOLO_LINE = 0.30;
+    public static double HOLO_LINE = 0.30;
     /** Shop NPC top line (above villager head). */
-    public static final double NPC_HOLO_TOP = 2.25;
+    public static double NPC_HOLO_TOP = 2.25;
     /** Lobby queue/cosmetics stack — higher so all 3 lines clear the body. */
-    public static final double LOBBY_NPC_HOLO_TOP = 2.95;
+    public static double LOBBY_NPC_HOLO_TOP = 2.95;
     /** Mid-gen title line (above floating pin). */
-    public static final double GEN_HOLO_TOP = 3.15;
+    public static double GEN_HOLO_TOP = 3.15;
     /** Marker feet just above chest top (nametag sits on feet). */
-    public static final double CHEST_HOLO_Y = 1.1;
+    public static double CHEST_HOLO_Y = 1.1;
     /** Full-size pin stand feet; helmet ~2.5 above gen floor (Hypixel-like). */
-    public static final double GEN_STAND_Y = 2.5;
-    public static final double SHOP_HOLO_TITLE_Y = NPC_HOLO_TOP;
-    public static final double SHOP_HOLO_SUB_Y = NPC_HOLO_TOP - HOLO_LINE;
-    public static final double GEN_HOLO_TITLE_Y = GEN_HOLO_TOP;
-    public static final double GEN_HOLO_TIER_Y = GEN_HOLO_TOP - HOLO_LINE;
-    public static final double LOBBY_HOLO_TITLE_Y = LOBBY_NPC_HOLO_TOP;
-    public static final double LOBBY_HOLO_SUB_Y = LOBBY_NPC_HOLO_TOP - HOLO_LINE;
-    public static final double LOBBY_HOLO_INFO_Y = LOBBY_NPC_HOLO_TOP - 2 * HOLO_LINE;
+    public static double GEN_STAND_Y = 2.5;
+    // Derived hologram line Ys — recomputed by recomputeHoloLines() whenever a top/gap changes at load.
+    public static double SHOP_HOLO_TITLE_Y = NPC_HOLO_TOP;
+    public static double SHOP_HOLO_SUB_Y = NPC_HOLO_TOP - HOLO_LINE;
+    public static double GEN_HOLO_TITLE_Y = GEN_HOLO_TOP;
+    public static double GEN_HOLO_TIER_Y = GEN_HOLO_TOP - HOLO_LINE;
+    public static double LOBBY_HOLO_TITLE_Y = LOBBY_NPC_HOLO_TOP;
+    public static double LOBBY_HOLO_SUB_Y = LOBBY_NPC_HOLO_TOP - HOLO_LINE;
+    public static double LOBBY_HOLO_INFO_Y = LOBBY_NPC_HOLO_TOP - 2 * HOLO_LINE;
     /** Ally buff range for Counter-Offensive (spawn sphere). */
-    public static final double TRAP_TRIGGER_RADIUS = 10.0;
+    public static double TRAP_TRIGGER_RADIUS = 10.0;
     /** Horizontal pad around bed+spawn (and natural forge) AABB. */
-    public static final double TRAP_PAD_XZ = 4.0;
-    public static final double TRAP_Y_BELOW_SPAWN = 2.0;
-    public static final double TRAP_Y_ABOVE_SPAWN = 8.0;
+    public static double TRAP_PAD_XZ = 4.0;
+    public static double TRAP_Y_BELOW_SPAWN = 2.0;
+    public static double TRAP_Y_ABOVE_SPAWN = 8.0;
     /** Include forge in trap AABB when this close to bed or spawn (natural island). */
-    public static final double TRAP_FORGE_NATURAL_RANGE = 12.0;
-    public static final int TRAP_QUEUE_MAX = 3;
+    public static double TRAP_FORGE_NATURAL_RANGE = 12.0;
+    public static int TRAP_QUEUE_MAX = 3;
     /** Brief re-arm delay after a trap fires (ticks). */
-    public static final int TRAP_COOLDOWN_TICKS = 40;
+    public static int TRAP_COOLDOWN_TICKS = 40;
     /** Shop Magic Milk prevents trap activation for 30 seconds. */
-    public static final long MAGIC_MILK_IMMUNITY_MILLIS = 30_000L;
+    public static long MAGIC_MILK_IMMUNITY_MILLIS = 30_000L;
     /** Void/fall deaths only credit a hostile hit from the previous 15 seconds. */
-    public static final long COMBAT_CREDIT_MILLIS = 15_000L;
+    public static long COMBAT_CREDIT_MILLIS = 15_000L;
+    /** Seconds of damage immunity after (re)spawn; ends early when the player attacks. 0 = disabled (default). */
+    public static int SPAWN_PROTECTION_SECONDS = 0;
     /** Wood=1 … Diamond=4; 0 = never purchased. */
-    public static final int TOOL_TIER_MAX = 4;
+    public static int TOOL_TIER_MAX = 4;
     /** Path cells (center of the 3-wide slice) one Bridge Egg may paint. */
-    public static final int BRIDGE_EGG_MAX_PATH = 20;
+    public static int BRIDGE_EGG_MAX_PATH = 20;
     /** Fraction of max path that stays flat; after this the trail steps down. */
-    public static final double BRIDGE_EGG_DIP_START = 0.6;
+    public static double BRIDGE_EGG_DIP_START = 0.6;
     /** Flight ticks before the egg trail stops (~2s). */
-    public static final int BRIDGE_EGG_MAX_TICKS = 40;
+    public static int BRIDGE_EGG_MAX_TICKS = 40;
     /** Straight-line flight cap in blocks (Hypixel-ish 15–25). */
-    public static final double BRIDGE_EGG_MAX_DISTANCE = 20.0;
+    public static double BRIDGE_EGG_MAX_DISTANCE = 20.0;
     /** Shop fireball: no block blast (map safe); custom KB only. */
-    public static final float FIREBALL_YIELD = 0F;
+    public static float FIREBALL_YIELD = 0F;
     /** Living match players within this of blast get the fixed impulse. */
-    public static final double FIREBALL_RADIUS = 3.5;
-    public static final double FIREBALL_KB_HORIZONTAL = 1.75;
-    public static final double FIREBALL_KB_VERTICAL = 0.5;
-    public static final int TOKENS_WIN = 50;
-    public static final int TOKENS_BED = 25;
-    public static final int TOKENS_KILL = 5;
-    public static final int TOKENS_FINAL_KILL = 10;
-    public static final int TOKENS_PLAY = 10;
-    public static final int XP_WIN = 100;
-    public static final int XP_BED = 50;
-    public static final int XP_KILL = 10;
-    public static final int XP_FINAL_KILL = 25;
-    public static final int XP_PLAY = 25;
+    public static double FIREBALL_RADIUS = 3.5;
+    public static double FIREBALL_KB_HORIZONTAL = 1.75;
+    public static double FIREBALL_KB_VERTICAL = 0.5;
+    public static int TOKENS_WIN = 50;
+    public static int TOKENS_BED = 25;
+    public static int TOKENS_KILL = 5;
+    public static int TOKENS_FINAL_KILL = 10;
+    public static int TOKENS_PLAY = 10;
+    public static int XP_WIN = 100;
+    public static int XP_BED = 50;
+    public static int XP_KILL = 10;
+    public static int XP_FINAL_KILL = 25;
+    public static int XP_PLAY = 25;
     /** Flat XP per level (low-level Hypixel-like 5k bar). */
-    public static final int XP_PER_LEVEL = 5000;
-    public static final int XP_BAR_SLOTS = 10;
+    public static int XP_PER_LEVEL = 5000;
+    public static int XP_BAR_SLOTS = 10;
     /** 1.8 client silently fails to open a chest if the title is longer than this (including color codes). */
     public static final int INVENTORY_TITLE_MAX = 32;
     /** Hypixel Quick Buy: three rows of seven, surrounded by gray panes. */
@@ -125,15 +132,15 @@ public final class GameRules {
         "16 Hardened Clay", "4 Blast-Proof Glass", "12 End Stone", "Wooden Axe", "Golden Apple", "Ender Pearl", "Fireball"
     };
     /** Shop drinkables (Hypixel-like durations). */
-    public static final int POTION_SPEED_TICKS = 45 * 20;
-    public static final int POTION_JUMP_TICKS = 45 * 20;
-    public static final int POTION_INVIS_TICKS = 30 * 20;
+    public static int POTION_SPEED_TICKS = 45 * 20;
+    public static int POTION_JUMP_TICKS = 45 * 20;
+    public static int POTION_INVIS_TICKS = 30 * 20;
     /** Amplifier 1 = Speed II; 4 = Jump Boost V. */
-    public static final int POTION_SPEED_AMPLIFIER = 1;
-    public static final int POTION_JUMP_AMPLIFIER = 4;
-    public static final int POTION_SPEED_COST_EMERALD = 1;
-    public static final int POTION_JUMP_COST_EMERALD = 1;
-    public static final int POTION_INVIS_COST_EMERALD = 2;
+    public static int POTION_SPEED_AMPLIFIER = 1;
+    public static int POTION_JUMP_AMPLIFIER = 4;
+    public static int POTION_SPEED_COST_EMERALD = 1;
+    public static int POTION_JUMP_COST_EMERALD = 1;
+    public static int POTION_INVIS_COST_EMERALD = 2;
     /** 1.8 PacketPlayOutEntityEquipment armor slots (0 = hand — never clear). */
     public static final int LEGACY_EQUIP_BOOTS = 1;
     public static final int LEGACY_EQUIP_LEGS = 2;
@@ -158,6 +165,17 @@ public final class GameRules {
     public static String inventoryTitle(String title) {
         if (title == null) return "";
         return title.length() <= INVENTORY_TITLE_MAX ? title : title.substring(0, INVENTORY_TITLE_MAX);
+    }
+
+    /** Re-derive the stacked hologram line Ys after their tops/gap are (re)assigned from config. */
+    public static void recomputeHoloLines() {
+        SHOP_HOLO_TITLE_Y = NPC_HOLO_TOP;
+        SHOP_HOLO_SUB_Y = NPC_HOLO_TOP - HOLO_LINE;
+        GEN_HOLO_TITLE_Y = GEN_HOLO_TOP;
+        GEN_HOLO_TIER_Y = GEN_HOLO_TOP - HOLO_LINE;
+        LOBBY_HOLO_TITLE_Y = LOBBY_NPC_HOLO_TOP;
+        LOBBY_HOLO_SUB_Y = LOBBY_NPC_HOLO_TOP - HOLO_LINE;
+        LOBBY_HOLO_INFO_Y = LOBBY_NPC_HOLO_TOP - 2 * HOLO_LINE;
     }
 
     private GameRules() {
@@ -229,14 +247,22 @@ public final class GameRules {
             || counts[RES_DIAMOND] > 0 || counts[RES_EMERALD] > 0);
     }
 
-    /** Killer share: iron 100%, gold/diamond/emerald floor 50%. */
+    /** Fraction (0..1) of a victim's carried ore a killer receives. Default iron 100%, rest 50% (floored). */
+    public static double KILL_LOOT_IRON = 1.0;
+    public static double KILL_LOOT_GOLD = 0.5;
+    public static double KILL_LOOT_DIAMOND = 0.5;
+    public static double KILL_LOOT_EMERALD = 0.5;
+    /** Dream Defender lifetime before it despawns. Default 4 minutes. */
+    public static long DEFENDER_LIFETIME_MILLIS = 4L * 60L * 1000L;
+
+    /** Killer share by fraction, floored to a whole item and never negative. */
     public static int[] killLootShares(int[] totals) {
         int[] shares = new int[4];
         if (totals == null) return shares;
-        shares[RES_IRON] = Math.max(0, totals[RES_IRON]);
-        shares[RES_GOLD] = Math.max(0, totals[RES_GOLD] / 2);
-        shares[RES_DIAMOND] = Math.max(0, totals[RES_DIAMOND] / 2);
-        shares[RES_EMERALD] = Math.max(0, totals[RES_EMERALD] / 2);
+        shares[RES_IRON] = Math.max(0, (int) (totals[RES_IRON] * KILL_LOOT_IRON));
+        shares[RES_GOLD] = Math.max(0, (int) (totals[RES_GOLD] * KILL_LOOT_GOLD));
+        shares[RES_DIAMOND] = Math.max(0, (int) (totals[RES_DIAMOND] * KILL_LOOT_DIAMOND));
+        shares[RES_EMERALD] = Math.max(0, (int) (totals[RES_EMERALD] * KILL_LOOT_EMERALD));
         return shares;
     }
 
@@ -417,16 +443,27 @@ public final class GameRules {
     }
 
     /** Trap queue purchases cost 1, 2, then 4 diamonds. */
-    public static int trapDiamondCost(int queueSize) {
-        if (queueSize <= 0) return 1;
-        if (queueSize == 1) return 2;
-        return 4;
+    public static int trapDiamondCost(int queueSize) { return at(TRAP_QUEUE_COSTS, queueSize); }
+
+    // Team upgrade / trap diamond costs (config-driven; indexed by current level / queue size, clamped).
+    public static int[] FORGE_UPGRADE_COSTS = {2, 4, 6, 8};
+    public static int[] PROTECTION_COSTS = {2, 4, 8, 16};
+    public static int[] HASTE_COSTS = {2, 4};
+    public static int[] BOOTS_COSTS = {1, 2};
+    public static int[] TRAP_QUEUE_COSTS = {1, 2, 4};
+    public static int SHARPNESS_COST = 4;
+    public static int HEAL_POOL_COST = 1;
+
+    private static int at(int[] costs, int index) {
+        if (costs == null || costs.length == 0) return 0;
+        return costs[Math.max(0, Math.min(index, costs.length - 1))];
     }
 
-    public static int forgeUpgradeCost(int level) {
-        int[] costs = {2, 4, 6, 8};
-        return costs[Math.max(0, Math.min(level, costs.length - 1))];
-    }
+    public static int forgeUpgradeCost(int level) { return at(FORGE_UPGRADE_COSTS, level); }
+    public static int protectionCost(int level) { return at(PROTECTION_COSTS, level); }
+    public static int hasteCost(int level) { return at(HASTE_COSTS, level); }
+    public static int sharpnessCost() { return SHARPNESS_COST; }
+    public static int healPoolCost() { return HEAL_POOL_COST; }
 
     /** Diamond/emerald gens stay at 4 even at highest tier. Unknown kind = no cap. */
     public static int generatorGroundCap(String kind) {
@@ -447,9 +484,7 @@ public final class GameRules {
         return amountOnGround >= cap;
     }
 
-    public static int cushionedBootsCost(int level) {
-        return level <= 0 ? 1 : 2;
-    }
+    public static int cushionedBootsCost(int level) { return at(BOOTS_COSTS, level); }
 
     public static String countdownMessage(int seconds) {
         return "The game starts in " + seconds + " second" + (seconds == 1 ? "" : "s") + "!";
@@ -664,5 +699,153 @@ public final class GameRules {
     /** Lobby break/place: OP/admin or explicit {@code bedlam.lobby.build}. */
     public static boolean mayLobbyBuild(boolean adminOrOp, boolean lobbyBuildPerm) {
         return adminOrOp || lobbyBuildPerm;
+    }
+
+    // ------------------------------------------------------------------ party system (config.yml party.*)
+    /** Master switch for the built-in party system. */
+    public static boolean PARTY_ENABLED = true;
+    /** Max players per party ({@code bedlam.party.bypass-limit} overrides at the command layer). */
+    public static int PARTY_MAX_SIZE = 4;
+    /** Seconds an invite stays valid before it is dropped. */
+    public static int PARTY_INVITE_TIMEOUT = 60;
+    /** Keep a party together on one team when it queues. */
+    public static boolean PARTY_QUEUE_AS_TEAM = true;
+    /** Allow a party to enter open/joinable games. */
+    public static boolean PARTY_ALLOW_OPEN = false;
+    /** Persist parties to party.yml across restarts. */
+    public static boolean PARTY_PERSISTENT = false;
+
+    // ------------------------------------------------------------------ party math (pure; GameRulesCheck)
+
+    /**
+     * A party fits a mode when every member can join the same match AND the party can stay together.
+     * Capacity is {@code teamSize*teamCount}; a party larger than one team is split into same-team blocks
+     * (a Doubles party of 4 → two teams of 2). Solo ({@code teamSize == 1}) cannot keep a &gt;1 party
+     * together, so it is refused rather than auto-split.
+     */
+    public static boolean partyFitsMode(int partySize, int teamSize, int teamCount) {
+        if (partySize <= 0 || teamSize <= 0 || teamCount <= 0) return false;
+        if (partySize > teamSize * teamCount) return false;
+        if (teamSize <= 1 && partySize > 1) return false;
+        return true;
+    }
+
+    /** Split a party of {@code size} into contiguous same-team blocks of at most {@code teamSize}. */
+    public static int[] partitionParty(int size, int teamSize) {
+        if (size <= 0 || teamSize <= 0) return new int[0];
+        int blocks = (size + teamSize - 1) / teamSize;
+        int[] out = new int[blocks];
+        int remaining = size;
+        for (int i = 0; i < blocks; i++) {
+            out[i] = Math.min(teamSize, remaining);
+            remaining -= out[i];
+        }
+        return out;
+    }
+
+    /** An invite is expired once now reaches its stored expiry epoch-millis. */
+    public static boolean inviteExpired(long nowMillis, long expireMillis) {
+        return nowMillis >= expireMillis;
+    }
+
+    /** A party auto-disbands once it shrinks to a lone member (or empties). */
+    public static boolean partyDisbandsOnShrink(int remainingMembers) {
+        return remainingMembers <= 1;
+    }
+
+    /**
+     * Choose which external provider name to prefer, or {@code null} for the built-in provider.
+     * mode {@code "bedlam"} always uses built-in; {@code "auto"} uses the first configured external plugin
+     * that is loaded on this server; an explicit provider name uses that one when loaded. An empty list or
+     * no matching loaded plugin → {@code null} (built-in fallback).
+     */
+    public static String selectProvider(String mode, List<String> externalNames, java.util.Collection<String> loadedPlugins) {
+        String m = mode == null ? "auto" : mode.toLowerCase();
+        if (m.equals("bedlam") || externalNames == null) return null;
+        for (String name : externalNames) {
+            if (name == null || name.isEmpty()) continue;
+            if (!(m.equals("auto") || m.equalsIgnoreCase(name))) continue;
+            if (loadedPlugins != null) {
+                for (String loaded : loadedPlugins) {
+                    if (loaded != null && loaded.equalsIgnoreCase(name)) return name;
+                }
+            }
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------------ leaderboards (config.yml leaderboards.*)
+    /** Master switch. When false the feature is inert (no NPC, no ranking, command reports disabled). */
+    public static boolean LEADERBOARD_ENABLED = true;
+    /** Rows shown on the board / GUI page / command (1..50). */
+    public static int LEADERBOARD_TOP_N = 10;
+    /** Players below this game count are excluded from every board. */
+    public static int LEADERBOARD_MIN_GAMES = 1;
+    /** Minimum seconds between full rank recomputes (throttle for a busy lobby). */
+    public static int LEADERBOARD_REFRESH_SECONDS = 30;
+    /** GUI page capacity (rows per chest page). */
+    public static int LEADERBOARD_MAX_ROWS_PER_PAGE = 45;
+    /** Chat command output cap (lines). */
+    public static int LEADERBOARD_COMMAND_MAX_LINES = 15;
+    /** Spawn the lobby leaderboard NPC/board once one is placed in Lobby Setup. */
+    public static boolean LEADERBOARD_NPC_ENABLED = true;
+    /** Board title line ('&' colour codes). */
+    public static String LEADERBOARD_NPC_TITLE = "&6&lBED WARS &f&lLEADERBOARDS";
+    /** Board subtitle line ('&' colour codes). */
+    public static String LEADERBOARD_NPC_SUBTITLE = "&7Click for details";
+    /** Hypixel-style rank colours ('&' codes): #1 / #2 / #3 / others / value / your-row. */
+    public static String LEADERBOARD_FMT_FIRST = "&6";
+    public static String LEADERBOARD_FMT_SECOND = "&7";
+    public static String LEADERBOARD_FMT_THIRD = "&e";
+    public static String LEADERBOARD_FMT_OTHER = "&8";
+    public static String LEADERBOARD_FMT_VALUE = "&b";
+    public static String LEADERBOARD_FMT_YOU = "&a";
+
+    /** '&' rank colour for a 1-based rank, per the configured {@code formats}. */
+    public static String rankColor(int rank) {
+        if (rank == 1) return LEADERBOARD_FMT_FIRST;
+        if (rank == 2) return LEADERBOARD_FMT_SECOND;
+        if (rank == 3) return LEADERBOARD_FMT_THIRD;
+        return LEADERBOARD_FMT_OTHER;
+    }
+
+    // ------------------------------------------------------------------ leaderboard math (pure; GameRulesCheck)
+
+    /**
+     * Ratio with a divide-by-zero guard, rounded to one decimal (Hypixel K/D & F/K/D style).
+     * Denominator is floored at 1 so a player with 0 deaths reports {@code kills} exactly.
+     */
+    public static double ratio1(long numerator, long denominator) {
+        long denom = Math.max(1L, denominator);
+        double raw = (double) numerator / (double) denom;
+        return Math.round(raw * 10.0) / 10.0;
+    }
+
+    /** One-decimal render of a {@link #ratio1} value (Locale.US so it is always {@code x.y}). */
+    public static String formatRatio1(double value) {
+        return String.format(java.util.Locale.US, "%.1f", value);
+    }
+
+    /** A player appears on a board only once they have played at least {@code minGames} games. */
+    public static boolean qualifies(int games, int minGames) {
+        return games >= Math.max(0, minGames);
+    }
+
+    /**
+     * Leaderboard ordering for two entries: primary value DESC, then name case-insensitive ASC,
+     * then UUID string ASC for a stable total order. Returns &lt;0 when {@code a} ranks ahead of
+     * {@code b}. Primitive args so {@code GameRulesCheck} can assert it without Bukkit.
+     */
+    public static int compareEntries(double aValue, String aName, String aUuid,
+                                     double bValue, String bName, String bUuid) {
+        int byValue = Double.compare(bValue, aValue); // DESC
+        if (byValue != 0) return byValue;
+        String an = aName == null ? "" : aName;
+        String bn = bName == null ? "" : bName;
+        int byName = an.compareToIgnoreCase(bn);
+        if (byName != 0) return byName;
+        String au = aUuid == null ? "" : aUuid;
+        String bu = bUuid == null ? "" : bUuid;
+        return au.compareTo(bu);
     }
 }

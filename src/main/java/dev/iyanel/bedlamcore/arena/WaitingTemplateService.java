@@ -1,6 +1,7 @@
 package dev.iyanel.bedlamcore.arena;
 
 import dev.iyanel.bedlamcore.BedlamCore;
+import dev.iyanel.bedlamcore.compat.BlockStates;
 import dev.iyanel.bedlamcore.compat.Items;
 import dev.iyanel.bedlamcore.game.GameRules;
 import dev.iyanel.bedlamcore.util.AtomicFiles;
@@ -43,6 +44,12 @@ public final class WaitingTemplateService {
         LEGACY_RENAMES.put("IRON_FENCE", "IRON_BARS");
         LEGACY_RENAMES.put("DOUBLE_STEP", "SMOOTH_STONE");
         LEGACY_RENAMES.put("WALL_BANNER", "WHITE_WALL_BANNER");
+        // New default waiting build (captured on 1.8) uses these four; matchMaterial resolves the
+        // legacy names on 1.8/1.12 and the OAK_* names on 1.13+.
+        LEGACY_RENAMES.put("FENCE", "OAK_FENCE");
+        LEGACY_RENAMES.put("WOOD_STAIRS", "OAK_STAIRS");
+        LEGACY_RENAMES.put("WOOD_STEP", "OAK_SLAB");
+        LEGACY_RENAMES.put("WOOD_DOUBLE_STEP", "OAK_DOUBLE_SLAB");
         LEGACY_VARIANTS.put("WOOD", new String[] {"OAK_PLANKS", "SPRUCE_PLANKS", "BIRCH_PLANKS", "JUNGLE_PLANKS", "ACACIA_PLANKS", "DARK_OAK_PLANKS"});
         LEGACY_VARIANTS.put("LOG", new String[] {"OAK_LOG", "SPRUCE_LOG", "BIRCH_LOG", "JUNGLE_LOG"});
         LEGACY_VARIANTS.put("STEP", new String[] {"STONE_SLAB", "SANDSTONE_SLAB", "OAK_SLAB", "COBBLESTONE_SLAB", "BRICK_SLAB", "STONE_BRICK_SLAB", "NETHER_BRICK_SLAB", "QUARTZ_SLAB"});
@@ -99,12 +106,23 @@ public final class WaitingTemplateService {
     public boolean place(Location waitingSpawn, List<BlockSnap> replaced) {
         if (waitingSpawn == null || waitingSpawn.getWorld() == null || blocks.isEmpty()) return false;
         Location origin = waitingSpawn.getBlock().getLocation().add(0, -1, 0);
+        List<Block> fences = new ArrayList<Block>();
         for (BlockSpec spec : blocks) {
             Block block = origin.clone().add(spec.x, spec.y, spec.z).getBlock();
             Material material = pasteMaterial(spec.material, spec.data);
             replaced.add(BlockSnap.original(block, material, spec.data));
-            setSilent(block, material, spec.data);
+            // On 1.13+ the legacy data byte is dropped by setType, losing stair facing/half and slab
+            // species/half; BlockStates restores those from the captured data. No-op on 1.8-1.12.
+            if (!BlockStates.applyFlattened(block, spec.material, spec.data)) {
+                setSilent(block, material, spec.data);
+            }
+            if ("FENCE".equals(spec.material)) fences.add(block);
         }
+        // Fence connections are neighbour-driven, not stored in data. The paste ran with physics off,
+        // so on 1.13+ posts render disconnected until a block update recomputes them from now-placed
+        // neighbours. Harmless on 1.8, where fences render connected regardless.
+        // ponytail: state.update(true,true) per fence; fine for ~128 fences, revisit if builds balloon.
+        for (Block fence : fences) fence.getState().update(true, true);
         return true;
     }
 
@@ -231,7 +249,10 @@ public final class WaitingTemplateService {
         if (name == null) return Material.AIR;
         String[] variants = LEGACY_VARIANTS.get(name);
         if (variants != null) {
-            int index = data & 0xff;
+            // 1.8 LOG data packs species (low 2 bits) + axis/bark (high 2 bits); mask to the species
+            // base type so axed logs (data 4/8/12/…) still resolve instead of overflowing the 4-entry
+            // array and falling through to a bare "LOG" match → AIR on 1.13+.
+            int index = "LOG".equals(name) ? (data & 0x3) : (data & 0xff);
             if (index < variants.length) {
                 Material material = Material.matchMaterial(variants[index]);
                 if (material != null) return material;

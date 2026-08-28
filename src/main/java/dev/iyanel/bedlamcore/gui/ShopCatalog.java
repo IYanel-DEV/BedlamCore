@@ -8,8 +8,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Single source of truth for fixed shop layout, prices, currency, and descriptions. */
+/** Single source of truth for fixed shop layout, prices, currency, and descriptions.
+ *  Hardcoded values below are the DEFAULTS; {@link #reload} lets game.yml {@code shop.items.<key>} override
+ *  category/slot/cost/currency/name/flavor per key. Missing keys keep the default (old configs keep working),
+ *  and the buy-keys themselves never change (Hypixel Quick Buy import maps onto them). */
 public final class ShopCatalog {
+    private static final Map<String, Offer> DEFAULTS = new LinkedHashMap<String, Offer>();
     private static final Map<String, Offer> BY_KEY = new LinkedHashMap<String, Offer>();
 
     static {
@@ -50,9 +54,43 @@ public final class ShopCatalog {
         add("Utility", 29, "Bridge Egg", "Bridge Egg", 1, "EMERALD", "Throws a team-wool bridge", "along its flight path");
         add("Utility", 30, "Dream Defender", "Dream Defender", 120, "IRON_INGOT", "Team-friendly Iron Golem", "Guards nearby teammates for 4 minutes");
         add("Utility", 31, "Pop-up Tower", "Pop-up Tower", 24, "IRON_INGOT", "Right-click a block to deploy", "an instant team-wool tower");
+        BY_KEY.putAll(DEFAULTS);
     }
 
     private ShopCatalog() {
+    }
+
+    /** Rebuild the live catalog from defaults, applying any per-key overrides in game.yml {@code shop.items.<key>}.
+     *  Called at load/reload. A null config or absent section leaves defaults untouched. */
+    public static void reload(org.bukkit.configuration.file.FileConfiguration game) {
+        Map<String, Offer> rebuilt = new LinkedHashMap<String, Offer>();
+        for (Offer d : DEFAULTS.values()) {
+            String base = "shop.items." + d.key;
+            if (game != null && game.isConfigurationSection(base)) rebuilt.put(d.key, override(game, base, d));
+            else rebuilt.put(d.key, d);
+        }
+        BY_KEY.clear();
+        BY_KEY.putAll(rebuilt);
+    }
+
+    private static Offer override(org.bukkit.configuration.file.FileConfiguration game, String base, Offer d) {
+        String category = game.getString(base + ".category", d.category);
+        int slot = clampInt(game, base + ".slot", d.slot, 0, 53);
+        int cost = clampInt(game, base + ".price", d.cost, 0, 1_000_000);
+        String currency = game.getString(base + ".currency", d.currency);
+        String display = game.getString(base + ".name", d.display);
+        String flavor = game.getString(base + ".flavor", d.lore.length > 0 ? d.lore[0] : null);
+        String sub = game.getString(base + ".sub-flavor", d.lore.length > 1 ? d.lore[1] : null);
+        List<String> lore = new ArrayList<String>();
+        if (flavor != null && !flavor.isEmpty()) lore.add(flavor);
+        if (sub != null && !sub.isEmpty()) lore.add(sub);
+        return new Offer(category, slot, d.key, display, cost, currency, lore.toArray(new String[0]));
+    }
+
+    private static int clampInt(org.bukkit.configuration.file.FileConfiguration game, String path, int def, int min, int max) {
+        if (!game.isInt(path)) return def;
+        int v = game.getInt(path, def);
+        return v < min || v > max ? def : v;
     }
 
     public static Offer offer(String key) {
@@ -123,7 +161,7 @@ public final class ShopCatalog {
     }
 
     private static void add(String category, int slot, String key, String display, int cost, String currency, String... lore) {
-        if (BY_KEY.put(key, new Offer(category, slot, key, display, cost, currency, lore)) != null) {
+        if (DEFAULTS.put(key, new Offer(category, slot, key, display, cost, currency, lore)) != null) {
             throw new IllegalStateException("Duplicate shop key: " + key);
         }
     }

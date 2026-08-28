@@ -72,8 +72,8 @@ final class ForgeGeneratorService {
     void start() {
         BedlamCore plugin = manager.plugin();
         Arena arena = manager.arena();
-        int iron = plugin.getConfig().getInt("generator-periods.iron", 20);
-        int gold = plugin.getConfig().getInt("generator-periods.gold", 80);
+        int iron = plugin.settings().generatorPeriod("iron", 1, 20);
+        int gold = plugin.settings().generatorPeriod("gold", 1, 80);
         for (TeamColor team : arena.settings().configuredTeams()) {
             Location forge = arena.settings().team(team).forge();
             forgeGenerator(forge, new ItemStack(Material.IRON_INGOT), "iron", iron, team);
@@ -318,14 +318,14 @@ final class ForgeGeneratorService {
 
     private int generatorPeriod(String kind, int fallback) {
         int tier = kind.equals("diamond") ? diamondTier : kind.equals("emerald") ? emeraldTier : 1;
-        if (tier == 1) return manager.plugin().getConfig().getInt("generator-periods." + kind, fallback);
+        if (tier == 1) return manager.plugin().settings().generatorPeriod(kind, 1, fallback);
         int tierFallback = kind.equals("diamond") ? (tier == 2 ? 460 : 240) : (tier == 2 ? 900 : 600);
-        return manager.plugin().getConfig().getInt("generator-upgrades." + kind + ".tier-" + tier + "-period", tierFallback);
+        return manager.plugin().settings().generatorPeriod(kind, tier, tierFallback);
     }
 
     private int upgradeAt(String kind, int tier) {
         int fallback = kind.equals("diamond") ? (tier == 2 ? 360 : 720) : (tier == 2 ? 720 : 1080);
-        return manager.plugin().getConfig().getInt("generator-upgrades." + kind + ".tier-" + tier + "-seconds", fallback);
+        return manager.plugin().settings().generatorTierSeconds(kind, tier, fallback);
     }
 
     private static String roman(int tier) {

@@ -16,6 +16,10 @@ import dev.iyanel.bedlamcore.cosmetics.CosmeticsService;
 import dev.iyanel.bedlamcore.game.GameRules;
 import dev.iyanel.bedlamcore.game.ProfileStats;
 import dev.iyanel.bedlamcore.game.StatsStore;
+import dev.iyanel.bedlamcore.leaderboard.LeaderboardCategory;
+import dev.iyanel.bedlamcore.leaderboard.LeaderboardEntry;
+import dev.iyanel.bedlamcore.leaderboard.LeaderboardService;
+import dev.iyanel.bedlamcore.leaderboard.LeaderboardWindow;
 import dev.iyanel.bedlamcore.lobby.LobbyNpcService;
 import dev.iyanel.bedlamcore.lobby.LobbySettings;
 import com.google.gson.JsonElement;
@@ -64,6 +68,13 @@ public final class GuiController {
     public static final String IMPORT_TYPE_TITLE = ChatColor.DARK_GRAY + "Import As";
     public static final String TEMPLATES_TITLE = ChatColor.DARK_GRAY + "Templates";
     public static final String TEMPLATE_TYPE_TITLE = ChatColor.DARK_GRAY + "Template Mode";
+    public static final String LEADERBOARD_TITLE = ChatColor.DARK_GRAY + "Leaderboards";
+    private static final String LEADERBOARD_CAT_PREFIX = "Leaderboard: ";
+    private static final LeaderboardCategory[] LEADERBOARD_CATS = {
+        LeaderboardCategory.WINS, LeaderboardCategory.KILLS, LeaderboardCategory.FINAL_KILLS,
+        LeaderboardCategory.BEDS, LeaderboardCategory.WINSTREAK, LeaderboardCategory.KDR,
+        LeaderboardCategory.FKDR, LeaderboardCategory.LEVEL, LeaderboardCategory.TOKENS
+    };
     public static final String SHOP_TITLE = ChatColor.DARK_GRAY + "Quick Buy";
     public static final String UPGRADES_TITLE = ChatColor.DARK_GRAY + "Upgrades & Traps";
     public static final String PLAY_TITLE_PREFIX = "Play Bed Wars ";
@@ -92,6 +103,10 @@ public final class GuiController {
     /** Current cosmetics-category + page per player (pagination for large catalogs). */
     private final Map<UUID, String> cosmeticCategory = new HashMap<UUID, String>();
     private final Map<UUID, Integer> cosmeticPage = new HashMap<UUID, Integer>();
+    /** Leaderboard GUI state per player: selected mode (absent = Overall), category, page. */
+    private final Map<UUID, GameType> lbMode = new HashMap<UUID, GameType>();
+    private final Map<UUID, LeaderboardCategory> lbCategory = new HashMap<UUID, LeaderboardCategory>();
+    private final Map<UUID, Integer> lbPage = new HashMap<UUID, Integer>();
     /** Previous WorldBorder per world name while any setup draft overrides it. */
     private final Map<String, BorderSnapshot> savedBorders = new HashMap<String, BorderSnapshot>();
     /** Setup-only hologram markers keyed by draft owner. */
@@ -105,11 +120,15 @@ public final class GuiController {
 
     public void openMain(Player player) {
         Inventory inventory = chest(27, MAIN_TITLE);
-        inventory.setItem(10, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Quick Join Solo", ChatColor.GRAY + "One player per team"));
-        inventory.setItem(12, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Quick Join Doubles", ChatColor.GRAY + "Two players per team"));
-        inventory.setItem(14, Items.named(new ItemStack(Material.EMERALD), ChatColor.AQUA + "Browse Solo Games", ChatColor.GRAY + "Select a waiting arena"));
-        inventory.setItem(15, Items.named(new ItemStack(Material.MAP), ChatColor.GOLD + "Browse Doubles Games", ChatColor.GRAY + "Select a waiting arena"));
-        inventory.setItem(16, Items.named(new ItemStack(Items.material("RED_BED", "BED")), ChatColor.RED + "Leave Game"));
+        inventory.setItem(8, Items.named(new ItemStack(Items.material("RED_BED", "BED")), ChatColor.RED + "Leave Game"));
+        inventory.setItem(9, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Quick Join Solo", ChatColor.GRAY + "One player per team"));
+        inventory.setItem(10, Items.named(new ItemStack(Material.MAP), ChatColor.AQUA + "Browse Solo Games", ChatColor.GRAY + "Select a waiting arena"));
+        inventory.setItem(11, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Quick Join Doubles", ChatColor.GRAY + "Two players per team"));
+        inventory.setItem(12, Items.named(new ItemStack(Material.MAP), ChatColor.GOLD + "Browse Doubles Games", ChatColor.GRAY + "Select a waiting arena"));
+        inventory.setItem(13, Items.named(new ItemStack(Items.material("GOLDEN_SWORD", "GOLD_SWORD")), ChatColor.DARK_GREEN + "Quick Join Trios", ChatColor.GRAY + "Three players per team"));
+        inventory.setItem(14, Items.named(new ItemStack(Material.MAP), ChatColor.DARK_GREEN + "Browse Trios Games", ChatColor.GRAY + "Select a waiting arena"));
+        inventory.setItem(15, Items.named(new ItemStack(Items.material("NETHERITE_SWORD", "DIAMOND_SWORD")), ChatColor.LIGHT_PURPLE + "Quick Join Quads", ChatColor.GRAY + "Four players per team"));
+        inventory.setItem(16, Items.named(new ItemStack(Material.MAP), ChatColor.LIGHT_PURPLE + "Browse Quads Games", ChatColor.GRAY + "Select a waiting arena"));
         if (admin(player)) inventory.setItem(22, Items.named(new ItemStack(Material.COMPASS), ChatColor.GOLD + "Admin Setup"));
         openGui(player, inventory);
     }
@@ -165,11 +184,14 @@ public final class GuiController {
         LobbySettings draft = lobbyDrafts.get(player.getUniqueId());
         if (draft == null) { beginLobbySetup(player); return; }
         Inventory inventory = chest(27, LOBBY_TITLE);
-        inventory.setItem(10, setupItem(Material.NETHER_STAR, "Set Lobby Spawn", draft.spawn() != null));
-        inventory.setItem(12, npcItem(GameType.SOLO, draft));
-        inventory.setItem(14, npcItem(GameType.DOUBLES, draft));
-        inventory.setItem(16, setupItem(Material.EMERALD, "Set Cosmetics NPC", draft.cosmeticsNpc() != null));
+        inventory.setItem(9, setupItem(Material.NETHER_STAR, "Set Lobby Spawn", draft.spawn() != null));
+        inventory.setItem(10, npcItem(GameType.SOLO, draft));
+        inventory.setItem(11, npcItem(GameType.DOUBLES, draft));
+        inventory.setItem(12, npcItem(GameType.TRIOS, draft));
+        inventory.setItem(13, npcItem(GameType.QUADS, draft));
+        inventory.setItem(14, setupItem(Material.EMERALD, "Set Cosmetics NPC", draft.cosmeticsNpc() != null));
         inventory.setItem(15, setupItem(Material.PAPER, "Set Profile NPC", draft.profileNpc() != null));
+        inventory.setItem(16, setupItem(Items.material("BEACON"), "Set Leaderboard NPC", draft.leaderboardNpc() != null));
         inventory.setItem(21, Items.named(new ItemStack(Material.BARRIER), ChatColor.RED + "Cancel", ChatColor.GRAY + "Discard all lobby changes"));
         inventory.setItem(23, Items.named(new ItemStack(Material.SLIME_BALL), ChatColor.GREEN + "Apply", ChatColor.GRAY + "Validate and save"));
         openGui(player, inventory);
@@ -180,11 +202,13 @@ public final class GuiController {
         Inventory inventory = chest(54, WORLDS_TITLE);
         inventory.setItem(0, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Create Solo World"));
         inventory.setItem(1, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Create Doubles World"));
-        inventory.setItem(2, Items.named(new ItemStack(Material.CHEST), ChatColor.LIGHT_PURPLE + "Import Map",
+        inventory.setItem(2, Items.named(new ItemStack(Items.material("GOLDEN_SWORD", "GOLD_SWORD")), ChatColor.DARK_GREEN + "Create Trios World", ChatColor.GRAY + "6 teams x 3"));
+        inventory.setItem(3, Items.named(new ItemStack(Items.material("NETHERITE_SWORD", "DIAMOND_SWORD")), ChatColor.LIGHT_PURPLE + "Create Quads World", ChatColor.GRAY + "8 teams x 4"));
+        inventory.setItem(5, Items.named(new ItemStack(Material.CHEST), ChatColor.LIGHT_PURPLE + "Import Map",
             ChatColor.GRAY + "Existing world folders without an arena"));
-        inventory.setItem(3, Items.named(new ItemStack(Material.BOOK), ChatColor.GREEN + "Templates",
+        inventory.setItem(6, Items.named(new ItemStack(Material.BOOK), ChatColor.GREEN + "Templates",
             ChatColor.GRAY + "Maps bundled with the plugin"));
-        inventory.setItem(4, Items.named(new ItemStack(Material.COMPASS), ChatColor.YELLOW + "Current World", ChatColor.WHITE + player.getWorld().getName()));
+        inventory.setItem(7, Items.named(new ItemStack(Material.COMPASS), ChatColor.YELLOW + "Current World", ChatColor.WHITE + player.getWorld().getName()));
         int slot = 9;
         for (ArenaManager manager : plugin.games().arenas()) {
             if (slot >= inventory.getSize()) break;
@@ -220,10 +244,14 @@ public final class GuiController {
     private void openImportType(Player player, String worldName) {
         selectedArena.put(player.getUniqueId(), worldName);
         Inventory inventory = chest(27, IMPORT_TYPE_TITLE);
-        inventory.setItem(11, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Import as Solo",
+        inventory.setItem(10, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Import as Solo",
             ChatColor.GRAY + worldName));
-        inventory.setItem(15, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Import as Doubles",
+        inventory.setItem(12, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Import as Doubles",
             ChatColor.GRAY + worldName));
+        inventory.setItem(14, Items.named(new ItemStack(Items.material("GOLDEN_SWORD", "GOLD_SWORD")), ChatColor.DARK_GREEN + "Import as Trios",
+            ChatColor.GRAY + worldName, ChatColor.DARK_GRAY + "6 teams x 3"));
+        inventory.setItem(16, Items.named(new ItemStack(Items.material("NETHERITE_SWORD", "DIAMOND_SWORD")), ChatColor.LIGHT_PURPLE + "Import as Quads",
+            ChatColor.GRAY + worldName, ChatColor.DARK_GRAY + "8 teams x 4"));
         inventory.setItem(22, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
         openGui(player, inventory);
     }
@@ -235,20 +263,32 @@ public final class GuiController {
         int slot = 9;
         for (String id : plugin.templates().list()) {
             if (slot >= inventory.getSize()) break;
+            java.util.EnumSet<GameType> allowed = plugin.templates().allowedModes(id);
+            String modeLore = allowed.contains(GameType.TRIOS) ? "Trios/Quads only" : "Solo/Doubles only";
             inventory.setItem(slot++, Items.named(new ItemStack(Items.material("GRASS_BLOCK", "GRASS")),
                 ChatColor.GREEN + "Template: " + id,
-                ChatColor.GRAY + "Pre-setup map bundled with BedlamCore"));
+                ChatColor.GRAY + "Pre-setup map bundled with BedlamCore",
+                ChatColor.DARK_GRAY + modeLore));
         }
         openGui(player, inventory);
     }
 
     private void openTemplateType(Player player, String templateId) {
         selectedArena.put(player.getUniqueId(), templateId);
+        java.util.EnumSet<GameType> allowed = plugin.templates().allowedModes(templateId);
         Inventory inventory = chest(27, TEMPLATE_TYPE_TITLE);
-        inventory.setItem(11, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Solo",
-            ChatColor.GRAY + templateId, ChatColor.DARK_GRAY + "team size 1"));
-        inventory.setItem(15, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Doubles",
-            ChatColor.GRAY + templateId, ChatColor.DARK_GRAY + "team size 2"));
+        if (allowed.contains(GameType.SOLO))
+            inventory.setItem(10, Items.named(new ItemStack(Material.IRON_SWORD), ChatColor.AQUA + "Solo",
+                ChatColor.GRAY + templateId, ChatColor.DARK_GRAY + "team size 1"));
+        if (allowed.contains(GameType.DOUBLES))
+            inventory.setItem(12, Items.named(new ItemStack(Material.DIAMOND_SWORD), ChatColor.GOLD + "Doubles",
+                ChatColor.GRAY + templateId, ChatColor.DARK_GRAY + "team size 2"));
+        if (allowed.contains(GameType.TRIOS))
+            inventory.setItem(14, Items.named(new ItemStack(Items.material("GOLDEN_SWORD", "GOLD_SWORD")), ChatColor.DARK_GREEN + "3v3v3v3",
+                ChatColor.GRAY + templateId, ChatColor.DARK_GRAY + "4 teams x 3"));
+        if (allowed.contains(GameType.QUADS))
+            inventory.setItem(16, Items.named(new ItemStack(Items.material("NETHERITE_SWORD", "DIAMOND_SWORD")), ChatColor.LIGHT_PURPLE + "4v4v4v4",
+                ChatColor.GRAY + templateId, ChatColor.DARK_GRAY + "4 teams x 4"));
         inventory.setItem(22, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
         openGui(player, inventory);
     }
@@ -464,7 +504,7 @@ public final class GuiController {
         inventory.setItem(11, Items.named(new ItemStack(Items.material("RED_BED", "BED")),
             ChatColor.GREEN + "Bed Wars " + type.displayName(),
             ChatColor.WHITE + "Play a game of Bed Wars " + type.displayName() + ".",
-            ChatColor.WHITE + (type == GameType.SOLO ? "One player per team." : "Two players per team."),
+            ChatColor.WHITE + "" + type.teamSize() + " player(s) per team.",
             "",
             ChatColor.YELLOW + "Click to play!"));
         inventory.setItem(15, Items.named(new ItemStack(Items.material("OAK_SIGN", "SIGN")),
@@ -472,6 +512,31 @@ public final class GuiController {
             ChatColor.WHITE + "Pick which map you want to play!",
             "",
             ChatColor.YELLOW + "Click to browse!"));
+        // Party frame: when the sender leads a party show a "Queue as Party" button (else current behavior).
+        dev.iyanel.bedlamcore.party.PartyService parties = plugin.partyService();
+        if (parties != null && parties.enabled()) {
+            dev.iyanel.bedlamcore.party.Party party = parties.partyOf(player.getUniqueId());
+            if (party != null && party.size() > 1 && party.isLeader(player.getUniqueId())) {
+                inventory.setItem(22, Items.named(Skins.head(party.leaderName()),
+                    ChatColor.AQUA + "Queue as Party",
+                    ChatColor.WHITE + "Leader: " + ChatColor.YELLOW + party.leaderName(),
+                    ChatColor.WHITE + "Members: " + ChatColor.YELLOW + party.size(),
+                    "",
+                    ChatColor.YELLOW + "Click to queue your whole party!"));
+            } else if (party != null && party.size() > 1) {
+                inventory.setItem(22, Items.named(Skins.head(party.leaderName()),
+                    ChatColor.AQUA + "Your Party",
+                    ChatColor.WHITE + "Leader: " + ChatColor.YELLOW + party.leaderName(),
+                    ChatColor.WHITE + "Members: " + ChatColor.YELLOW + party.size(),
+                    "",
+                    ChatColor.GRAY + "Only the leader can queue the party."));
+            }
+            inventory.setItem(24, Items.named(new ItemStack(Items.material("CAKE")),
+                ChatColor.LIGHT_PURPLE + "Party Menu",
+                ChatColor.WHITE + "Create or manage your party.",
+                "",
+                ChatColor.YELLOW + "Click to open!"));
+        }
         openGui(player, inventory);
     }
 
@@ -518,7 +583,9 @@ public final class GuiController {
         else if (cleanTitle.equals("Game Setup")) clickArenaSetup(player, name, shiftLeft);
         else if (cleanTitle.equals("Team Setup")) clickTeamSetup(player, name);
         else if (cleanTitle.equals("NPC Editor")) clickNpcEditor(player, name);
-        else if (cleanTitle.equals("Cosmetics NPC") || cleanTitle.equals("Profile NPC")) clickSpecialNpcEditor(player, name);
+        else if (cleanTitle.equals("Cosmetics NPC") || cleanTitle.equals("Profile NPC") || cleanTitle.equals("Leaderboard NPC")) clickSpecialNpcEditor(player, name);
+        else if (cleanTitle.equals("Leaderboards")) clickLeaderboardHome(player, name);
+        else if (cleanTitle.startsWith("Leaderboard: ")) clickLeaderboardCategory(player, name);
         else if (cleanTitle.equals("Skin Presets")) clickSkinPreset(player, name);
         else if (cleanTitle.startsWith("Play Bed Wars ")) {
             GameType type = GameType.parse(cleanTitle.substring("Play Bed Wars ".length()));
@@ -538,13 +605,19 @@ public final class GuiController {
             clickCosmeticsCategory(player, cleanTitle, clicked);
         }
         else if (cleanTitle.equals("Bed Wars Statistics")) clickProfileStats(player, name);
+        else if (cleanTitle.equals("Party")) clickPartyMenu(player, name, shiftLeft);
+        else if (cleanTitle.equals("Party Invite")) clickPartyInvite(player, name);
     }
 
     private void clickMain(Player player, String name) {
         if (name.equals("Quick Join Solo")) plugin.games().quickJoin(player, GameType.SOLO);
         else if (name.equals("Quick Join Doubles")) plugin.games().quickJoin(player, GameType.DOUBLES);
+        else if (name.equals("Quick Join Trios")) plugin.games().quickJoin(player, GameType.TRIOS);
+        else if (name.equals("Quick Join Quads")) plugin.games().quickJoin(player, GameType.QUADS);
         else if (name.equals("Browse Solo Games")) openQueue(player, GameType.SOLO);
         else if (name.equals("Browse Doubles Games")) openQueue(player, GameType.DOUBLES);
+        else if (name.equals("Browse Trios Games")) openQueue(player, GameType.TRIOS);
+        else if (name.equals("Browse Quads Games")) openQueue(player, GameType.QUADS);
         else if (name.equals("Leave Game")) plugin.games().leave(player);
         else if (name.equals("Admin Setup")) openAdmin(player);
     }
@@ -564,6 +637,8 @@ public final class GuiController {
         if (name.equals("Set Lobby Spawn")) draft.spawn(player.getLocation());
         else if (name.equals("Set Solo NPC")) setQueueNpcHere(player, draft, GameType.SOLO);
         else if (name.equals("Set Doubles NPC")) setQueueNpcHere(player, draft, GameType.DOUBLES);
+        else if (name.equals("Set 3v3v3v3 NPC")) setQueueNpcHere(player, draft, GameType.TRIOS);
+        else if (name.equals("Set 4v4v4v4 NPC")) setQueueNpcHere(player, draft, GameType.QUADS);
         else if (name.equals("Set Cosmetics NPC")) {
             Location loc = snapNpcLocation(player);
             draft.cosmeticsNpc(loc);
@@ -575,6 +650,12 @@ public final class GuiController {
             draft.profileNpc(loc);
             plugin.npcs().spawnProfile(draft.profileNpc());
             player.sendMessage(ChatColor.GREEN + "Profile NPC set here. Click Apply to save.");
+        }
+        else if (name.equals("Set Leaderboard NPC")) {
+            Location loc = snapNpcLocation(player);
+            draft.leaderboardNpc(loc);
+            plugin.npcs().spawnLeaderboard(draft.leaderboardNpc());
+            player.sendMessage(ChatColor.GREEN + "Leaderboard NPC set here. Shift-click it to edit its look. Click Apply to save.");
         }
         else if (name.equals("Cancel")) {
             lobbyDrafts.remove(player.getUniqueId());
@@ -600,6 +681,8 @@ public final class GuiController {
     private void clickWorlds(Player player, String name) {
         if (name.equals("Create Solo World")) createWorld(player, GameType.SOLO);
         else if (name.equals("Create Doubles World")) createWorld(player, GameType.DOUBLES);
+        else if (name.equals("Create Trios World")) createWorld(player, GameType.TRIOS);
+        else if (name.equals("Create Quads World")) createWorld(player, GameType.QUADS);
         else if (name.equals("Import Map")) openImportMaps(player);
         else if (name.equals("Templates")) openTemplates(player);
         else if (name.startsWith("World: ")) openWorldActions(player, name.substring(7));
@@ -622,6 +705,8 @@ public final class GuiController {
         GameType type = null;
         if (name.equals("Solo")) type = GameType.SOLO;
         else if (name.equals("Doubles")) type = GameType.DOUBLES;
+        else if (name.equals("3v3v3v3")) type = GameType.TRIOS;
+        else if (name.equals("4v4v4v4")) type = GameType.QUADS;
         if (type == null) return;
         player.closeInventory();
         player.sendMessage(ChatColor.YELLOW + "Loading template " + templateId + " as " + type.displayName() + "...");
@@ -641,6 +726,8 @@ public final class GuiController {
         GameType type = null;
         if (name.equals("Import as Solo")) type = GameType.SOLO;
         else if (name.equals("Import as Doubles")) type = GameType.DOUBLES;
+        else if (name.equals("Import as Trios")) type = GameType.TRIOS;
+        else if (name.equals("Import as Quads")) type = GameType.QUADS;
         if (type == null) return;
         if (plugin.games().byId(worldName) != null || plugin.games().arenaInWorld(worldName) != null) {
             player.sendMessage(ChatColor.RED + worldName + " already has an arena.");
@@ -802,7 +889,89 @@ public final class GuiController {
 
     private void clickPlay(Player player, GameType type, String name) {
         if (name.equals("Bed Wars " + type.displayName())) plugin.games().quickJoin(player, type);
+        else if (name.equals("Queue as Party")) plugin.games().quickJoin(player, type);
+        else if (name.equals("Party Menu")) openPartyMenu(player);
         else if (name.startsWith("Map Selector")) openMapSelector(player, type);
+    }
+
+    public void openPartyMenu(Player player) {
+        dev.iyanel.bedlamcore.party.PartyService service = plugin.partyService();
+        Inventory inventory = chest(27, ChatColor.DARK_GRAY + "Party");
+        dev.iyanel.bedlamcore.party.Party party = service == null ? null : service.partyOf(player.getUniqueId());
+        if (party == null) {
+            inventory.setItem(13, Items.named(new ItemStack(Items.material("CAKE")),
+                ChatColor.GREEN + "Create Party",
+                ChatColor.WHITE + "Start a party and invite friends.",
+                "",
+                ChatColor.YELLOW + "Click to create!"));
+            openGui(player, inventory);
+            return;
+        }
+        boolean leader = party.isLeader(player.getUniqueId());
+        inventory.setItem(4, Items.named(Skins.head(party.leaderName()),
+            ChatColor.AQUA + "Party",
+            ChatColor.WHITE + "Leader: " + ChatColor.YELLOW + party.leaderName(),
+            ChatColor.WHITE + "Members: " + ChatColor.YELLOW + party.size(),
+            ChatColor.WHITE + "Joins: " + (party.open() ? ChatColor.GREEN + "open" : ChatColor.GRAY + "invite-only")));
+        int slot = 9;
+        for (java.util.UUID uuid : party.members()) {
+            if (slot > 17) break;
+            Player member = plugin.getServer().getPlayer(uuid);
+            String memberName = member != null ? member.getName() : "?";
+            String star = party.isLeader(uuid) ? ChatColor.GOLD + "★ " : ChatColor.WHITE.toString();
+            String line1 = leader && !party.isLeader(uuid) ? ChatColor.YELLOW + "Left-click: promote" : ChatColor.GRAY + "Party member";
+            String line2 = leader && !party.isLeader(uuid) ? ChatColor.RED + "Shift-click: kick" : "";
+            inventory.setItem(slot++, Items.named(Skins.head(memberName), star + memberName, line1, line2));
+        }
+        if (leader) inventory.setItem(20, Items.named(new ItemStack(Items.material("PAPER")),
+            ChatColor.GREEN + "Invite Players", ChatColor.WHITE + "Invite online lobby players.", "", ChatColor.YELLOW + "Click!"));
+        inventory.setItem(22, Items.named(new ItemStack(Items.material("OAK_SIGN", "SIGN")),
+            ChatColor.AQUA + "Party Chat", ChatColor.WHITE + "Toggle routing your chat to the party.", "", ChatColor.YELLOW + "Click to toggle!"));
+        inventory.setItem(24, Items.named(new ItemStack(org.bukkit.Material.BARRIER), ChatColor.RED + "Leave Party"));
+        if (leader) inventory.setItem(26, Items.named(new ItemStack(org.bukkit.Material.BARRIER), ChatColor.DARK_RED + "Disband Party"));
+        openGui(player, inventory);
+    }
+
+    public void openPartyInvite(Player player) {
+        dev.iyanel.bedlamcore.party.PartyService service = plugin.partyService();
+        Inventory inventory = chest(54, ChatColor.DARK_GRAY + "Party Invite");
+        int slot = 0;
+        for (Player online : plugin.getServer().getOnlinePlayers()) {
+            if (slot >= inventory.getSize()) break;
+            if (online.getUniqueId().equals(player.getUniqueId())) continue;
+            if (service != null && service.partyOf(online.getUniqueId()) != null) continue; // already partied
+            if (plugin.games().arena(online) != null) continue; // only lobby players
+            inventory.setItem(slot++, Items.named(Skins.head(online.getName()),
+                ChatColor.GREEN + online.getName(),
+                ChatColor.WHITE + "Click to invite to your party."));
+        }
+        openGui(player, inventory);
+    }
+
+    private void clickPartyMenu(Player player, String name, boolean shiftLeft) {
+        dev.iyanel.bedlamcore.party.PartyService service = plugin.partyService();
+        if (service == null) return;
+        if (name.equals("Create Party")) { service.create(player); openPartyMenu(player); return; }
+        if (name.equals("Invite Players")) { openPartyInvite(player); return; }
+        if (name.equals("Party Chat")) { service.toggleChat(player); openPartyMenu(player); return; }
+        if (name.equals("Leave Party")) { service.leave(player); openPartyMenu(player); return; }
+        if (name.equals("Disband Party")) { service.disbandCommand(player); openPartyMenu(player); return; }
+        if (name.equals("Party")) return; // info head
+        // Otherwise a member head: promote (left) or kick (shift). name may carry the leader star prefix.
+        String memberName = ChatColor.stripColor(name).replace("★", "").trim();
+        Player target = plugin.getServer().getPlayerExact(memberName);
+        if (target == null) return;
+        dev.iyanel.bedlamcore.party.Party party = service.partyOf(player.getUniqueId());
+        if (party == null || !party.isLeader(player.getUniqueId())) return;
+        if (shiftLeft) service.kick(target, player.getUniqueId());
+        else service.promote(target, player.getUniqueId());
+        openPartyMenu(player);
+    }
+
+    private void clickPartyInvite(Player player, String name) {
+        Player target = plugin.getServer().getPlayerExact(name);
+        if (target != null && plugin.partyService() != null) plugin.partyService().invite(target, player);
+        openPartyInvite(player);
     }
 
     private void clickMap(Player player, GameType type, String name) {
@@ -1165,10 +1334,9 @@ public final class GuiController {
     public void openSpecialNpcEditor(Player player, String target) {
         if (!admin(player)) return;
         specialEditTarget.put(player.getUniqueId(), target);
-        boolean cosmetics = "COSMETICS".equals(target);
-        String skin = cosmetics ? plugin.lobby().cosmeticsSkin() : plugin.lobby().profileSkin();
-        boolean cape = cosmetics ? plugin.lobby().cosmeticsCape() : plugin.lobby().profileCape();
-        String label = cosmetics ? "Cosmetics" : "Profile";
+        String skin = specialSkin(target);
+        boolean cape = specialCape(target);
+        String label = specialLabel(target);
         Inventory inventory = chest(27, ChatColor.DARK_GRAY + label + " NPC");
         inventory.setItem(4, Items.named(Skins.head(skin != null ? skin : "Steve"),
             ChatColor.GOLD + label + " NPC", ChatColor.GRAY + "Skin: " + (skin != null ? skin : "Default")));
@@ -1186,7 +1354,6 @@ public final class GuiController {
     private void clickSpecialNpcEditor(Player player, String name) {
         String target = specialEditTarget.get(player.getUniqueId());
         if (target == null) return;
-        boolean cosmetics = "COSMETICS".equals(target);
         if (name.equals("Back")) { specialEditTarget.remove(player.getUniqueId()); openLobbySetup(player); return; }
         if (name.equals("Default Skins")) { openSkinPicker(player); return; }
         if (name.equals("Set Skin")) {
@@ -1196,7 +1363,8 @@ public final class GuiController {
             return;
         }
         if (name.startsWith("Cape: ")) {
-            if (cosmetics) plugin.lobby().cosmeticsCape(!plugin.lobby().cosmeticsCape());
+            if ("COSMETICS".equals(target)) plugin.lobby().cosmeticsCape(!plugin.lobby().cosmeticsCape());
+            else if ("LEADERBOARD".equals(target)) plugin.lobby().leaderboardCape(!plugin.lobby().leaderboardCape());
             else plugin.lobby().profileCape(!plugin.lobby().profileCape());
             plugin.saveSettings();
             respawnSpecial(target);
@@ -1204,8 +1372,27 @@ public final class GuiController {
         openSpecialNpcEditor(player, target);
     }
 
+    private String specialLabel(String target) {
+        if ("COSMETICS".equals(target)) return "Cosmetics";
+        if ("LEADERBOARD".equals(target)) return "Leaderboard";
+        return "Profile";
+    }
+
+    private String specialSkin(String target) {
+        if ("COSMETICS".equals(target)) return plugin.lobby().cosmeticsSkin();
+        if ("LEADERBOARD".equals(target)) return plugin.lobby().leaderboardSkin();
+        return plugin.lobby().profileSkin();
+    }
+
+    private boolean specialCape(String target) {
+        if ("COSMETICS".equals(target)) return plugin.lobby().cosmeticsCape();
+        if ("LEADERBOARD".equals(target)) return plugin.lobby().leaderboardCape();
+        return plugin.lobby().profileCape();
+    }
+
     private void applySpecialSkin(Player player, String target, String skin) {
         if ("COSMETICS".equals(target)) plugin.lobby().cosmeticsSkin(skin);
+        else if ("LEADERBOARD".equals(target)) plugin.lobby().leaderboardSkin(skin);
         else plugin.lobby().profileSkin(skin);
         plugin.saveSettings();
         respawnSpecial(target);
@@ -1213,6 +1400,7 @@ public final class GuiController {
 
     private void respawnSpecial(String target) {
         if ("COSMETICS".equals(target)) plugin.npcs().spawnCosmetics(plugin.lobby().cosmeticsNpc());
+        else if ("LEADERBOARD".equals(target)) plugin.npcs().spawnLeaderboard(plugin.lobby().leaderboardNpc());
         else plugin.npcs().spawnProfile(plugin.lobby().profileNpc());
     }
 
@@ -1245,9 +1433,11 @@ public final class GuiController {
     public void openProfileStats(Player player) {
         StatsStore.Record stats = plugin.stats().get(player.getUniqueId());
         Inventory inventory = chest(27, ChatColor.DARK_GRAY + "Bed Wars Statistics");
-        inventory.setItem(11, statsPaper("Overall Statistics", ProfileStats.overallLore(stats)));
-        inventory.setItem(13, statsPaper("Solo Statistics", ProfileStats.modeLore("Solo", stats, stats.solo)));
-        inventory.setItem(15, statsPaper("Doubles Statistics", ProfileStats.modeLore("Doubles", stats, stats.doubles)));
+        inventory.setItem(10, statsPaper("Overall Statistics", ProfileStats.overallLore(stats)));
+        inventory.setItem(11, statsPaper("Solo Statistics", ProfileStats.modeLore("Solo", stats, stats.solo)));
+        inventory.setItem(12, statsPaper("Doubles Statistics", ProfileStats.modeLore("Doubles", stats, stats.doubles)));
+        inventory.setItem(13, statsPaper("Trios Statistics", ProfileStats.modeLore("3v3v3v3", stats, stats.trios)));
+        inventory.setItem(14, statsPaper("Quads Statistics", ProfileStats.modeLore("4v4v4v4", stats, stats.quads)));
         inventory.setItem(22, Items.named(new ItemStack(Material.BARRIER), ChatColor.RED + "Close"));
         openGui(player, inventory);
     }
@@ -1265,6 +1455,175 @@ public final class GuiController {
             item.setItemMeta(meta);
         }
         return item;
+    }
+
+    // ------------------------------------------------------------------ leaderboards GUI (read-only)
+
+    /** Home board: mode tabs across the top, a 3x3 of stat categories, and the caller's Wins rank. */
+    public void openLeaderboard(Player player) {
+        if (plugin.leaderboards() == null || !GameRules.LEADERBOARD_ENABLED) {
+            player.sendMessage(ChatColor.RED + "Leaderboards are disabled.");
+            return;
+        }
+        UUID uuid = player.getUniqueId();
+        GameType mode = lbMode.get(uuid);
+        Inventory inventory = chest(54, LEADERBOARD_TITLE);
+        leaderboardBorder(inventory);
+        inventory.setItem(2, modeTab("Overall", mode == null));
+        inventory.setItem(3, modeTab("Solo", mode == GameType.SOLO));
+        inventory.setItem(4, modeTab("Doubles", mode == GameType.DOUBLES));
+        inventory.setItem(5, modeTab("3v3v3v3", mode == GameType.TRIOS));
+        inventory.setItem(6, modeTab("4v4v4v4", mode == GameType.QUADS));
+        int[] slots = {20, 22, 24, 29, 31, 33, 38, 40, 42};
+        for (int i = 0; i < LEADERBOARD_CATS.length && i < slots.length; i++) {
+            inventory.setItem(slots[i], leaderboardCategoryIcon(player, LEADERBOARD_CATS[i], mode));
+        }
+        int rank = plugin.leaderboards().rankOf(uuid, LeaderboardCategory.WINS, mode);
+        inventory.setItem(48, Items.named(Skins.head(player.getName()),
+            ChatColor.GREEN + "Your Rank " + ChatColor.GRAY + "(" + LeaderboardService.modeLabel(mode) + " Wins)",
+            rank > 0 ? ChatColor.AQUA + "#" + rank : ChatColor.GRAY + "You are not ranked yet"));
+        inventory.setItem(49, Items.named(new ItemStack(Material.BOOK), ChatColor.GOLD + "Bed Wars Leaderboards",
+            ChatColor.GRAY + "Pick a mode, then a category."));
+        inventory.setItem(50, Items.named(new ItemStack(Material.BARRIER), ChatColor.RED + "Close"));
+        openGui(player, inventory);
+    }
+
+    /** Category page: up to top-n player heads with rank badges, values, your-rank footer, pagination. */
+    public void openLeaderboardCategory(Player player, LeaderboardCategory category, GameType mode, int page) {
+        if (category == null) { openLeaderboard(player); return; }
+        if (plugin.leaderboards() == null || !GameRules.LEADERBOARD_ENABLED) {
+            player.sendMessage(ChatColor.RED + "Leaderboards are disabled.");
+            return;
+        }
+        UUID uuid = player.getUniqueId();
+        lbCategory.put(uuid, category);
+        List<LeaderboardEntry> rows = plugin.leaderboards().ranking(category, mode, LeaderboardWindow.ALL_TIME);
+        int pageSize = Math.max(9, Math.min(36, GameRules.LEADERBOARD_MAX_ROWS_PER_PAGE));
+        int pages = Math.max(1, (int) Math.ceil(rows.size() / (double) pageSize));
+        page = Math.max(0, Math.min(page, pages - 1));
+        lbPage.put(uuid, page);
+        Inventory inventory = chest(54, GameRules.inventoryTitle(ChatColor.DARK_GRAY + LEADERBOARD_CAT_PREFIX + category.label()));
+        leaderboardBorder(inventory);
+        inventory.setItem(2, modeTab("Overall", mode == null));
+        inventory.setItem(3, modeTab("Solo", mode == GameType.SOLO));
+        inventory.setItem(4, modeTab("Doubles", mode == GameType.DOUBLES));
+        inventory.setItem(5, modeTab("3v3v3v3", mode == GameType.TRIOS));
+        inventory.setItem(6, modeTab("4v4v4v4", mode == GameType.QUADS));
+        int start = page * pageSize;
+        for (int i = 0; i < pageSize; i++) {
+            int idx = start + i;
+            if (idx >= rows.size()) break;
+            LeaderboardEntry entry = rows.get(idx);
+            boolean you = uuid.equals(entry.uuid());
+            String head = rankColor(entry.rank()) + "#" + entry.rank() + " " + ChatColor.WHITE + entry.name()
+                + (you ? ChatColor.GREEN + " (You)" : "");
+            inventory.setItem(9 + i, Items.named(Skins.head(entry.name()), head,
+                ChatColor.GRAY + category.label() + ": " + ChatColor.AQUA + entry.formattedValue(),
+                ChatColor.DARK_GRAY + LeaderboardService.modeLabel(mode)));
+        }
+        if (rows.isEmpty()) {
+            inventory.setItem(22, Items.named(new ItemStack(Material.PAPER), ChatColor.GRAY + "No ranked players yet",
+                ChatColor.GRAY + "Play some games to appear here."));
+        }
+        int myRank = plugin.leaderboards().rankOf(uuid, category, mode);
+        inventory.setItem(49, Items.named(Skins.head(player.getName()), ChatColor.GREEN + "Your Rank",
+            myRank > 0 ? ChatColor.AQUA + "#" + myRank : ChatColor.GRAY + "You are not ranked yet"));
+        inventory.setItem(45, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Back"));
+        if (page > 0) inventory.setItem(46, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Previous Page"));
+        if (page + 1 < pages) inventory.setItem(53, Items.named(new ItemStack(Material.ARROW), ChatColor.YELLOW + "Next Page"));
+        if (pages > 1) inventory.setItem(47, Items.named(new ItemStack(Material.PAPER), ChatColor.YELLOW + "Page " + (page + 1) + "/" + pages));
+        openGui(player, inventory);
+    }
+
+    private void clickLeaderboardHome(Player player, String name) {
+        UUID uuid = player.getUniqueId();
+        if (name.equals("Close")) { player.closeInventory(); return; }
+        if (name.equals("Overall")) { lbMode.remove(uuid); openLeaderboard(player); return; }
+        if (name.equals("Solo")) { lbMode.put(uuid, GameType.SOLO); openLeaderboard(player); return; }
+        if (name.equals("Doubles")) { lbMode.put(uuid, GameType.DOUBLES); openLeaderboard(player); return; }
+        if (name.equals("3v3v3v3")) { lbMode.put(uuid, GameType.TRIOS); openLeaderboard(player); return; }
+        if (name.equals("4v4v4v4")) { lbMode.put(uuid, GameType.QUADS); openLeaderboard(player); return; }
+        LeaderboardCategory category = categoryByLabel(name);
+        if (category != null) openLeaderboardCategory(player, category, lbMode.get(uuid), 0);
+    }
+
+    private void clickLeaderboardCategory(Player player, String name) {
+        UUID uuid = player.getUniqueId();
+        LeaderboardCategory category = lbCategory.get(uuid);
+        if (category == null) { openLeaderboard(player); return; }
+        if (name.equals("Back")) { openLeaderboard(player); return; }
+        if (name.equals("Overall")) { lbMode.remove(uuid); openLeaderboardCategory(player, category, null, 0); return; }
+        if (name.equals("Solo")) { lbMode.put(uuid, GameType.SOLO); openLeaderboardCategory(player, category, GameType.SOLO, 0); return; }
+        if (name.equals("Doubles")) { lbMode.put(uuid, GameType.DOUBLES); openLeaderboardCategory(player, category, GameType.DOUBLES, 0); return; }
+        if (name.equals("3v3v3v3")) { lbMode.put(uuid, GameType.TRIOS); openLeaderboardCategory(player, category, GameType.TRIOS, 0); return; }
+        if (name.equals("4v4v4v4")) { lbMode.put(uuid, GameType.QUADS); openLeaderboardCategory(player, category, GameType.QUADS, 0); return; }
+        GameType mode = lbMode.get(uuid);
+        int page = lbPage.get(uuid) == null ? 0 : lbPage.get(uuid);
+        if (name.equals("Previous Page")) { openLeaderboardCategory(player, category, mode, page - 1); return; }
+        if (name.equals("Next Page")) { openLeaderboardCategory(player, category, mode, page + 1); return; }
+        // Clicking a head / your-rank / page indicator is read-only.
+    }
+
+    private ItemStack leaderboardCategoryIcon(Player player, LeaderboardCategory category, GameType mode) {
+        List<LeaderboardEntry> rows = plugin.leaderboards().ranking(category, mode, LeaderboardWindow.ALL_TIME);
+        List<String> lore = new ArrayList<String>();
+        if (rows.isEmpty()) lore.add(ChatColor.GRAY + "No ranked players yet");
+        for (int i = 0; i < rows.size() && i < 3; i++) {
+            LeaderboardEntry entry = rows.get(i);
+            lore.add(rankColor(entry.rank()) + "#" + entry.rank() + " " + ChatColor.WHITE + entry.name()
+                + ChatColor.GRAY + " - " + ChatColor.AQUA + entry.formattedValue());
+        }
+        int myRank = plugin.leaderboards().rankOf(player.getUniqueId(), category, mode);
+        lore.add("");
+        lore.add(myRank > 0 ? ChatColor.GREEN + "Your Rank: #" + myRank : ChatColor.GRAY + "You are not ranked yet");
+        lore.add(ChatColor.YELLOW + "Click to view the top " + plugin.leaderboards().topN());
+        return Items.named(new ItemStack(categoryMaterial(category)), ChatColor.GOLD + category.label(),
+            lore.toArray(new String[lore.size()]));
+    }
+
+    private ItemStack modeTab(String label, boolean selected) {
+        Material material = label.equals("Solo") ? Material.IRON_SWORD
+            : label.equals("Doubles") ? Material.DIAMOND_SWORD
+            : label.equals("3v3v3v3") ? Items.material("GOLDEN_SWORD", "GOLD_SWORD")
+            : label.equals("4v4v4v4") ? Items.material("NETHERITE_SWORD", "DIAMOND_SWORD")
+            : Material.NETHER_STAR;
+        return Items.named(new ItemStack(material), (selected ? ChatColor.GREEN : ChatColor.YELLOW) + label,
+            selected ? ChatColor.GRAY + "Selected" : ChatColor.GRAY + "Click to view");
+    }
+
+    private static LeaderboardCategory categoryByLabel(String label) {
+        for (LeaderboardCategory category : LEADERBOARD_CATS) {
+            if (category.label().equals(label)) return category;
+        }
+        return null;
+    }
+
+    /** '&'-coded rank colour (from config formats) as a ChatColor sequence. */
+    /** Gray-glass frame around the edges (top/bottom rows + side columns) for the Hypixel "settings"-style look. */
+    private static void leaderboardBorder(Inventory inventory) {
+        ItemStack pane = Items.named(Items.stack("GRAY_STAINED_GLASS_PANE", "STAINED_GLASS_PANE", 1, (short) 7), " ");
+        for (int i = 0; i < 9; i++) { inventory.setItem(i, pane); inventory.setItem(45 + i, pane); }
+        for (int r = 1; r < 5; r++) { inventory.setItem(r * 9, pane); inventory.setItem(r * 9 + 8, pane); }
+    }
+
+    private static String rankColor(int rank) {
+        return ChatColor.translateAlternateColorCodes('&', GameRules.rankColor(rank));
+    }
+
+    private static Material categoryMaterial(LeaderboardCategory category) {
+        switch (category) {
+            case WINS: return Material.GOLD_INGOT;
+            case KILLS: return Material.IRON_SWORD;
+            case FINAL_KILLS: return Material.DIAMOND_SWORD;
+            case BEDS: return Items.material("RED_BED", "BED");
+            case WINSTREAK: return Material.BLAZE_POWDER;
+            case KDR: return Items.material("IRON_AXE");
+            case FKDR: return Items.material("DIAMOND_AXE");
+            case LEVEL: return Items.material("EXPERIENCE_BOTTLE", "EXP_BOTTLE");
+            case XP: return Items.material("EXPERIENCE_BOTTLE", "EXP_BOTTLE");
+            case TOKENS: return Material.EMERALD;
+            default: return Material.PAPER;
+        }
     }
 
     public void openCosmetics(Player player) {
@@ -1786,23 +2145,23 @@ public final class GuiController {
         if (team == null) return;
         Inventory inventory = chest(45, UPGRADES_TITLE);
 
-        inventory.setItem(10, upgradeOffer(player, new ItemStack(Material.IRON_SWORD), "Sharpened Swords", 4,
+        inventory.setItem(10, upgradeOffer(player, new ItemStack(Material.IRON_SWORD), "Sharpened Swords", GameRules.sharpnessCost(),
             arena.sharpness(team), ChatColor.GRAY + "Your team gets Sharpness I", ChatColor.GRAY + "on all swords."));
         int protection = arena.protection(team);
-        int protectionCost = new int[] {2, 4, 8, 16}[Math.min(protection, 3)];
+        int protectionCost = GameRules.protectionCost(protection);
         inventory.setItem(11, upgradeOffer(player, new ItemStack(Material.IRON_CHESTPLATE),
             "Reinforced Armor " + roman(Math.min(protection + 1, 4)), protectionCost, protection >= 4,
             ChatColor.GRAY + "Your team gets Protection", ChatColor.GRAY + "on all armor pieces."));
         int haste = arena.hasteLevel(team);
         inventory.setItem(12, upgradeOffer(player, new ItemStack(Items.material("GOLDEN_PICKAXE", "GOLD_PICKAXE")),
-            "Maniac Miner " + roman(Math.min(haste + 1, 2)), haste == 0 ? 2 : 4, haste >= 2,
+            "Maniac Miner " + roman(Math.min(haste + 1, 2)), GameRules.hasteCost(haste), haste >= 2,
             ChatColor.GRAY + "Your team gets Haste", ChatColor.GRAY + "for the entire game."));
 
         int forge = arena.forgeLevel(team);
         inventory.setItem(19, upgradeOffer(player, new ItemStack(Material.FURNACE),
             "Iron Forge " + roman(Math.min(forge + 1, 4)), GameRules.forgeUpgradeCost(forge), forge >= 4,
             ChatColor.GRAY + "Upgrades your island resource", ChatColor.GRAY + "generator."));
-        inventory.setItem(20, upgradeOffer(player, new ItemStack(Items.material("BEACON")), "Heal Pool", 1,
+        inventory.setItem(20, upgradeOffer(player, new ItemStack(Items.material("BEACON")), "Heal Pool", GameRules.healPoolCost(),
             arena.healPool(team), ChatColor.GRAY + "Creates a regeneration field", ChatColor.GRAY + "around your base."));
         int boots = arena.cushionedBootsLevel(team);
         inventory.setItem(21, upgradeOffer(player, new ItemStack(Items.material("DIAMOND_BOOTS")),
@@ -2017,12 +2376,12 @@ public final class GuiController {
         Arena arena = manager.arena();
         TeamColor team = arena.team(player.getUniqueId());
         if (team == null) return;
-        if (name.equals("Sharpened Swords") && !arena.sharpness(team) && pay(player, Material.DIAMOND, 4)) {
+        if (name.equals("Sharpened Swords") && !arena.sharpness(team) && pay(player, Material.DIAMOND, GameRules.sharpnessCost())) {
             arena.sharpness(team, true);
             for (Player member : Bukkit.getOnlinePlayers()) if (team == arena.team(member.getUniqueId())) enchantSwords(member);
         } else if (name.startsWith("Reinforced Armor") && arena.protection(team) < 4) {
             int level = arena.protection(team);
-            if (pay(player, Material.DIAMOND, new int[] {2, 4, 8, 16}[level])) {
+            if (pay(player, Material.DIAMOND, GameRules.protectionCost(level))) {
                 arena.protection(team, level + 1);
                 for (Player member : Bukkit.getOnlinePlayers()) if (team == arena.team(member.getUniqueId())) manager.equipArmor(member, team);
             }
@@ -2031,11 +2390,11 @@ public final class GuiController {
             if (pay(player, Material.DIAMOND, GameRules.forgeUpgradeCost(level))) arena.forgeLevel(team, level + 1);
         } else if (name.startsWith("Maniac Miner") && arena.hasteLevel(team) < 2) {
             int level = arena.hasteLevel(team);
-            if (pay(player, Material.DIAMOND, level == 0 ? 2 : 4)) {
+            if (pay(player, Material.DIAMOND, GameRules.hasteCost(level))) {
                 arena.hasteLevel(team, level + 1);
                 for (Player member : Bukkit.getOnlinePlayers()) if (team == arena.team(member.getUniqueId())) manager.applyHaste(member, team);
             }
-        } else if (name.equals("Heal Pool") && !arena.healPool(team) && pay(player, Material.DIAMOND, 1)) {
+        } else if (name.equals("Heal Pool") && !arena.healPool(team) && pay(player, Material.DIAMOND, GameRules.healPoolCost())) {
             arena.healPool(team, true);
         } else if (name.startsWith("Cushioned Boots") && arena.cushionedBootsLevel(team) < 2) {
             int level = arena.cushionedBootsLevel(team);

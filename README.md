@@ -4,7 +4,7 @@
 
 Independent project by [IYanel-DEV](https://github.com/IYanel-DEV). Not affiliated with Hypixel, Mojang, or Microsoft. Ships no third-party server code, maps, or branding.
 
-Current line: **0.10.79** · [Releases](https://github.com/IYanel-DEV/BedlamCore/releases) · [Repository](https://github.com/IYanel-DEV/BedlamCore)
+Current line: **0.10.90** · [Releases](https://github.com/IYanel-DEV/BedlamCore/releases) · [Repository](https://github.com/IYanel-DEV/BedlamCore)
 
 ---
 
@@ -58,11 +58,11 @@ More stills in [`docs/showcase/`](docs/showcase/): cosmetics shop, stats GUI, pl
 
 | Area | What you get |
 |------|----------------|
-| **Lobby** | Solo / Doubles queue NPCs, profile NPC + statistics GUI, cosmetics NPC (token shop), lobby scoreboard (level / tokens / kills / wins) — all on BedlamCore's own built-in packet NPC system |
+| **Lobby** | Solo / Doubles / Trios (3v3v3v3) / Quads (4v4v4v4) queue NPCs, profile NPC + statistics GUI, cosmetics NPC (token shop), lobby scoreboard (level / tokens / kills / wins) — all on BedlamCore's own built-in packet NPC system |
 | **NPCs** | Citizens-free fake players — real player models with skins, look-at rotation and arm-swing, no **Citizens** plugin required |
 | **Setup** | Compass-driven Lobby Setup and Game World Setup — drafts, Apply / Cancel, no command maze |
-| **Arenas** | Multi-world Solo & Doubles; waiting structure (`/bc spawnbuild`); spectator spawn; teams, beds, forges, shops, chests, gens |
-| **Templates** | Bundled map template **bedwars-e2560**; Import Maps flow for folder worlds |
+| **Arenas** | Multi-world Solo / Doubles / Trios (3v3v3v3) / Quads (4v4v4v4); waiting structure (`/bc spawnbuild`); spectator spawn; teams, beds, forges, shops, chests, gens |
+| **Templates** | Bundled map templates **bedwars-e2560** (Solo/Doubles) and **chained** (Trios/Quads only, 4-island map); Import Maps flow for folder worlds |
 | **Border** | Build radius from waiting + spectator center (setup-visible); match builds stay inside |
 | **Match** | Quick Buy shop, upgrades & traps, forge share, diamond/emerald tiers, bridge egg, Dream Defender, soft spectate (adventure + flight + invis — not `SPECTATOR`) |
 | **Economy** | Tokens / XP / levels in `stats.yml`; match rewards; punch-to-deposit team chests |
@@ -79,6 +79,11 @@ More stills in [`docs/showcase/`](docs/showcase/): cosmetics shop, stats GUI, pl
 ---
 
 ## What's New (since v0.10.37)
+
+### Party system (built-in + pluggable providers)
+- **Built-in parties** — `/party` (`/p`) full lifecycle: create, invite (60s expiry), accept/deny, list, promote, kick, leave, disband (confirm), open/close, warp, and `/pc` party chat. A GUI **Party Menu** (invite picker with player heads, promote/kick, chat toggle) is reachable from the queue screens.
+- **Queue as a party** — the leader queuing from the compass GUI, a queue NPC, or `/bedlam solo|doubles` brings the whole party into one waiting game; a Doubles party of 2 lands **both on the same team**, a party of 4 fills two teams. Oversize / wrong-mode parties are refused with a clear message and never split.
+- **Provider API** — a `PartyProvider` interface + public `BedlamCore.party()` API and cancellable Bukkit events let other plugins drive or veto matching. Ships opt-in adapters for **BungeeParties** and **Party and Friends** (reflective, no compile-time dependency); `party.provider: auto` prefers a loaded external plugin and otherwise falls back to the built-in system.
 
 ### Cosmetics — new shop categories (live, not "Coming Soon")
 - **Shopkeeper Skins** — reskin your team's in-match shop NPCs (ITEM SHOP + TEAM UPGRADES) with real player skins. Team-shared: item-shop NPC = 1st teammate's skin, upgrades NPC = 2nd (solo → same). 50 skins.
@@ -143,13 +148,13 @@ Local multi-version harness: `servers/setup.ps1` spins up one Paper test server 
 
 ### Game Setup / Templates / Import
 
-1. Compass → **Game World Setup** → create a Solo or Doubles void world, or open **Templates** / **Import Map**.
+1. Compass → **Game World Setup** → create a Solo / Doubles / Trios / Quads void world, or open **Templates** / **Import Map**.
 2. Teleport into the arena (setup opens automatically). Set waiting spawn, spectator, teams, beds, forges, item/upgrade shops, team + ender chests, diamond/emerald gens.
 3. `/bc spawnbuild` — two-click golden axe for the waiting cuboid (glass is not a valid corner; one diamond block = relative spawn anchor).
 4. Set **build border** radius once waiting + spectator exist (default 64 from their midpoint; outline only in setup).
 5. **Apply** — waiting paste stripped, world saved, pristine snapshot taken, back to lobby.
 
-Bundled template **bedwars-e2560** is a 1.8-era anvil world that works through Paper 26.2 (Paper converts on first load; BedlamCore strips `session.lock` / `entities` / `poi` and clears a conflicting `world/dimensions/minecraft/<name>` leftover before createWorld).
+Bundled template **bedwars-e2560** is a 1.8-era anvil world that works through Paper 26.2 (Paper converts on first load; BedlamCore strips `session.lock` / `entities` / `poi` and clears a conflicting `world/dimensions/minecraft/<name>` leftover before createWorld). Template **chained** is a second 1.8-era anvil map restricted to Trios/Quads — its four islands (red/blue/green/yellow) run as **3v3v3v3** (4×3) or **4v4v4v4** (4×4); the Templates GUI only offers those two buttons for it, and Solo/Doubles are rejected. The bundled waiting build was refreshed from the 1.8 capture; on 1.13+ its stairs, slabs and fences now paste with the correct facing/half/species and connected fence posts (previously lost when the legacy data byte was dropped on flattened servers).
 
 ### Match flow
 
@@ -161,10 +166,14 @@ Queue NPC → waiting structure + countdown → team spawn → forge / shop / up
 
 | Command | What it does |
 |---------|----------------|
-| `/bedlam` (`/bc`) | Fallback hub: `menu`, `solo`, `doubles`, `leave`, `spawnbuild`, `forcestart`, `reload` |
+| `/bedlam` (`/bc`) | Fallback hub: `menu`, `solo`, `doubles`, `trios`, `quads`, `leave`, `spawnbuild`, `forcestart`, `reload` |
 | `/leave` | Leave match / return to lobby |
+| `/rejoin` (`/rj`) | Rejoin a match you dropped from within the grace window |
+| `/party` (`/p`) | `create`, `invite`, `accept`, `deny`, `kick`, `promote`, `leave`, `disband`, `list`, `open`, `close`, `warp`, `chat`, `help` |
+| `/pc <message>` | Party chat (no args toggles routing your chat to the party) |
+| `/leaderboard` (`/lb`, `/top`) | View leaderboards: `[wins\|kills\|finalkills\|beds\|winstreak\|kdr\|fkdr\|level\|xp\|tokens] [solo\|doubles\|trios\|quads] [page]` |
 
-Primary UX is the setup compass and lobby NPCs — commands are fallbacks and admin tools.
+Primary UX is the setup compass and lobby NPCs — commands are fallbacks and admin tools. A leader who queues (`/bedlam doubles`, the compass GUI, or a queue NPC) brings the whole party into one game, on the same team.
 
 ## Permissions
 
@@ -173,6 +182,11 @@ Primary UX is the setup compass and lobby NPCs — commands are fallbacks and ad
 | `bedlam.admin` | op | Configure arenas, force-start, setup |
 | `bedlam.play` | true | Join games |
 | `bedlam.lobby.build` | false | Break/place in the lobby world |
+| `bedlam.party.use` | true | Use `/party` and party features |
+| `bedlam.party.leader` | true | Party leader actions (invite/kick/promote/disband) |
+| `bedlam.party.chat` | true | Use `/pc` and party chat |
+| `bedlam.party.bypass-limit` | op | Create parties larger than `party.max-size` |
+| `bedlam.leaderboard` | true | View the leaderboards via `/leaderboard` |
 
 ---
 
@@ -184,6 +198,7 @@ Start with `plugins/BedlamCore/config.yml` after first boot:
 - Mode minimums, countdown / respawn / ending timers, void depth
 - Scoreboard footer (`play.bedlam`) and lobby id
 - Cosmetics catalog (kill-message packs, costs) — owned gear lives in `stats.yml`
+- Leaderboards (`leaderboards:` block): `enabled`, `top-n` (1..50), `minimum-games`, `refresh-seconds` (rank recompute throttle), `max-rows-per-page`, `command-max-lines`, `windows` (`[ALL_TIME]`; `WEEKLY`/`MONTHLY` reserved), the lobby `npc` title/subtitle, and Hypixel-style rank `formats` colours. Set `enabled: false` for zero change from today. The lobby leaderboard NPC/board is placed in **Lobby Setup** (shift-click it to edit its skin/cape)
 - Optional Hypixel Quick Buy import: prefer env `BEDLAM_HYPIXEL_API_KEY`; `hypixel-api-key` in config is a fallback — never commit a real key
 
 Arena layout lives in `arenas.yml`. Player progression: `stats.yml`.

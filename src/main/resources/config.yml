@@ -1,12 +1,23 @@
+# Config schema version — bump only when a future release changes key layout (used for migration).
+meta:
+  config-version: 1
+# Match timers (seconds). game.yml wins if it also sets these; kept here for backward compatibility.
 countdown-seconds: 10
 respawn-seconds: 5
 ending-seconds: 8
+# Seconds a disconnected player's team slot (and bed) is reserved so a network hiccup does not free it.
+# They return automatically on reconnect or with /rejoin. Set to 0 to disable reconnect grace.
+reconnect-grace-seconds: 60
 # Prefer the BEDLAM_HYPIXEL_API_KEY environment variable. The config value is an optional fallback.
 hypixel-api-key: ""
 modes:
   solo:
     minimum-players: 2
   doubles:
+    minimum-players: 2
+  trios:               # 6 teams x 3 players
+    minimum-players: 2
+  quads:               # 8 teams x 4 players
     minimum-players: 2
 lobby:
   teleport-on-join: true
@@ -15,6 +26,44 @@ setup:
 isolation:
   enabled: true
   chat: true
+# Party system: friends group up and queue together, landing on the same team.
+party:
+  enabled: true                 # master switch for the built-in party system (default true)
+  max-size: 4                   # max players per party; range 2..16 (bedlam.party.bypass-limit overrides). default 4
+  invite-timeout-seconds: 60    # seconds an invite stays valid before it is dropped; range 1..3600. default 60
+  queue-as-team: true           # keep a party together when it queues (default true)
+  allow-party-in-open-games: false  # let parties enter open/joinable games (reserved; default false)
+  chat-prefix: "&b[PARTY] &f"   # prefix for /pc party chat messages (default "&b[PARTY] &f")
+  persistent: false             # survive restarts by writing parties to party.yml (default false)
+  provider: auto                # party source: auto | bedlam | <external plugin name>. default auto
+  # External party plugins preferred over the built-in system when 'provider: auto' and they are loaded
+  # here. BungeeParties / Party and Friends run on BungeeCord, so their data must be bridged to this
+  # server (see PartyProvider javadoc); when unreachable BedlamCore logs once and falls back to built-in.
+  external-provider-names: [BungeeParties, PartyAndFriends]
+# Hypixel-style leaderboards: a lobby NPC/board, a /leaderboard GUI, and the /lb command.
+# Rankings are built from stats.yml and cached; set enabled:false for zero behaviour change from today.
+leaderboards:
+  enabled: true                 # master switch; false = no NPC, no ranking, command reports disabled. default true
+  top-n: 10                     # rows shown on the board / GUI page / command; range 1..50. default 10
+  minimum-games: 1              # players with fewer games than this never appear; range 0.. default 1
+  refresh-seconds: 30           # minimum seconds between full rank recomputes (busy-lobby throttle); range 1..3600. default 30
+  max-rows-per-page: 45         # GUI page capacity in rows; range 9..45. default 45
+  command-max-lines: 15         # /leaderboard chat output cap in lines; range 1..50. default 15
+  windows: [ALL_TIME]           # active ranking windows. WEEKLY/MONTHLY are reserved for a later release. default [ALL_TIME]
+  npc:
+    # The lobby leaderboard is a Hypixel-style floating TEXT board (holograms only — no villager/player
+    # model under it) with invisible click proxies: left- OR right-click anywhere on the column opens the
+    # GUI; admins sneak-click to edit it. Placed via Lobby Setup.
+    enabled: true               # spawn the lobby board once one is placed in Lobby Setup. default true
+    title: "&6&lBED WARS &f&lLEADERBOARDS"  # board title line ('&' colour codes)
+    subtitle: "&7Click for details"          # board footer line, e.g. "Click for details" ('&' colour codes)
+  formats:                      # Hypixel-style rank colours ('&' codes)
+    first: "&6"                 # #1 colour. default &6 (gold)
+    second: "&7"                # #2 colour. default &7 (gray)
+    third: "&e"                 # #3 colour. default &e (yellow)
+    other: "&8"                 # #4+ colour. default &8 (dark gray)
+    value: "&b"                 # stat value colour. default &b (aqua)
+    you: "&a"                   # highlight for the viewer's own row. default &a (green)
 chat:
   lobby-prefix: "&7[LOBBY] "
   name-suffix: " &8> &f"
@@ -32,6 +81,19 @@ scoreboard:
   lobby-id: "L1"
 # Blocks below lowest team bed Y (else waiting spawn) before instant void kill.
 void-depth: 15
+# Build-protect: plus (+) of cells on the anchor Y around gens/forge/shops/chests (Manhattan XZ radius).
+protect-plus: 1
+# Display / hologram tuning. Heights are blocks above the anchor entity.
+display:
+  view: 20.0            # blocks: hide holograms/NPCs beyond this from a viewer (default 20.0)
+  visibility-interval: 5 # ticks between hide-beyond-view recomputes; pin/rotate stays every tick (default 5)
+holograms:
+  line-gap: 0.30         # vertical gap between stacked hologram lines (default 0.30)
+  npc-top: 2.25          # top label Y above a shop NPC head (default 2.25)
+  lobby-npc-top: 2.95    # top label Y for lobby queue/cosmetics NPC 3-line stack (default 2.95)
+  gen-top: 3.15          # top label Y above a mid-gen pin (default 3.15)
+  chest-y: 1.1           # label feet Y above a team chest (default 1.1)
+  gen-stand-y: 2.5       # mid-gen pin stand feet Y (helmet ~2.5 above gen floor) (default 2.5)
 # Lobby cosmetics shop (tokens). Owned/equipped persist in stats.yml.
 # Kill Message packs use messages.{kill,void_kill,shot,fall,explosion,fire}.
 # Missing item IDs are filled from built-in defaults on reload (old configs keep working).

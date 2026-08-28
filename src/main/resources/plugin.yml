@@ -11,7 +11,9 @@ api-version: "1.13"
 # Citizens-free packet NPC system (real player-model fake-players with skins + look-at), so Citizens
 # is NOT required. When Citizens is the plugin still picks it up for nicer NPC bodies; otherwise the
 # built-in packet system handles everything. softdepend keeps load order correct when both are present.
-softdepend: [Citizens]
+# BungeeParties / PartyAndFriends are optional: when present on this server BedlamCore can prefer them as
+# the party provider (config party.provider); absent, the built-in party system is used. Harmless softdepend.
+softdepend: [Citizens, BungeeParties, PartyAndFriends]
 commands:
   bedlam:
     description: BedlamCore fallback controls.
@@ -20,6 +22,21 @@ commands:
   leave:
     description: Leave the current BedlamCore game.
     usage: /leave
+  rejoin:
+    description: Rejoin a match you disconnected from (within the grace window).
+    usage: /rejoin
+    aliases: [rj]
+  party:
+    description: Create and manage a BedlamCore party.
+    usage: /party [create|invite|accept|deny|kick|promote|leave|disband|list|open|close|warp|chat|help]
+    aliases: [p]
+  pc:
+    description: Send a message to your party (no args toggles party chat).
+    usage: /pc <message>
+  leaderboard:
+    description: View the Bed Wars leaderboards.
+    usage: /leaderboard [wins|kills|finalkills|beds|winstreak|kdr|fkdr|level|xp|tokens] [solo|doubles] [page]
+    aliases: [lb, top]
 permissions:
   bedlam.admin:
     description: Configure and control BedlamCore arenas.
@@ -39,3 +56,18 @@ permissions:
   bedlam.play:
     description: Join BedlamCore games.
     default: true
+  bedlam.leaderboard:
+    description: View the Bed Wars leaderboards via /leaderboard.
+    default: true
+  bedlam.party.use:
+    description: Use the /party command and party features.
+    default: true
+  bedlam.party.leader:
+    description: Perform party leader actions (invite, kick, promote, disband).
+    default: true
+  bedlam.party.chat:
+    description: Use /pc and party chat.
+    default: true
+  bedlam.party.bypass-limit:
+    description: Create parties larger than party.max-size (staff tools).
+    default: op
