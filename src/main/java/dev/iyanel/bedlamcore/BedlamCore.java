@@ -43,6 +43,8 @@ public final class BedlamCore extends JavaPlugin {
     private GameListener listener;
     private PartyService party;
     private dev.iyanel.bedlamcore.config.BedlamSettings settings;
+    /** dev.iyanel.bedlamcore.compat.PapiExpansion when PlaceholderAPI is present; else null (Object avoids class-load without PAPI). */
+    private Object papiExpansion;
 
     @Override
     public void onEnable() {
@@ -83,6 +85,14 @@ public final class BedlamCore extends JavaPlugin {
         PluginCommand leaderboard = getCommand("leaderboard");
         if (leaderboard != null) { leaderboard.setExecutor(leaderboardCommand); leaderboard.setTabCompleter(leaderboardCommand); }
         npcs.respawnAll();
+        // Register %bedlamcore_*% placeholders only when PlaceholderAPI is installed (soft dependency).
+        // Cast runs only inside this guard, so PapiExpansion is never class-loaded without PAPI present.
+        if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
+            dev.iyanel.bedlamcore.compat.PapiExpansion expansion = new dev.iyanel.bedlamcore.compat.PapiExpansion(this);
+            expansion.register();
+            papiExpansion = expansion;
+            getLogger().info("PlaceholderAPI detected: %bedlamcore_*% placeholders registered.");
+        }
         // No JVM shutdown hook: onDisable() already saves while worlds are loaded. A second save from a
         // shutdown-hook thread runs after (or races) world unload, so Locations.encode() sees null worlds
         // and overwrites arenas.yml with null spawns/beds/gens — wiping every arena setup on restart.
@@ -105,7 +115,8 @@ public final class BedlamCore extends JavaPlugin {
         try { if (games != null) games.shutdown(); } catch (Throwable ignored) { }
         if (party != null) try { party.shutdown(); } catch (Throwable ignored) { }
         if (leaderboards != null) try { leaderboards.shutdown(); } catch (Throwable ignored) { }
-        if (stats != null) try { stats.save(); } catch (Throwable ignored) { }
+        if (papiExpansion != null) try { ((dev.iyanel.bedlamcore.compat.PapiExpansion) papiExpansion).unregister(); } catch (Throwable ignored) { }
+        if (stats != null) try { stats.save(); stats.close(); } catch (Throwable ignored) { }
     }
 
     public LobbySettings lobby() { return lobby; }

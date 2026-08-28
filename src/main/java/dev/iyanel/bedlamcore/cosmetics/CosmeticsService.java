@@ -1055,6 +1055,16 @@ public final class CosmeticsService {
         return null;
     }
 
+    /** Equipped prestige display name (colour codes stripped), e.g. "Gold Prestige", or "" when none/default. */
+    public String prestigeName(Player player) {
+        if (player == null) return "";
+        String id = plugin.stats().equippedCosmetic(player.getUniqueId(), CAT_PRESTIGE);
+        if (id == null || "pr_none".equals(id)) return "";
+        Cosmetic cosmetic = get(id);
+        if (cosmetic == null) return "";
+        return ChatColor.stripColor(ChatColor.translateAlternateColorCodes('&', cosmetic.name));
+    }
+
     /** Play the winner's equipped win effect (delegates to the win-effect subsystem). */
     public void playWinEffect(Player winner) { win.playWinEffect(winner); }
 

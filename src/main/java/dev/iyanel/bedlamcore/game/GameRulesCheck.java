@@ -362,6 +362,12 @@ public final class GameRulesCheck {
         assertEquals("u1", rows[0][2]); // 12/amy, uuid u1 before u3
         assertEquals("u3", rows[1][2]);
         assertEquals("u2", rows[2][2]); // 9/bob last
+        // Storage backend selection: yaml is the default; unknown/blank fall back to yaml; sqlite/mysql map through.
+        assertEquals("yaml", dev.iyanel.bedlamcore.storage.StatsBackend.resolve("yaml"));
+        assertEquals("yaml", dev.iyanel.bedlamcore.storage.StatsBackend.resolve(null));
+        assertEquals("yaml", dev.iyanel.bedlamcore.storage.StatsBackend.resolve("bogus"));
+        assertEquals("sqlite", dev.iyanel.bedlamcore.storage.StatsBackend.resolve("SQLite"));
+        assertEquals("mysql", dev.iyanel.bedlamcore.storage.StatsBackend.resolve(" mysql "));
         System.out.println("BedlamCore game rules: PASS");
     }
 

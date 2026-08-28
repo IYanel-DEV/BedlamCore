@@ -13,7 +13,7 @@ api-version: "1.13"
 # built-in packet system handles everything. softdepend keeps load order correct when both are present.
 # BungeeParties / PartyAndFriends are optional: when present on this server BedlamCore can prefer them as
 # the party provider (config party.provider); absent, the built-in party system is used. Harmless softdepend.
-softdepend: [Citizens, BungeeParties, PartyAndFriends]
+softdepend: [Citizens, BungeeParties, PartyAndFriends, PlaceholderAPI]
 commands:
   bedlam:
     description: BedlamCore fallback controls.

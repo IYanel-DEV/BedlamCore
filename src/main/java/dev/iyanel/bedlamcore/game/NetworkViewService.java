@@ -49,7 +49,14 @@ public final class NetworkViewService {
             ? plugin.getConfig().getString("chat.lobby-prefix", "&7[LOBBY] ")
             : plugin.getConfig().getString("chat.team-prefixes." + team.name().toLowerCase(), "&" + colorCode(team) + "[" + team.displayName() + "] ");
         String suffix = plugin.getConfig().getString("chat.name-suffix", " &8> &f");
-        event.setFormat(colors(prefix) + "%1$s" + colors(suffix) + "%2$s");
+        // In the lobby, colour the sender name with their equipped Prestige cosmetic (tab-list already is).
+        String nameColor = "";
+        if (team == null && plugin.getConfig().getBoolean("chat.prestige-in-lobby", true)) {
+            String prestige = plugin.cosmetics().applyPrestige(sender);
+            if (prestige != null) nameColor = prestige;
+        }
+        String reset = nameColor.isEmpty() ? "" : ChatColor.RESET.toString();
+        event.setFormat(colors(prefix) + nameColor + "%1$s" + reset + colors(suffix) + "%2$s");
     }
 
     private boolean sameChannel(Player first, Player second) {

@@ -1,23 +1,16 @@
 package dev.iyanel.bedlamcore.game;
 
 import dev.iyanel.bedlamcore.arena.GameType;
-import dev.iyanel.bedlamcore.util.AtomicFiles;
-import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.file.YamlConfiguration;
+import dev.iyanel.bedlamcore.storage.StatsBackend;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-/** Per-player tokens/XP YAML. Same pattern as ArenaRepository — no database. */
+/** Per-player tokens/XP cache. Reads stay synchronous/in-memory; a {@link StatsBackend} owns load/flush. */
 public final class StatsStore {
     private static final long FLUSH_INTERVAL_TICKS = 5L * 20L; // 5s
 
@@ -26,7 +19,7 @@ public final class StatsStore {
     public static final String[] DEFAULT_FAVORITES = GameRules.DEFAULT_FAVORITES;
 
     private final JavaPlugin plugin;
-    private final File file;
+    private final StatsBackend backend;
     private final Map<UUID, Record> records = new LinkedHashMap<UUID, Record>();
     private boolean dirty;
     /** Fired (null-safe) after any mutation so the leaderboard cache can mark itself stale. */
@@ -34,8 +27,9 @@ public final class StatsStore {
 
     public StatsStore(JavaPlugin plugin) {
         this.plugin = plugin;
-        this.file = new File(plugin.getDataFolder(), "stats.yml");
+        this.backend = StatsBackend.fromConfig(plugin);
         load();
+        if (!"yaml".equals(backend.name())) plugin.getLogger().info("Stats backend: " + backend.name());
         plugin.getServer().getScheduler().runTaskTimer(plugin, new Runnable() {
             @Override public void run() { save(); }
         }, FLUSH_INTERVAL_TICKS, FLUSH_INTERVAL_TICKS);
@@ -179,53 +173,20 @@ public final class StatsStore {
         touch(record);
     }
 
-    /** Disk write if dirty. Periodic flush + plugin disable. */
+    /** Flush to the backend if dirty. Periodic flush + plugin disable. Dirty stays set on failure (retry). */
     public void save() {
         if (!dirty) return;
-        YamlConfiguration yaml = new YamlConfiguration();
-        for (Map.Entry<UUID, Record> entry : records.entrySet()) {
-            String path = "players." + entry.getKey().toString();
-            Record record = entry.getValue();
-            yaml.set(path + ".tokens", record.tokens);
-            yaml.set(path + ".xp", record.xp);
-            yaml.set(path + ".level", GameRules.levelFromXp(record.xp));
-            yaml.set(path + ".kills", record.kills);
-            yaml.set(path + ".wins", record.wins);
-            yaml.set(path + ".beds", record.beds);
-            yaml.set(path + ".games", record.games);
-            yaml.set(path + ".losses", record.losses);
-            yaml.set(path + ".deaths", record.deaths);
-            yaml.set(path + ".final-kills", record.finalKills);
-            yaml.set(path + ".final-deaths", record.finalDeaths);
-            yaml.set(path + ".beds-lost", record.bedsLost);
-            yaml.set(path + ".winstreak", record.winstreak);
-            yaml.set(path + ".best-winstreak", record.bestWinstreak);
-            if (record.lastSeen > 0L) yaml.set(path + ".last-seen", record.lastSeen);
-            writeMode(yaml, path + ".solo", record.solo);
-            writeMode(yaml, path + ".doubles", record.doubles);
-            writeMode(yaml, path + ".trios", record.trios);
-            writeMode(yaml, path + ".quads", record.quads);
-            if (record.favorites != null) {
-                yaml.set(path + ".favorites", Arrays.asList(padFavorites(record.favorites)));
-            }
-            if (!record.cosmeticsOwned.isEmpty()) {
-                yaml.set(path + ".cosmetics.owned", new ArrayList<String>(record.cosmeticsOwned));
-            }
-            for (Map.Entry<String, String> equipped : record.cosmeticsEquipped.entrySet()) {
-                if (equipped.getValue() != null && !equipped.getValue().isEmpty()) {
-                    yaml.set(path + ".cosmetics.equipped." + equipped.getKey(), equipped.getValue());
-                }
-            }
-        }
         try {
-            if (!plugin.getDataFolder().exists() && !plugin.getDataFolder().mkdirs()) {
-                throw new IOException("Could not create " + plugin.getDataFolder());
-            }
-            AtomicFiles.writeUtf8(file.toPath(), yaml.saveToString());
+            backend.saveAll(records);
             dirty = false;
-        } catch (IOException exception) {
-            plugin.getLogger().severe("Could not save stats.yml: " + exception.getMessage());
+        } catch (Exception exception) {
+            plugin.getLogger().severe("Could not save stats (" + backend.name() + "): " + exception.getMessage());
         }
+    }
+
+    /** Release backend resources (SQL pools). Call after the final {@link #save()} on disable. */
+    public void close() {
+        try { backend.close(); } catch (Throwable ignored) { }
     }
 
     private Record ensure(UUID uuid) {
@@ -250,89 +211,11 @@ public final class StatsStore {
     }
 
     private void load() {
-        if (!file.isFile()) return;
-        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
-        ConfigurationSection section = yaml.getConfigurationSection("players");
-        if (section == null) return;
-        for (String key : section.getKeys(false)) {
-            try {
-                UUID uuid = UUID.fromString(key);
-                Record record = new Record();
-                String path = "players." + key;
-                record.tokens = yaml.getInt(path + ".tokens");
-                record.xp = yaml.getInt(path + ".xp");
-                record.kills = yaml.getInt(path + ".kills");
-                record.wins = yaml.getInt(path + ".wins");
-                record.beds = yaml.getInt(path + ".beds");
-                record.games = yaml.getInt(path + ".games");
-                record.losses = yaml.getInt(path + ".losses");
-                record.deaths = yaml.getInt(path + ".deaths");
-                record.finalKills = yaml.getInt(path + ".final-kills");
-                record.finalDeaths = yaml.getInt(path + ".final-deaths");
-                record.bedsLost = yaml.getInt(path + ".beds-lost");
-                record.winstreak = yaml.getInt(path + ".winstreak");
-                record.bestWinstreak = yaml.getInt(path + ".best-winstreak", record.winstreak);
-                record.lastSeen = yaml.getLong(path + ".last-seen", 0L);
-                record.level = GameRules.levelFromXp(record.xp);
-                readMode(yaml, path + ".solo", record.solo);
-                readMode(yaml, path + ".doubles", record.doubles);
-                readMode(yaml, path + ".trios", record.trios);
-                readMode(yaml, path + ".quads", record.quads);
-                List<?> fav = yaml.getList(path + ".favorites");
-                if (fav != null) {
-                    String[] slots = new String[FAVORITE_SLOTS];
-                    for (int i = 0; i < FAVORITE_SLOTS; i++) {
-                        Object v = i < fav.size() ? fav.get(i) : null;
-                        slots[i] = v == null ? "" : String.valueOf(v);
-                    }
-                    record.favorites = slots;
-                }
-                List<?> owned = yaml.getList(path + ".cosmetics.owned");
-                if (owned != null) {
-                    for (Object value : owned) {
-                        if (value != null) record.cosmeticsOwned.add(String.valueOf(value));
-                    }
-                }
-                ConfigurationSection equipped = yaml.getConfigurationSection(path + ".cosmetics.equipped");
-                if (equipped != null) {
-                    for (String category : equipped.getKeys(false)) {
-                        String cosmeticId = equipped.getString(category);
-                        if (cosmeticId != null && !cosmeticId.isEmpty()) {
-                            record.cosmeticsEquipped.put(category, cosmeticId);
-                        }
-                    }
-                }
-                records.put(uuid, record);
-            } catch (IllegalArgumentException ignored) { }
-        }
+        records.putAll(backend.loadAll());
     }
 
-    private static void writeMode(YamlConfiguration yaml, String path, ModeStats mode) {
-        if (mode == null || mode.isZero()) return;
-        yaml.set(path + ".kills", mode.kills);
-        yaml.set(path + ".wins", mode.wins);
-        yaml.set(path + ".beds", mode.beds);
-        yaml.set(path + ".games", mode.games);
-        yaml.set(path + ".losses", mode.losses);
-        yaml.set(path + ".deaths", mode.deaths);
-        yaml.set(path + ".final-kills", mode.finalKills);
-        yaml.set(path + ".final-deaths", mode.finalDeaths);
-        yaml.set(path + ".beds-lost", mode.bedsLost);
-    }
-
-    private static void readMode(YamlConfiguration yaml, String path, ModeStats mode) {
-        mode.kills = yaml.getInt(path + ".kills");
-        mode.wins = yaml.getInt(path + ".wins");
-        mode.beds = yaml.getInt(path + ".beds");
-        mode.games = yaml.getInt(path + ".games");
-        mode.losses = yaml.getInt(path + ".losses");
-        mode.deaths = yaml.getInt(path + ".deaths");
-        mode.finalKills = yaml.getInt(path + ".final-kills");
-        mode.finalDeaths = yaml.getInt(path + ".final-deaths");
-        mode.bedsLost = yaml.getInt(path + ".beds-lost");
-    }
-
-    private static String[] padFavorites(String[] raw) {
+    /** Pad/truncate to exactly {@link #FAVORITE_SLOTS} entries; null/short entries become "". */
+    public static String[] padFavorites(String[] raw) {
         String[] out = new String[FAVORITE_SLOTS];
         for (int i = 0; i < FAVORITE_SLOTS; i++) {
             out[i] = raw != null && i < raw.length && raw[i] != null ? raw[i] : "";
@@ -373,7 +256,7 @@ public final class StatsStore {
         @Override public int finalKills() { return finalKills; }
         @Override public int finalDeaths() { return finalDeaths; }
 
-        boolean isZero() {
+        public boolean isZero() {
             return kills == 0 && wins == 0 && beds == 0 && games == 0 && losses == 0
                 && deaths == 0 && finalKills == 0 && finalDeaths == 0 && bedsLost == 0;
         }

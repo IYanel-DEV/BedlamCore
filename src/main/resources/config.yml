@@ -64,9 +64,26 @@ leaderboards:
     other: "&8"                 # #4+ colour. default &8 (dark gray)
     value: "&b"                 # stat value colour. default &b (aqua)
     you: "&a"                   # highlight for the viewer's own row. default &a (green)
+# Where player stats/settings persist. Default 'yaml' keeps stats.yml byte-identical to older releases.
+# sqlite/mysql bundle their drivers in the jar; invalid config logs an error and falls back to yaml.
+# Migrate an existing stats.yml with:  /bc storage migrate <sqlite|mysql>
+storage:
+  backend: yaml            # yaml | sqlite | mysql
+  sqlite:
+    file: stats.db
+  mysql:
+    host: localhost
+    port: 3306
+    database: bedlamcore
+    user: root
+    password: ""
+    table-prefix: "bedlam_"
+    pool-size: 4
 chat:
   lobby-prefix: "&7[LOBBY] "
   name-suffix: " &8> &f"
+  # Colour the lobby chat sender name with the player's equipped Prestige cosmetic (tab-list already is).
+  prestige-in-lobby: true
   team-prefixes:
     red: "&c[RED] "
     blue: "&9[BLUE] "

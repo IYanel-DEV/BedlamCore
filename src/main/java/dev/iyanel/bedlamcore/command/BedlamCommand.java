@@ -40,6 +40,9 @@ public final class BedlamCommand implements CommandExecutor {
         if (action.equals("token") || action.equals("xp")) {
             return economyAdd(sender, action, args);
         }
+        if (action.equals("storage")) {
+            return storage(sender, args);
+        }
         if (action.equals("reload") || action.equals("forcestart") || action.equals("start") || action.equals("spawnbuild")) {
             if (!plugin.isAdmin(sender)) { sender.sendMessage(ChatColor.RED + "You do not have permission."); return true; }
             if (action.equals("reload")) { plugin.reloadBedlam(); sender.sendMessage(ChatColor.GREEN + "BedlamCore reloaded."); return true; }
@@ -112,6 +115,37 @@ public final class BedlamCommand implements CommandExecutor {
                         + ChatColor.GRAY + "(admin)");
             }
         }
+        return true;
+    }
+
+    /** /bc storage migrate <sqlite|mysql> — copies stats.yml into the configured DB. */
+    private boolean storage(CommandSender sender, String[] args) {
+        if (!plugin.isAdmin(sender)) { sender.sendMessage(ChatColor.RED + "You do not have permission."); return true; }
+        if (args.length < 3 || !args[1].equalsIgnoreCase("migrate")) {
+            sender.sendMessage(ChatColor.YELLOW + "/bc storage migrate <sqlite|mysql>");
+            return true;
+        }
+        String target = args[2].toLowerCase();
+        if (!target.equals("sqlite") && !target.equals("mysql")) {
+            sender.sendMessage(ChatColor.RED + "Target must be sqlite or mysql.");
+            return true;
+        }
+        java.util.Map<UUID, StatsStore.Record> rows = new dev.iyanel.bedlamcore.storage.YamlBackend(plugin).loadAll();
+        try {
+            dev.iyanel.bedlamcore.storage.StatsBackend backend = target.equals("sqlite")
+                ? new dev.iyanel.bedlamcore.storage.SqliteBackend(plugin)
+                : new dev.iyanel.bedlamcore.storage.MySqlBackend(plugin);
+            try {
+                backend.saveAll(rows);
+            } finally {
+                backend.close();
+            }
+        } catch (Exception failure) {
+            sender.sendMessage(ChatColor.RED + "Migration failed: " + failure.getMessage());
+            return true;
+        }
+        sender.sendMessage(ChatColor.GREEN + "Migrated " + rows.size() + " players from stats.yml to " + target
+            + ChatColor.GRAY + ". Set storage.backend: " + target + " and restart to use it.");
         return true;
     }
 
