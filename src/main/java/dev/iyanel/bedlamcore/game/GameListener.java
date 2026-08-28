@@ -1169,6 +1169,7 @@ public final class GameListener implements Listener {
             || clean.equals("Wood Skins") || clean.equals("Final Kill Effects") || clean.equals("Prestige Customizer")
             || clean.equals("Bed Destroys") || clean.equals("Projectile Trails") || clean.equals("Shopkeeper Skins")
             || clean.equals("Bed Wars Statistics")
+            || clean.equals("Party") || clean.equals("Party Invite")
             || clean.startsWith("Play Bed Wars ") || clean.startsWith("Map Selector ");
     }
 
