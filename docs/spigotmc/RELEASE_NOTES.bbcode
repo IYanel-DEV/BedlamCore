@@ -45,7 +45,7 @@ A small, additive release. Existing servers upgrade in place — the [B]YAML def
 [/LIST]
 
 [SIZE=4][B]SHA-256[/B][/SIZE]
-[ICODE]98C15E4A30FCD0A922A7003D4936B48A7C4C16F1E252109C40831B448BF007AC[/ICODE]
+[ICODE]A24FE2BAAE27F8A0F485A2820E018E23568546364CB0EC113BCE44F75A22AF84[/ICODE]
 
 [SIZE=4][B]Report bugs[/B][/SIZE]
 [URL='https://github.com/IYanel-DEV/BedlamCore/issues']github.com/IYanel-DEV/BedlamCore/issues[/URL]

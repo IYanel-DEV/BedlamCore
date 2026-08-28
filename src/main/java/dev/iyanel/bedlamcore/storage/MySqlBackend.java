@@ -8,7 +8,10 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.sql.Connection;
 import java.sql.SQLException;
 
-/** MySQL via a HikariCP pool (survives idle disconnects; supports a second server sharing the DB). */
+/**
+ * MySQL/MariaDB via a HikariCP pool (survives idle disconnects; supports a second server sharing the DB).
+ * Uses the bundled MariaDB Connector/J, which speaks the MySQL wire protocol against MySQL 5.x/8.x too.
+ */
 public final class MySqlBackend extends SqlBackend {
     private final HikariDataSource pool;
 
@@ -20,7 +23,7 @@ public final class MySqlBackend extends SqlBackend {
         String database = cfg.getString("database", "bedlamcore");
 
         HikariConfig hikari = new HikariConfig();
-        hikari.setJdbcUrl("jdbc:mysql://" + host + ":" + port + "/" + database
+        hikari.setJdbcUrl("jdbc:mariadb://" + host + ":" + port + "/" + database
             + "?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8");
         hikari.setUsername(cfg.getString("user", "root"));
         hikari.setPassword(cfg.getString("password", ""));
